@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  BookOpen, Building2, CalendarDays, ChevronRight, FilePlus2, FileText, ListTree, LogOut, Scale, Settings, Users, X, Library, ScrollText,
+  Banknote, BookOpen, Building2, CalendarDays, ChartColumn, ChevronRight, ClipboardList, FileCheck2, FilePlus2, FileText, HandCoins, LayoutTemplate, Library, ListTree,
+  LogOut, Percent, RefreshCw, Scale, ScrollText, SearchCheck, Settings, Users, X, type LucideIcon,
 } from 'lucide-react';
 import { api } from '../api.ts';
 import { bgDate } from '../format.ts';
 import { useCan, useSession } from '../session.tsx';
 import { useDialogs } from '../components/dialogs.tsx';
 import { Button, Dialog, Field, TextInput, cx } from '../components/ui.tsx';
-import { MENU, UNBINDABLE, gestureOf, type MenuItem } from './menu.ts';
+import { MENU, TOOLBAR, UNBINDABLE, findMenuItem, gestureOf, type MenuEntry, type MenuItem } from './menu.ts';
 import { useWorkspace, type ScreenDef } from './workspace.tsx';
 
 type Cmd = NonNullable<Extract<MenuItem, { label: string }>['command']>;
@@ -98,7 +99,7 @@ export function Shell({ screens, onCommand }: { screens: Record<string, ScreenDe
   return (
     <div className="flex h-full flex-col">
       <MenuBar run={run} screens={screens} />
-      <Toolbar />
+      <Toolbar screens={screens} run={(item) => void run(item)} />
       <TabStrip onClose={closeTab} />
       <main className="relative min-h-0 flex-1">
         {ws.tabs.length === 0 && <StartPage />}
@@ -244,7 +245,7 @@ function MenuList({ items, pick, screens, nested }: { items: MenuItem[]; pick: (
   const can = useCan();
   const [sub, setSub] = useState<number | null>(null);
   return (
-    <div className={cx('absolute z-40 min-w-64 border border-slate-300 bg-white py-1 shadow-lg', nested ? 'top-[-5px] left-full' : 'top-full left-0')}>
+    <div data-testid="menu-list" className={cx('absolute z-40 min-w-64 border border-slate-300 bg-white py-1 shadow-lg', nested ? 'top-[-5px] left-full' : 'top-full left-0')}>
       {items.map((it, i) => {
         if ('sep' in it) return <div key={i} className="my-1 border-t border-slate-200" />;
         const implemented = !!it.children || !!it.command || (!!it.screen && !!screens[it.screen]);
@@ -269,29 +270,42 @@ function MenuList({ items, pick, screens, nested }: { items: MenuItem[]; pick: (
   );
 }
 
-const TOOLBAR = [
+/** Start page shortcuts. */
+const HOME_TILES = [
   { screen: 'entry', label: 'Контиране', icon: FilePlus2, permission: 'UI_Operations_Accounting' },
   { screen: 'journal', label: 'Журнал', icon: ScrollText, permission: 'UI_Edit_Accountings' },
   { screen: 'partners', label: 'Партньори', icon: Users, permission: 'UI_Edit_Companies' },
   { screen: 'chart', label: 'Сметкоплан', icon: ListTree, permission: 'UI_Operations_ChartOfAccounts_IndividualChartOfAccounts' },
-  { screen: 'trialBalance', label: 'Оборотна', icon: Scale, permission: 'UI_Reporting_TurnoverReport' },
-  { screen: 'chronological', label: 'Хронологичен', icon: BookOpen, permission: 'UI_Reporting_ChronologicalReport' },
-  { screen: 'analytical', label: 'Аналитичен', icon: FileText, permission: 'UI_Reporting_AnalyticalReport' },
-  { screen: 'generalLedger', label: 'Главна книга', icon: Library, permission: 'UI_Reporting_GeneralLedger' },
-  { screen: 'years', label: 'Година', icon: CalendarDays, permission: 'UI_Edit_ChangeActiveFinancialYear' },
+  { screen: 'trialBalance', label: 'Оборотна ведомост', icon: Scale, permission: 'UI_Reporting_TurnoverReport' },
+  { screen: 'financialStatements', label: 'Отчети и баланс', icon: ChartColumn, permission: 'UI_Reporting_FinancialReports' },
+  { screen: 'years', label: 'Счетоводна година', icon: CalendarDays, permission: 'UI_Edit_ChangeActiveFinancialYear' },
   { screen: 'myCompany', label: 'Моята фирма', icon: Building2, permission: 'UI_Edit_Administration_MyCompany' },
-  { screen: 'settings', label: 'Настройки', icon: Settings, permission: 'UI_Other_Settings' },
 ];
 
-function Toolbar() {
-  const ws = useWorkspace();
+const TOOLBAR_ICONS: Record<(typeof TOOLBAR)[number]['id'], LucideIcon> = {
+  tlbExit: LogOut, tlbAccounting: FilePlus2, tlbTemplates: LayoutTemplate, tlbPayments: HandCoins, tlbAccountingRequests: ClipboardList,
+  tlbChartOfAccounts: ListTree, tlbEditAccountings: ScrollText, tlbTurnoverReport: Scale, tlbGeneralLedgerReport: Library,
+  tlbChronologicalReport: BookOpen, tlbAnalyticalReport: FileText, tlbPartnersReport: Users, tlbVATDiary: Percent,
+  tlbAccountingsValidation: SearchCheck, tlbAccountingsNAPValidation: FileCheck2, tlbFinancialReports: ChartColumn,
+  tlbBankStatementsImport: Banknote, tlbSettings: Settings, tlbUpdate: RefreshCw,
+};
+
+/** Toolbar (06 1.5): visible when the menu item's module exists and its menu path is permitted. */
+function Toolbar({ screens, run }: { screens: Record<string, ScreenDef>; run: (item: MenuEntry) => void }) {
   const can = useCan();
+  const buttons = TOOLBAR.flatMap((t) => {
+    const found = findMenuItem(t.menu);
+    if (!found) return [];
+    const available = !!found.item.command || (!!found.item.screen && !!screens[found.item.screen]);
+    return available && found.permissions.every((p) => can(p)) ? [{ ...t, item: found.item, Icon: TOOLBAR_ICONS[t.id] }] : [];
+  });
   return (
-    <div className="flex items-stretch gap-0.5 border-b border-slate-300 bg-gradient-to-b from-slate-50 to-slate-100 px-2 py-1">
-      {TOOLBAR.filter((t) => can(t.permission)).map((t) => (
-        <button key={t.screen} onClick={() => ws.open(t.screen)} className="flex w-[88px] flex-col items-center gap-0.5 rounded-sm px-1 py-1 text-[11px] text-slate-700 hover:bg-brand-100">
-          <t.icon className="size-5 text-brand-600" strokeWidth={1.6} />
-          <span className="truncate">{t.label}</span>
+    <div role="toolbar" aria-label="Лента с инструменти" className="flex h-[51px] shrink-0 items-stretch gap-0.5 overflow-x-auto border-b border-slate-300 bg-gradient-to-b from-slate-50 to-slate-100 px-2 py-1">
+      {buttons.map((b) => (
+        <button key={b.id} title={b.tooltip} aria-label={b.tooltip} onClick={() => run(b.item)}
+          className="flex w-[68px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-sm px-0.5 text-[10.5px] text-slate-700 hover:bg-brand-100">
+          <b.Icon className="size-5 text-brand-600" strokeWidth={1.6} />
+          <span className="max-w-full truncate">{b.caption}</span>
         </button>
       ))}
     </div>
@@ -446,7 +460,7 @@ function StartPage() {
           </div>
         )}
         <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-3">
-          {TOOLBAR.filter((t) => can(t.permission)).map((t) => (
+          {HOME_TILES.filter((t) => can(t.permission)).map((t) => (
             <button key={t.screen} onClick={() => ws.open(t.screen)} className="flex items-center gap-3 rounded-sm border border-slate-200 bg-white px-4 py-3 text-left shadow-sm hover:border-brand-500 hover:shadow">
               <t.icon className="size-6 text-brand-600" strokeWidth={1.5} />
               <span className="font-medium text-slate-700">{t.label}</span>

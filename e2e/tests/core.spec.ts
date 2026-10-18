@@ -66,6 +66,22 @@ test.describe('shell behaviour', () => {
     await expect(clock).not.toHaveText(first!, { timeout: 3000 });
   });
 
+  test('toolbar has the Delta items in order and runs the menu commands', async ({ page }) => {
+    await openApp(page);
+    const bar = page.getByRole('toolbar', { name: 'Лента с инструменти' });
+    await expect.poll(() => bar.getByRole('button').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')))).toEqual([
+      'Изход', 'Контиране', 'Шаблони', 'Разплащания', 'Заявки за осчетоводяване', 'Сметкоплан', 'Редакция на контиране',
+      'Оборотна ведомост', 'Главна книга', 'Хронологичен регистър', 'Аналитичен регистър', 'Задължения/вземания по партньори',
+      'ДДС дневници, декларация и VIES', 'Проверка за дублирани и липсващи документи', 'Проверка на документи с файл от НАП',
+      'Отчети и баланс', 'Импорт на банкови извлечения', 'Настройки', 'Изтегляне на актуален бъгфикс',
+    ]);
+    await bar.getByRole('button', { name: 'Оборотна ведомост' }).click();
+    await expect(page.getByRole('button', { name: 'Оборотна ведомост', exact: true }).last()).toBeVisible();
+    await bar.getByRole('button', { name: 'Изтегляне на актуален бъгфикс' }).click();
+    await expect(page.getByRole('dialog')).toContainText('Използвате актуалната версия');
+    await page.getByRole('button', { name: 'OK' }).click();
+  });
+
   test('status bar year cell opens the year chooser', async ({ page }) => {
     await openApp(page);
     await page.locator('footer').getByRole('button', { name: /Година/ }).click();

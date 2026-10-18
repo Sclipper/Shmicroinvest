@@ -240,3 +240,53 @@ export function gestureOf(e: KeyboardEvent): string {
 
 /** Browser-reserved combinations we do not try to bind (Ctrl+W/T/N close/open browser tabs). */
 export const UNBINDABLE = new Set(['Ctrl+W', 'Ctrl+T', 'Ctrl+N', 'Ctrl+F4', 'Ctrl+C']);
+
+/**
+ * Toolbar (06 1.5) in the XAML order. Each button runs the menu item with the
+ * same label (the first one), so it shares that item's permissions and screen;
+ * a button whose module is not available is not shown. Sendera, "Microinvest
+ * общност" (never activated in Delta) and the support chat have no
+ * counterpart here.
+ */
+export const TOOLBAR = [
+  { id: 'tlbExit', menu: 'Изход', tooltip: 'Изход', caption: 'Изход' },
+  { id: 'tlbAccounting', menu: 'Контиране', tooltip: 'Контиране', caption: 'Контиране' },
+  { id: 'tlbTemplates', menu: 'Шаблони', tooltip: 'Шаблони', caption: 'Шаблони' },
+  { id: 'tlbPayments', menu: 'Разплащания', tooltip: 'Разплащания', caption: 'Разплащания' },
+  { id: 'tlbAccountingRequests', menu: 'Заявки за осчетоводяване', tooltip: 'Заявки за осчетоводяване', caption: 'Заявки' },
+  { id: 'tlbChartOfAccounts', menu: 'Индивидуален сметкоплан', tooltip: 'Сметкоплан', caption: 'Сметкоплан' },
+  { id: 'tlbEditAccountings', menu: 'Редакция на контиране', tooltip: 'Редакция на контиране', caption: 'Редакция' },
+  { id: 'tlbTurnoverReport', menu: 'Оборотна ведомост', tooltip: 'Оборотна ведомост', caption: 'Оборотна' },
+  { id: 'tlbGeneralLedgerReport', menu: 'Главна книга', tooltip: 'Главна книга', caption: 'Гл. книга' },
+  { id: 'tlbChronologicalReport', menu: 'Хронологичен регистър', tooltip: 'Хронологичен регистър', caption: 'Хронологичен' },
+  { id: 'tlbAnalyticalReport', menu: 'Аналитичен регистър', tooltip: 'Аналитичен регистър', caption: 'Аналитичен' },
+  { id: 'tlbPartnersReport', menu: 'Задължения/вземания по партньори', tooltip: 'Задължения/вземания по партньори', caption: 'Партньори' },
+  { id: 'tlbVATDiary', menu: 'ДДС дневници, декларация и VIES', tooltip: 'ДДС дневници, декларация и VIES', caption: 'ДДС' },
+  { id: 'tlbAccountingsValidation', menu: 'Проверка за дублирани и липсващи документи', tooltip: 'Проверка за дублирани и липсващи документи', caption: 'Проверка' },
+  { id: 'tlbAccountingsNAPValidation', menu: 'Проверка на документи с файл от НАП', tooltip: 'Проверка на документи с файл от НАП', caption: 'Файл НАП' },
+  { id: 'tlbFinancialReports', menu: 'Отчети и баланс', tooltip: 'Отчети и баланс', caption: 'Отчети' },
+  { id: 'tlbBankStatementsImport', menu: 'Импорт на банкови извлечения', tooltip: 'Импорт на банкови извлечения', caption: 'Извлечения' },
+  { id: 'tlbSettings', menu: 'Настройки', tooltip: 'Настройки', caption: 'Настройки' },
+  { id: 'tlbUpdate', menu: 'Нови версии', tooltip: 'Изтегляне на актуален бъгфикс', caption: 'Версии' },
+] as const;
+
+export type MenuEntry = Extract<MenuItem, { label: string }>;
+
+/** First command item with this label, with the permissions along its menu path. */
+export function findMenuItem(label: string): { item: MenuEntry; permissions: string[] } | null {
+  const walk = (items: MenuItem[], perms: string[]): { item: MenuEntry; permissions: string[] } | null => {
+    for (const i of items) {
+      if ('sep' in i) continue;
+      const p = i.permission ? [...perms, i.permission] : perms;
+      if (i.label === label && !i.children) return { item: i, permissions: p };
+      const found = i.children ? walk(i.children, p) : null;
+      if (found) return found;
+    }
+    return null;
+  };
+  for (const m of MENU) {
+    const found = walk(m.items, [m.permission]);
+    if (found) return found;
+  }
+  return null;
+}

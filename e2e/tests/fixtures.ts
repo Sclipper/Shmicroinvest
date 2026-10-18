@@ -59,7 +59,8 @@ export async function menu(page: Page, ...path: string[]) {
   const bar = page.locator('div').filter({ has: page.getByRole('button', { name: 'Файл', exact: true }) }).first();
   await bar.getByRole('button', { name: path[0], exact: true }).dispatchEvent('mousedown');
   for (const [i, label] of path.slice(1).entries()) {
-    const item = page.getByRole('button', { name: name(label) }).last();
+    // The innermost open list: a submenu is nested inside its parent's list.
+    const item = page.getByTestId('menu-list').last().getByRole('button', { name: name(label) }).first();
     if (i < path.length - 2) await item.hover();
     else await item.click();
   }
