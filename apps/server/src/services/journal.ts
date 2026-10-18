@@ -53,6 +53,8 @@ export interface SaveContext {
   branchId?: number;
   /** Skip non-critical-only failure; critical messages always block. */
   force?: boolean;
+  /** Importers (04a): term and document are optional, as in Delta's import providers. */
+  skipHeaderChecks?: boolean;
 }
 
 async function resolveDictionary(db: DbOrTx, table: typeof s.terms | typeof s.referenceTexts | typeof s.paragraphs, text: string | null | undefined) {
@@ -141,7 +143,7 @@ export async function saveEntry(db: DbOrTx, input: EntryInput, ctx: SaveContext,
     term: input.term,
     transactionTypeId: input.transactionTypeId ?? 1,
     debits, credits,
-    isInitialBalance: input.isInitialBalance,
+    isInitialBalance: input.isInitialBalance || ctx.skipHeaderChecks,
   }, { activeYear: fy.year, lockedMonths: input.isInitialBalance ? 0 : fy.lockedMonths, accounts: infos });
 
   if (input.companyId) {

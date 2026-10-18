@@ -1,4 +1,4 @@
-import { integer, jsonb, pgTable, text, timestamp, varchar } from 'drizzle-orm/pg-core';
+import { customType, integer, jsonb, pgTable, text, timestamp, varchar } from 'drizzle-orm/pg-core';
 
 /**
  * Catalog database (spec 01a section 10): one row per company database.
@@ -21,4 +21,19 @@ export const sessions = pgTable('sessions', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
   userAgent: text('user_agent'),
+});
+
+const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({ dataType: () => 'bytea' });
+
+/** Company backups (spec 01b 2): the archive store of "Архивиране" / "Възстановяване". */
+export const companyBackups = pgTable('company_backups', {
+  id: integer('id').primaryKey().generatedByDefaultAsIdentity(),
+  fileName: varchar('file_name', { length: 255 }).notNull(),
+  companyName: varchar('company_name', { length: 255 }).notNull(),
+  database: varchar('database', { length: 128 }).notNull(),
+  version: varchar('version', { length: 20 }).notNull(),
+  kind: varchar('kind', { length: 20 }).notNull(),
+  size: integer('size').notNull(),
+  data: bytea('data').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });

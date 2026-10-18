@@ -12,6 +12,7 @@ import type { SQL } from 'drizzle-orm';
 import pg from 'pg';
 import * as companySchema from './company/schema/index.ts';
 import * as catalogSchema from './catalog/schema.ts';
+import { decodeLogicalDump, encodeLogicalDump, logicalDump, logicalRestore } from './logicalDump.ts';
 
 export type CompanySchema = typeof companySchema;
 export type CompanyDb = PgDatabase<PgQueryResultHKT, CompanySchema>;
@@ -125,10 +126,11 @@ export class PgliteDriver implements DbDriver {
     await this.dropCompanyDatabase(name);
     const dir = this.dir(name);
     if (dir) await mkdir(path.dirname(dir), { recursive: true });
-    const client = new PGlite(dir, { loadDataDir: new Blob([data as Uint8Array<ArrayBuffer>]) });
-    await client.waitReady;
-    await client.close();
-    if (!dir) {
+    if (dir) {
+      const client = new PGlite(dir, { loadDataDir: new Blob([data as Uint8Array<ArrayBuffer>]) });
+      await client.waitReady;
+      await client.close();
+    } else {
       // In-memory: keep the loaded instance.
       const c2 = new PGlite({ loadDataDir: new Blob([data as Uint8Array<ArrayBuffer>]) });
       const db = drizzlePglite(c2, { schema: companySchema });
@@ -212,12 +214,17 @@ export class PostgresDriver implements DbDriver {
     await this.catalogPool.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
   }
 
-  async dump(): Promise<Uint8Array> {
-    throw new Error('Backups on a Postgres server are made with pg_dump by the server administrator.');
+  /** Logical JSON dump (gzip), see logicalDump.ts. */
+  async dump(name: string): Promise<Uint8Array> {
+    return encodeLogicalDump(await logicalDump(await this.company(name)));
   }
 
-  async restore(): Promise<void> {
-    throw new Error('Restore on a Postgres server is done with pg_restore by the server administrator.');
+  /** Re-creates the database and loads a logical dump into it. */
+  async restore(name: string, data: Uint8Array): Promise<void> {
+    const dump = decodeLogicalDump(data);
+    await this.dropCompanyDatabase(name);
+    const db = await this.createCompanyDatabase(name);
+    await db.transaction((tx) => logicalRestore(tx, dump));
   }
 
   async close() {
