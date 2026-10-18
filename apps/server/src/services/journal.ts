@@ -53,6 +53,8 @@ export interface SaveContext {
   branchId?: number;
   /** Skip non-critical-only failure; critical messages always block. */
   force?: boolean;
+  /** Validation keys to drop (system entries, e.g. revaluation legs that move only the base amount of a currency account). */
+  ignoreKeys?: string[];
 }
 
 async function resolveDictionary(db: DbOrTx, table: typeof s.terms | typeof s.referenceTexts | typeof s.paragraphs, text: string | null | undefined) {
@@ -148,6 +150,7 @@ export async function saveEntry(db: DbOrTx, input: EntryInput, ctx: SaveContext,
     const [c] = await db.select({ id: s.companies.id }).from(s.companies).where(eq(s.companies.id, input.companyId));
     if (!c) messages.push({ key: 'strMissingCompany', text: JOURNAL_MESSAGES.strMissingCompany, severity: 'critical' });
   }
+  if (ctx.ignoreKeys?.length) for (let i = messages.length - 1; i >= 0; i--) if (ctx.ignoreKeys.includes(messages[i]!.key)) messages.splice(i, 1);
   if (hasCritical(messages)) throw new ApiError(422, JOURNAL_MESSAGES.strCannotCompleteOperation, messages);
 
   const termId = await resolveDictionary(db, s.terms, input.term);

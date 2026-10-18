@@ -8,3 +8,7 @@ export * from './amountInWords.ts';
 export * from './seeds/lookups.ts';
 export * from './seeds/chartCommercial.ts';
 export * from './seeds/permissions.ts';
+export * from './payments.ts';
+export * from './paymentDocuments.ts';
+export * from './revaluation.ts';
+export * from './closing.ts';

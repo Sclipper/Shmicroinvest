@@ -39,7 +39,7 @@ export const MENU: TopMenu[] = [
       { label: 'Контиране', permission: 'UI_Operations_Accounting', gesture: 'F2', screen: 'entry' },
       { label: 'Бързо контиране', permission: 'UI_Operations_FastAccounting', gesture: 'F12' },
       { label: 'Шаблони', permission: 'UI_Operations_Templates', gesture: 'Shift+F2' },
-      { label: 'Разплащания', permission: 'UI_Operations_Payments', gesture: 'F3' },
+      { label: 'Разплащания', permission: 'UI_Operations_Payments', gesture: 'F3', screen: 'payments' },
       { sep: true },
       {
         label: 'Стоково-материални запаси', permission: 'UI_Operations_Products', children: [
@@ -72,12 +72,23 @@ export const MENU: TopMenu[] = [
       {
         label: 'Автоматични операции', permission: 'UI_Operations_AutoOperations', children: [
           { label: 'Приключване на ДДС', permission: 'UI_Operations_AutoOperations_VAT' },
-          { label: 'Преоценка', permission: 'UI_Operations_AutoOperations_Reevaluation' },
-          { label: 'Приключване на разходни и приходни сметки', permission: 'UI_Operations_AutoOperations_ConcludeAccounts' },
-          { label: 'Закриване на документи', permission: 'UI_Operations_AutoOperations_DocumentsClosing' },
+          { label: 'Преоценка', permission: 'UI_Operations_AutoOperations_Reevaluation', gesture: 'Ctrl+E', screen: 'reevaluation' },
+          { label: 'Приключване на разходни и приходни сметки', permission: 'UI_Operations_AutoOperations_ConcludeAccounts', screen: 'concludeAccounts' },
+          { label: 'Автоматично приключване на сметки', permission: 'UI_Operations_AutoOperations_ConcludeChartOfAccounts', screen: 'autoConclude' },
+          { label: 'Закриване на документи', permission: 'UI_Operations_AutoOperations_DocumentsClosing', gesture: 'Ctrl+C', screen: 'documentsClosing' },
         ],
       },
-      { label: 'Платежни документи', permission: 'UI_Operations_PaymentDocuments' },
+      {
+        label: 'Платежни документи', permission: 'UI_Operations_PaymentDocuments', children: [
+          { label: 'Платежно нареждане за плащане от/към бюджета', permission: 'UI_Operations_PaymentDocuments_BlankBudgetDue', gesture: 'Ctrl+Shift+2', screen: 'paymentDoc5' },
+          { label: 'Вносна бележка за плащане към бюджета', permission: 'UI_Operations_PaymentDocuments_BudgetOrder', gesture: 'Ctrl+Shift+3', screen: 'paymentDoc6' },
+          { label: 'Платежно нареждане за кредитен превод', permission: 'UI_Operations_PaymentDocuments_OrderCredit', gesture: 'Ctrl+Shift+4', screen: 'paymentDoc3' },
+          { label: 'Платежно нареждане за директен дебит', permission: 'UI_Operations_PaymentDocuments_OrderDebit', gesture: 'Ctrl+Shift+5', screen: 'paymentDoc4' },
+          { label: 'Вносна бележка', permission: 'UI_Operations_PaymentDocuments_Due', gesture: 'Ctrl+Shift+6', screen: 'paymentDoc2' },
+          { label: 'Нареждане разписка', permission: 'UI_Operations_PaymentDocuments_Order', gesture: 'Ctrl+Shift+7', screen: 'paymentDoc1' },
+          { label: 'Нареждане за масово плащане', permission: 'UI_Operations_PaymentDocuments_OrderMassPayment', gesture: 'Ctrl+Shift+8', screen: 'paymentDoc8' },
+        ],
+      },
     ],
   },
   {
@@ -109,7 +120,13 @@ export const MENU: TopMenu[] = [
       { sep: true },
       {
         label: 'Фирми', permission: 'UI_Reporting_Companies', children: [
-          { label: 'Задължения/вземания по партньори', permission: 'UI_Reporting_Companies_PartnersDebtReport', gesture: 'Alt+P', screen: 'partnerTurnover' },
+          { label: 'Задължения/вземания по партньори', permission: 'UI_Reporting_Companies_PartnersDebtReport', gesture: 'Alt+P', screen: 'partnerDebts' },
+          { label: 'Оборотна ведомост по партньори', permission: 'UI_Reporting_Companies_PartnersDebtReport', screen: 'partnerTurnover' },
+          { label: 'Получени и издадени документи', permission: 'UI_Reporting_Companies_ReceivedAndIssuedDocuments', screen: 'receivedIssued' },
+          { label: 'Движение по партньор', permission: 'UI_Reporting_Companies_PartnerPaymentsAndDebtsReport', screen: 'partnerMovement' },
+          { label: 'Разплащания и обвързани документи', permission: 'UI_Reporting_Companies_PaymentsReport', gesture: 'Alt+R', screen: 'paymentsReport' },
+          { label: 'Потвърдително писмо за задължения/вземания', permission: 'UI_Reporting_Companies_LiabilitiesLetterReport', screen: 'confirmationLetter' },
+          { label: 'Просрочени задължения', permission: 'UI_Reporting_Companies_Overdues', screen: 'overdues' },
         ],
       },
       { sep: true },
@@ -118,6 +135,14 @@ export const MENU: TopMenu[] = [
       { sep: true },
       { label: 'Индивидуален сметкоплан', permission: 'UI_Reporting_ChartOfAccountsReport', screen: 'chartReport' },
       { label: 'Действия по потребители', permission: 'UI_Reporting_UsersActivitiesReport', screen: 'activity' },
+      { sep: true },
+      {
+        label: 'Каса', permission: 'UI_Reporting_CashReports', children: [
+          { label: 'Касова наличност и вземания', permission: 'UI_Reporting_CashReports_CashAndReceivables', screen: 'cashAndReceivables' },
+          { label: 'Касова книга', permission: 'UI_Reporting_CashReports_CashBook', screen: 'cashBook' },
+          { label: 'Касов ордер', permission: 'UI_Reporting_CashReports_CashOrder', screen: 'cashOrder' },
+        ],
+      },
     ],
   },
   {
@@ -156,4 +181,4 @@ export function gestureOf(e: KeyboardEvent): string {
 }
 
 /** Browser-reserved combinations we do not try to bind (Ctrl+W/T/N close/open browser tabs). */
-export const UNBINDABLE = new Set(['Ctrl+W', 'Ctrl+T', 'Ctrl+N', 'Ctrl+F4']);
+export const UNBINDABLE = new Set(['Ctrl+W', 'Ctrl+T', 'Ctrl+N', 'Ctrl+F4', 'Ctrl+C']);
