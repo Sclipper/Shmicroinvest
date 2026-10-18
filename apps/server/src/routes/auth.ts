@@ -12,6 +12,7 @@ import { createSession, destroySession, readSession, permissionResolver } from '
 import { PRODUCT_VERSION, seedCompany } from '../services/companySetup.ts';
 import { logActivity } from '../services/audit.ts';
 import { logApp } from '../services/appLog.ts';
+import { transferEntities } from '../services/transfer.ts';
 
 /** Physical name of a new company database: delta_<yyMMddHHmmss><random>. */
 function newDatabaseName() {
@@ -53,23 +54,31 @@ export const authRoutes = new Hono<AppEnv>()
     year: z.number().int().min(1901).max(2078),
     bulstat: z.string().trim().max(50).optional(),
     chartTemplate: z.enum(['commercial', 'nonProfit', 'budget']).nullable().optional(),
+    /** Data carried over from the active company (01b 1.2 TransferEntities). */
+    transfer: z.object({ chartOfAccounts: z.boolean().optional(), users: z.boolean().optional(), partners: z.boolean().optional(), accountings: z.boolean().optional() }).optional(),
   })), async (c) => {
     const body = c.req.valid('json');
     const catalog = await c.var.driver.catalog();
     const existing = await catalog.select().from(cat.companiesCatalog);
+    let sourceDb: string | null = null;
     if (existing.length > 0) {
       const session = await readSession(c);
       if (!session?.companyDb || !session.userId) throw new ApiError(403, 'Само влязъл потребител може да създава нови фирми.');
       const db = await c.var.driver.company(session.companyDb);
       const [u] = await db.select().from(s.users).where(eq(s.users.id, session.userId));
       if (!u || !(await permissionResolver(db, u.userRoleId))('UI_File_NewCompany')) throw new ApiError(403, 'Нямате права за тази операция.');
+      sourceDb = session.companyDb;
     }
+    const transfer = body.transfer && Object.values(body.transfer).some(Boolean) ? body.transfer : null;
+    if (transfer && !sourceDb) throw new ApiError(400, 'Няма активна фирма, от която да се прехвърлят данни.');
+    const copiesChart = !!(transfer?.chartOfAccounts || transfer?.accountings);
     if (!isStrongPassword(body.adminPassword)) throw new ApiError(400, 'Паролата трябва да е поне 6 символа.');
     const name = newDatabaseName();
     const db = await c.var.driver.createCompanyDatabase(name);
     try {
       await db.transaction(async (tx) => {
-        await seedCompany(tx, { ...body, chartTemplate: body.chartTemplate ?? 'commercial' });
+        await seedCompany(tx, { ...body, chartTemplate: copiesChart ? null : body.chartTemplate ?? 'commercial' });
+        if (transfer) await transferEntities(await c.var.driver.company(sourceDb!), tx, transfer);
       });
     } catch (e) {
       await c.var.driver.dropCompanyDatabase(name);

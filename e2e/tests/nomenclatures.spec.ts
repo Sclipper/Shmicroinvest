@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { activeTab, api, menu, openApp } from './fixtures.ts';
+import { ADMIN, COMPANY, accountId, activeTab, api, menu, openApp } from './fixtures.ts';
 
 test('partner groups: create, rename and filter the list', async ({ page }) => {
   await openApp(page);
@@ -67,4 +67,28 @@ test('change active user (Ctrl+0)', async ({ page }) => {
   // Operators may not manage users: the menu item is disabled.
   await menu(page, 'Редакция', 'Администриране');
   await expect(page.getByRole('button', { name: /^Потребители/ })).toBeDisabled();
+});
+
+test('new company: duplicate name asks, partners are carried over', async ({ page }) => {
+  // Own session: creating a company switches the session to it.
+  await page.context().clearCookies();
+  await page.goto('/');
+  await page.getByLabel('Парола').fill(ADMIN.password);
+  await page.getByRole('button', { name: 'Вход' }).click();
+  await expect(page.locator('footer')).toContainText(COMPANY.name);
+  await api(page, 'POST', '/partners', { name: 'Пренесен Партньор ООД', accountIds: [await accountId(page, '411')] });
+
+  await menu(page, 'Файл', 'Нова фирма...');
+  const dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Име на фирмата').fill(COMPANY.name);
+  await dialog.getByLabel('Парола', { exact: true }).fill(ADMIN.password);
+  await dialog.getByLabel('Повтори паролата').fill(ADMIN.password);
+  await dialog.getByText('Партньори', { exact: true }).click();
+  await dialog.getByRole('button', { name: 'Създай' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('Вече съществува фирма със същото име! Желаете ли да продължите?');
+  await dialog.getByRole('button', { name: 'Да', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  const partners = await api(page, 'GET', '/partners?q=Пренесен');
+  expect(partners.map((p: { name: string }) => p.name)).toEqual(['Пренесен Партньор ООД']);
+  expect((await api(page, 'GET', '/entries')).total).toBe(0);
 });

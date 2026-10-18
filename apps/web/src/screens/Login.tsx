@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api.ts';
-import { Button, ErrorText, Field, Select, TextInput } from '../components/ui.tsx';
+import { Button, Checkbox, ErrorText, Field, Select, TextInput } from '../components/ui.tsx';
 
 interface CompanyItem { name: string; companyName: string; version: string }
 
@@ -104,14 +104,27 @@ export function NewCompanyForm({ firstRun, onDone, onCancel }: { firstRun: boole
   const [f, setF] = useState({ companyName: '', bulstat: '', adminName: 'Администратор', adminPassword: '', confirm: '', year: new Date().getFullYear() });
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
-  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: k === 'year' ? Number(e.target.value) : e.target.value });
+  const [transfer, setTransfer] = useState({ chartOfAccounts: false, users: false, partners: false, accountings: false });
+  const dupConfirmed = useRef<string | null>(null);
+  const [dupWarning, setDupWarning] = useState(false);
+  const companies = useQuery({ queryKey: ['companies'], queryFn: () => api.get<CompanyItem[]>('/companies') });
+  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    setF({ ...f, [k]: k === 'year' ? Number(e.target.value) : e.target.value });
+    if (k === 'companyName') setDupWarning(false);
+  };
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (f.adminPassword !== f.confirm) return setError(new Error('Паролите не съвпадат.'));
+    // strDatabaseAlreadyExistsWarning (01b 1.2): a duplicate name only asks.
+    const name = f.companyName.trim().toLocaleLowerCase('bg');
+    if (dupConfirmed.current !== name && companies.data?.some((c) => c.companyName.trim().toLocaleLowerCase('bg') === name)) return setDupWarning(true);
     setBusy(true);
     setError(null);
     try {
-      const r = await api.post<{ name: string }>('/companies', { companyName: f.companyName, bulstat: f.bulstat || undefined, adminName: f.adminName, adminPassword: f.adminPassword, year: f.year, chartTemplate: 'commercial' });
+      const r = await api.post<{ name: string }>('/companies', {
+        companyName: f.companyName, bulstat: f.bulstat || undefined, adminName: f.adminName, adminPassword: f.adminPassword, year: f.year, chartTemplate: 'commercial',
+        transfer: firstRun ? undefined : transfer,
+      });
       localStorage.setItem('shmi.lastCompany', r.name);
       onDone();
     } catch (err) {
@@ -145,7 +158,36 @@ export function NewCompanyForm({ firstRun, onDone, onCancel }: { firstRun: boole
           <TextInput type="password" value={f.confirm} onChange={set('confirm')} autoComplete="new-password" required />
         </Field>
       </div>
-      <div className="text-[12px] text-slate-500">Фирмата се създава с Фирмен (Търговски) сметкоплан. От 2026 г. основната валута е евро.</div>
+      {!firstRun && (
+        <fieldset className="rounded-sm border border-slate-200 px-3 pt-1 pb-2">
+          <legend className="px-1 text-[12px] text-slate-500">Прехвърляне на данни от активната фирма</legend>
+          <div className="grid grid-cols-2 gap-1">
+            <Checkbox label="Сметкоплан" checked={transfer.chartOfAccounts || transfer.accountings} disabled={transfer.accountings} onChange={(v) => setTransfer({ ...transfer, chartOfAccounts: v })} />
+            <Checkbox label="Потребители" checked={transfer.users} onChange={(v) => setTransfer({ ...transfer, users: v })} />
+            <Checkbox label="Партньори" checked={transfer.partners || transfer.accountings} disabled={transfer.accountings} onChange={(v) => setTransfer({ ...transfer, partners: v })} />
+            <Checkbox label="Контировки" checked={transfer.accountings} onChange={(v) => setTransfer({ ...transfer, accountings: v })} />
+          </div>
+        </fieldset>
+      )}
+      <div className="text-[12px] text-slate-500">
+        {transfer.chartOfAccounts || transfer.accountings ? 'Сметкопланът се копира от активната фирма.' : 'Фирмата се създава с Фирмен (Търговски) сметкоплан.'} От 2026 г. основната валута е евро.
+      </div>
+      {dupWarning && (
+        <div role="alert" className="flex items-center gap-2 rounded-sm border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
+          <span className="flex-1">Вече съществува фирма със същото име! Желаете ли да продължите?</span>
+          <Button
+            variant="primary"
+            onClick={(e) => {
+              dupConfirmed.current = f.companyName.trim().toLocaleLowerCase('bg');
+              e.currentTarget.form?.requestSubmit();
+              setDupWarning(false);
+            }}
+          >
+            Да
+          </Button>
+          <Button onClick={() => setDupWarning(false)}>Не</Button>
+        </div>
+      )}
       <ErrorText error={error} />
       <div className="flex justify-end gap-2">
         {!firstRun && <Button onClick={onCancel}>Отказ</Button>}
