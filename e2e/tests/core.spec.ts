@@ -221,5 +221,7 @@ test.describe('opening balances', () => {
     await tab.getByRole('button', { name: 'Запис' }).click();
     await expect(page.getByText('Не е избран партньор за началното салдо!')).toBeVisible();
     await page.getByRole('button', { name: 'OK' }).click();
+    // A one-sided opening balance would unbalance the balance sheet for later specs.
+    await api(page, 'DELETE', `/initial-balances/${await accountId(page, '504')}`);
   });
 });

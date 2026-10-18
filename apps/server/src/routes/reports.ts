@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../context.ts';
 import { requirePermission } from '../session.ts';
-import { analyticalRegister, chartReport, generalLedger, partnerTurnover, trialBalance, type PeriodFilter } from '../services/reports.ts';
+import { analyticalRegister, chartReport, compareAccountNumbers, generalLedger, partnerTurnover, trialBalance, type PeriodFilter } from '../services/reports.ts';
+import { ledgerZeroTurnoverAccounts } from '../services/reportVariants.ts';
 
 /** Common query parameters: from, to, byExportMonth=1, companyId. */
 function period(q: Record<string, string>, year: number): PeriodFilter {
@@ -26,10 +27,17 @@ export const reportRoutes = new Hono<AppEnv>()
   })
   .get('/reports/general-ledger', requirePermission('UI_Reporting_GeneralLedger'), async (c) => {
     const q = c.req.query();
-    return c.json(await generalLedger(c.var.db, {
+    const o = {
       ...period(q, c.var.year.year), accountNumber: q.account || undefined,
       subAccountLevel: q.level ? Number(q.level) : 0, withBalances: q.balances !== '0',
-    }));
+    };
+    const groups = await generalLedger(c.var.db, o);
+    // "Включване на сметки със салда и с нулеви обороти" (with balances only, 05 4.1).
+    if (o.withBalances && q.zero === '1') {
+      groups.push(...(await ledgerZeroTurnoverAccounts(c.var.db, o, new Set(groups.map((g) => g.number)))));
+      groups.sort((a, b) => compareAccountNumbers(a.number, b.number));
+    }
+    return c.json(groups);
   })
   .get('/reports/analytical', requirePermission('UI_Reporting_AnalyticalReport'), async (c) => {
     const q = c.req.query();
