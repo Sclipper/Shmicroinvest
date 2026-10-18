@@ -122,6 +122,8 @@ export const userRoutes = new Hono<AppEnv>()
     const members = await db.select({ id: s.users.id }).from(s.users).where(and(eq(s.users.userRoleId, id), eq(s.users.isDeleted, false))).limit(1);
     if (members.length) throw badRequest('Групата не може да бъде изтрита, тъй като в нея има потребители.');
     await db.transaction(async (tx) => {
+      // Deleted users keep their group reference; park them on the root so the group row can go.
+      await tx.update(s.users).set({ userRoleId: 1 }).where(and(eq(s.users.userRoleId, id), eq(s.users.isDeleted, true)));
       await tx.delete(s.userRoles).where(eq(s.userRoles.id, id));
       await rebuildRoleTree(tx);
     });

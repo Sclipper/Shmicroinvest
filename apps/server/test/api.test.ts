@@ -128,5 +128,11 @@ describe('api', () => {
     expect(perms.find((p) => p.key === 'UI_File_NewCompany')!.effective).toBe(false);
     expect(perms.find((p) => p.key === 'UI_Operations_Accounting')!.effective).toBe(true);
     expect((await call('DELETE', '/users/1')).status).toBe(400);
+    // A group whose only member was deleted can itself be deleted.
+    const role = await call('POST', '/roles', { name: 'Временна' });
+    const temp = await call('POST', '/users', { name: 'Временен', password: 'parola1', roleId: role.body.id });
+    expect((await call('DELETE', `/roles/${role.body.id}`)).status).toBe(400);
+    await call('DELETE', `/users/${temp.body.id}`);
+    expect((await call('DELETE', `/roles/${role.body.id}`)).status).toBe(200);
   });
 });
