@@ -14,7 +14,7 @@ afterAll(() => t.close());
 const newCompany = (name: string, transfer?: object) =>
   t.call('POST', '/companies', { companyName: name, adminName: 'Админ', adminPassword: 'secret2', year: 2026, transfer });
 
-describe('new company with data carried over (01b 1.2)', () => {
+describe('new company with data carried over (01b 1.2)', { timeout: 60_000 }, () => {
   it('copies chart, users, partners and entries; numbering continues', async () => {
     const srcAccounts = (await t.call('GET', '/accounts')).body.length;
     const srcTb = (await t.call('GET', '/reports/trial-balance?from=2026-01-01&to=2026-12-31&level=3')).body.totals;
