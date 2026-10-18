@@ -32,7 +32,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
     p.resolve(v);
   };
   const apiValue: DialogApi = {
-    alert: async (text, title = 'Делта') => {
+    alert: async (text, title = 'Шмелта Про') => {
       await push({ kind: 'alert', title, text });
     },
     confirm: (text, title = 'Потвърждение') => push({ kind: 'confirm', title, text }),

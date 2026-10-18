@@ -1,48 +1,33 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createApp } from '../src/app.ts';
-import { PgliteDriver } from '../src/db/provider.ts';
+import { createTestCompany, type TestCompany } from './helpers.ts';
 
-const driver = new PgliteDriver();
-const app = createApp(driver);
-let cookie = '';
-
-async function call(method: string, url: string, body?: unknown) {
-  const res = await app.request(`/api${url}`, {
-    method,
-    headers: { 'content-type': 'application/json', cookie },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  for (const set of res.headers.getSetCookie()) cookie = set.split(';')[0]!;
-  const text = await res.text();
-  return { status: res.status, body: text ? JSON.parse(text) : null };
-}
-
-let accounts: { id: number; number: string }[] = [];
-const acc = (n: string) => accounts.find((a) => a.number === n)!.id;
+let t: TestCompany;
+let call: TestCompany['call'];
+let acc: TestCompany['acc'];
 
 beforeAll(async () => {
-  const r = await call('POST', '/companies', { companyName: 'Тест ООД', adminName: 'Администратор', adminPassword: 'secret1', year: 2026 });
-  expect(r.status).toBe(201);
-  accounts = (await call('GET', '/accounts')).body;
+  t = await createTestCompany();
+  call = t.call;
+  acc = t.acc;
 }, 60_000);
-afterAll(() => driver.close());
+afterAll(() => t.close());
 
 describe('api', () => {
   it('rejects anonymous company creation once a company exists', async () => {
-    const saved = cookie;
-    cookie = '';
+    const saved = t.session.get();
+    t.session.set('');
     const r = await call('POST', '/companies', { companyName: 'X', adminName: 'A', adminPassword: 'secret1', year: 2026 });
     expect(r.status).toBe(403);
     expect((await call('GET', '/session')).status).toBe(401);
-    cookie = saved;
+    t.session.set(saved);
   });
 
   it('logs in with the admin password only', async () => {
     const [company] = (await call('GET', '/companies')).body;
-    const saved = cookie;
+    const saved = t.session.get();
     expect((await call('POST', '/login', { companyDb: company.name, userId: 1, password: 'wrong' })).status).toBe(401);
     expect((await call('POST', '/login', { companyDb: company.name, userId: 1, password: 'secret1' })).status).toBe(200);
-    expect(cookie).not.toBe(saved);
+    expect(t.session.get()).not.toBe(saved);
   });
 
   it('exposes the session with a EUR base currency and seeded chart', async () => {

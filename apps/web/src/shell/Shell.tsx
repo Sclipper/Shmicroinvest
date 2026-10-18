@@ -23,7 +23,7 @@ export function Shell({ screens, onCommand }: { screens: Record<string, ScreenDe
     else if (item.command === 'closeCurrent') ws.active && closeTab(ws.active);
     else if (item.command === 'closeAll') ws.closeAll();
     else if (item.command === 'closeAllButCurrent') ws.closeAll(ws.active ?? undefined);
-    else if (item.command === 'about') void dialogs.alert('Шмикроинвест Делта — уеб счетоводна система, съвместима с Microinvest Делта Про 1.01.089.', 'За програмата');
+    else if (item.command === 'about') void dialogs.alert('Шмикроинвест Шмелта Про — уеб счетоводна система, съвместима с Microinvest Делта Про 1.01.089.', 'За програмата');
     else if (item.command) onCommand(item.command);
   };
 
@@ -102,8 +102,8 @@ function MenuBar({ run, screens }: { run: (i: Extract<MenuItem, { label: string 
   return (
     <div ref={ref} className="flex items-center border-b border-slate-300 bg-white px-1 text-[13px] select-none">
       <div className="mr-2 flex items-center gap-1.5 px-2 font-semibold text-brand-700">
-        <span className="grid size-5 place-items-center rounded-sm bg-brand-600 text-[11px] font-bold text-white">Δ</span>
-        Делта
+        <span className="grid size-5 place-items-center rounded-sm bg-brand-600 text-[11px] font-bold text-white">Ш</span>
+        Шмелта Про
       </div>
       {MENU.map((m, i) => (
         <div key={m.label} className="relative">

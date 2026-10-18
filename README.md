@@ -1,4 +1,4 @@
-# Shmicroinvest
+# Shmicroinvest Shmelta Pro (Шмикроинвест Шмелта Про)
 
 A web rebuild of Microinvest Delta Pro (v1.1.89), the Bulgarian double-entry accounting program. The UI is in Bulgarian and keeps Delta's desktop workflow: the main menu, the toolbar, keyboard shortcuts (F2, Ctrl+F2, Ctrl+P, Ctrl+H, Ctrl+Y, Alt+O…), and windows kept as tabs.
 

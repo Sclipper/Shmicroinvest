@@ -7,7 +7,7 @@ const app = createApp(driver, { serveWeb: true });
 const port = Number(process.env.PORT ?? 3000);
 
 const server = serve({ fetch: app.fetch, port, hostname: process.env.HOST ?? '0.0.0.0' }, (info) => {
-  console.log(`Shmicroinvest API on http://localhost:${info.port} (${driver.kind})`);
+  console.log(`Shmicroinvest Shmelta Pro API on http://localhost:${info.port} (${driver.kind})`);
 });
 
 const shutdown = async () => {

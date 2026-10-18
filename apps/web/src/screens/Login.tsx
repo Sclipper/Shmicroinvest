@@ -24,9 +24,9 @@ export function Login() {
     <div className="flex h-full items-center justify-center bg-gradient-to-br from-brand-900 via-brand-700 to-brand-500 p-4">
       <div className="w-[440px] overflow-hidden rounded-sm bg-white shadow-2xl">
         <div className="flex items-center gap-3 bg-gradient-to-b from-brand-600 to-brand-700 px-5 py-4 text-white">
-          <span className="grid size-9 place-items-center rounded-sm bg-white/15 text-xl font-bold">Δ</span>
+          <span className="grid size-9 place-items-center rounded-sm bg-white/15 text-xl font-bold">Ш</span>
           <div>
-            <div className="text-lg font-semibold">Шмикроинвест Делта</div>
+            <div className="text-lg font-semibold">Шмикроинвест Шмелта Про</div>
             <div className="text-[12px] opacity-80">Счетоводство за малки и средни фирми</div>
           </div>
         </div>

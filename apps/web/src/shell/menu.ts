@@ -135,7 +135,7 @@ export const MENU: TopMenu[] = [
   },
   {
     label: 'Помощ', permission: 'UI_Help', items: [
-      { label: 'За програмата', permission: 'UI_Help_About', command: 'about' },
+      { label: 'За Шмелта Про', permission: 'UI_Help_About', command: 'about' },
     ],
   },
 ];
