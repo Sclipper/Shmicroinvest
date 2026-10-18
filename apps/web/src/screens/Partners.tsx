@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { Plus, Save, Trash2, UserPlus } from 'lucide-react';
+import { Plus, Save, Search, Trash2, UserPlus } from 'lucide-react';
 import { isCompanyCategory, isValidIban } from '@shmi/core';
 import { api, qs } from '../api.ts';
 import { useDialogs } from '../components/dialogs.tsx';
@@ -98,6 +98,26 @@ export function Partners() {
 
   const set = <K extends keyof Partner>(k: K, v: Partner[K]) => form && setForm({ ...form, [k]: v });
 
+  // Online lookup (03a 2.5): fills name, EIK, VAT number and the registration address.
+  const [looking, setLooking] = useState(false);
+  const lookup = async () => {
+    if (!form) return;
+    setLooking(true);
+    try {
+      const r = await api.get<{ companyName: string; bulstat: string; vatNumber: string; isVatRegistered: boolean; city: string; postalCode: string; location: string; countryCode: string }>(
+        `/partners/lookup${qs({ bulstat: form.bulstat.trim(), vatNumber: form.vatNumber.trim(), name: form.name.trim() })}`,
+      );
+      const countryId = lookups.data?.countries.find((c) => c.code === r.countryCode)?.id ?? bgId;
+      const registration: Address = { addressTypeId: 1, countryId, city: r.city.slice(0, 50), postalCode: /^\d{1,10}$/.test(r.postalCode) ? r.postalCode : '', address: r.location, phone: '' };
+      const addresses = r.city || r.location ? [registration, ...form.addresses.filter((x) => x.addressTypeId !== 1)].slice(0, 3) : form.addresses;
+      setForm({ ...form, name: r.companyName || form.name, bulstat: r.bulstat || form.bulstat, vatNumber: r.vatNumber, isVat: r.isVatRegistered, addresses });
+    } catch (e) {
+      await dialogs.error(e, 'Търсене на данните за фирма');
+    } finally {
+      setLooking(false);
+    }
+  };
+
   return (
     <div className="flex h-full flex-col">
       <CommandBar>
@@ -168,7 +188,21 @@ export function Partners() {
                     </Field>
                     <div className="grid grid-cols-2 gap-2">
                       <Field label="Идент. № (ЕИК/ЕГН)">
-                        <TextInput value={form.bulstat} onChange={(e) => setForm({ ...form, bulstat: e.target.value, ...(form.isVat && e.target.value.trim() ? { vatNumber: `BG${e.target.value.trim()}` } : {}) })} />
+                        <div className="flex gap-1">
+                          <TextInput
+                            value={form.bulstat}
+                            onChange={(e) => setForm({ ...form, bulstat: e.target.value, ...(form.isVat && e.target.value.trim() ? { vatNumber: `BG${e.target.value.trim()}` } : {}) })}
+                            onKeyDown={(e) => {
+                              if (e.ctrlKey && e.key.toLowerCase() === 's') {
+                                e.preventDefault();
+                                void lookup();
+                              }
+                            }}
+                          />
+                          <Button className="px-2" title="Търсене на данните по ЕИК / ДДС номер (Ctrl+S)" icon={<Search className="size-3.5" />} disabled={looking || !(form.bulstat.trim() || form.vatNumber.trim())} onClick={lookup}>
+                            Търсене
+                          </Button>
+                        </div>
                       </Field>
                       <Field label="ДДС номер">
                         <div className="flex gap-1">

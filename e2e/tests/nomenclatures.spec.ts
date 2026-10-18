@@ -106,3 +106,19 @@ test('chart: delete asks with the spec text; a used account lists why it cannot 
   await page.getByRole('dialog').getByRole('button', { name: 'Да', exact: true }).click();
   await expect(page.getByText('Сметката има подсметки.')).toBeVisible();
 });
+
+test('partner lookup fills the form from the EIK (server answer stubbed)', async ({ page }) => {
+  await page.route('**/api/partners/lookup?*', (route) =>
+    route.fulfill({ json: { companyName: 'ИНФОРМАЦИОННО ОБСЛУЖВАНЕ - АД', bulstat: '831641791', vatNumber: 'BG831641791', isVatRegistered: true, city: 'СОФИЯ', postalCode: '1504', location: 'ул. ПАНАЙОТ ВОЛОВ №2', countryCode: 'BG', address: '' } }));
+  await openApp(page);
+  await page.keyboard.press('Control+p');
+  const tab = activeTab(page);
+  await tab.getByRole('button', { name: 'Нова фирма' }).click();
+  await tab.getByLabel('Идент. № (ЕИК/ЕГН)').fill('831641791');
+  await tab.getByRole('button', { name: 'Търсене', exact: true }).click();
+  await expect(tab.getByLabel('Име', { exact: true })).toHaveValue('ИНФОРМАЦИОННО ОБСЛУЖВАНЕ - АД');
+  await expect(tab.getByLabel('ДДС номер')).toHaveValue('BG831641791');
+  await tab.getByRole('button', { name: 'Адреси' }).click();
+  await expect(tab.locator('input[value="СОФИЯ"]')).toBeVisible();
+  await expect(tab.locator('input[value="1504"]')).toBeVisible();
+});

@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { lookupCompany } from '../services/companyLookup.ts';
 import { zValidator } from '../lib/validate.ts';
 import { z } from 'zod';
 import { and, asc, desc, eq, ilike, inArray, ne, or, sql } from 'drizzle-orm';
@@ -219,6 +220,12 @@ export const nomenclatureRoutes = new Hono<AppEnv>()
       address: sql<string | null>`(SELECT address FROM addresses ad WHERE ad.owner_type = 'company' AND ad.owner_id = companies.id ORDER BY ad.is_primary DESC, ad.id LIMIT 1)`,
     }).from(s.companies).where(and(...conds)).orderBy(desc(s.companies.priority), asc(s.companies.name)).limit(Number(c.req.query('limit') ?? 500));
     return c.json(rows);
+  })
+
+  /** Online lookup of a partner by EIK / VAT number (03a 2.5; VIES). */
+  .get('/partners/lookup', requirePermission('UI_Edit_Companies'), async (c) => {
+    const q = c.req.query();
+    return c.json(await lookupCompany({ bulstat: q.bulstat, vatNumber: q.vatNumber, name: q.name }));
   })
 
   .get('/partners/:id', async (c) => c.json(await loadPartner(c.var.db, Number(c.req.param('id')))))
