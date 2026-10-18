@@ -145,7 +145,7 @@ function MenuList({ items, pick, screens, nested }: { items: MenuItem[]; pick: (
               onClick={() => !it.children && pick(it)}
               className={cx('flex w-full items-center gap-6 px-4 py-1 text-left', enabled ? 'hover:bg-brand-500 hover:text-white' : 'text-slate-400')}
             >
-              <span className="flex-1">{it.label}</span>
+              <span className="flex-1 whitespace-nowrap">{it.label}</span>
               {it.gesture && <span className="text-[11px] opacity-70">{it.gesture}</span>}
               {it.children && <ChevronRight className="size-3.5" />}
             </button>
@@ -159,7 +159,7 @@ function MenuList({ items, pick, screens, nested }: { items: MenuItem[]; pick: (
 
 const TOOLBAR = [
   { screen: 'entry', label: 'Контиране', icon: FilePlus2, permission: 'UI_Operations_Accounting' },
-  { screen: 'journal', label: 'Операции', icon: ScrollText, permission: 'UI_Edit_Accountings' },
+  { screen: 'journal', label: 'Журнал', icon: ScrollText, permission: 'UI_Edit_Accountings' },
   { screen: 'partners', label: 'Партньори', icon: Users, permission: 'UI_Edit_Companies' },
   { screen: 'chart', label: 'Сметкоплан', icon: ListTree, permission: 'UI_Operations_ChartOfAccounts_IndividualChartOfAccounts' },
   { screen: 'trialBalance', label: 'Оборотна', icon: Scale, permission: 'UI_Reporting_TurnoverReport' },

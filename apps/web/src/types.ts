@@ -31,15 +31,15 @@ export interface Account {
 }
 
 export interface Lookups {
-  documentTypes: { id: number; name: string; shortName: string; code: string; channel: number; visible: boolean; position: number }[];
-  vatTerms: { id: number; code: string; description: string; percent?: string }[];
-  transactionTypes: { id: number; name: string }[];
-  vieses: { id: number; name: string; code?: string }[];
+  documentTypes: { id: number; name: string; shortName: string; code: string; sequenceChannel: number; isVisible: boolean; isEditable: boolean; position: number }[];
+  vatTerms: { id: number; transactionTypeId: number; description: string; vatValue: string; defaultViesId: number | null }[];
+  transactionTypes: { id: number; description: string }[];
+  vieses: { id: number; description: string }[];
   icaTypes: { id: number; name: string }[];
   currencies: { id: number; isoCode: string; name: string; exchangeRate: string; fixedRate: string }[];
   countries: { id: number; code: string; name: string }[];
   banks: { id: number; name: string; code: string; bic?: string }[];
-  addressTypes: { id: number; name: string }[];
+  addressTypes: { id: number; description: string }[];
   branches: { id: number; name: string }[];
   companyGroups: { id: number; name: string; parentId: number | null; level: number }[];
 }

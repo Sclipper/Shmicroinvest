@@ -64,6 +64,11 @@ describe('api', () => {
     const dup = await call('POST', '/partners', { name: 'Друг', bulstat: '831641791', accountIds: [acc('411')] });
     expect(dup.status).toBe(422);
     expect(dup.body.messages.map((m: { key: string }) => m.key)).toContain('strCompanyBulstatExists');
+    // List shows the partner's own address (owner ids differ from address ids).
+    const withAddr = await call('POST', '/partners', { name: 'Доставчик АД', accountIds: [acc('401')], addresses: [{ city: 'Пловдив', address: 'ул. Главна 5' }] });
+    expect(withAddr.status).toBe(201);
+    const listed = (await call('GET', '/partners?q=Доставчик')).body[0];
+    expect([listed.city, listed.address]).toEqual(['Пловдив', 'ул. Главна 5']);
     const notPartner = await call('POST', '/partners', { name: 'Трети', accountIds: [acc('501')] });
     expect(notPartner.body.messages.map((m: { key: string }) => m.key)).toContain('strAccountDoesNotSupportCompanies');
   });

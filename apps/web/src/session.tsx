@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api.ts';
 import type { Account, Lookups, Session } from './types.ts';
+import { compareAccountNumbers } from './format.ts';
 
 export function useSessionQuery() {
   return useQuery({ queryKey: ['session'], queryFn: () => api.get<Session>('/session'), retry: false, staleTime: 60_000 });
@@ -24,7 +25,7 @@ export function useLookups() {
 
 export function useAccounts() {
   const s = useSessionQuery();
-  return useQuery({ queryKey: ['accounts', s.data?.year.year], queryFn: () => api.get<Account[]>('/accounts'), staleTime: 60_000, enabled: !!s.data });
+  return useQuery({ queryKey: ['accounts', s.data?.year.year], queryFn: async () => (await api.get<Account[]>('/accounts')).sort((a, b) => compareAccountNumbers(a.number, b.number)), staleTime: 60_000, enabled: !!s.data });
 }
 
 export function useInvalidate() {

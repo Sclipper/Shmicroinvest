@@ -191,8 +191,8 @@ export const nomenclatureRoutes = new Hono<AppEnv>()
       id: s.companies.id, name: s.companies.name, bulstat: s.companies.bulstat, vatNumber: s.companies.vatNumber,
       isVat: s.companies.isVat, priority: s.companies.priority, groupId: s.companies.groupId, isNotUsing: s.companies.isNotUsing,
       contactName: s.companies.contactName, dueDays: s.companies.dueDays,
-      city: sql<string | null>`(SELECT city FROM addresses ad WHERE ad.owner_type = 'company' AND ad.owner_id = ${s.companies.id} ORDER BY ad.is_primary DESC, ad.id LIMIT 1)`,
-      address: sql<string | null>`(SELECT address FROM addresses ad WHERE ad.owner_type = 'company' AND ad.owner_id = ${s.companies.id} ORDER BY ad.is_primary DESC, ad.id LIMIT 1)`,
+      city: sql<string | null>`(SELECT city FROM addresses ad WHERE ad.owner_type = 'company' AND ad.owner_id = companies.id ORDER BY ad.is_primary DESC, ad.id LIMIT 1)`,
+      address: sql<string | null>`(SELECT address FROM addresses ad WHERE ad.owner_type = 'company' AND ad.owner_id = companies.id ORDER BY ad.is_primary DESC, ad.id LIMIT 1)`,
     }).from(s.companies).where(and(...conds)).orderBy(desc(s.companies.priority), asc(s.companies.name)).limit(Number(c.req.query('limit') ?? 500));
     return c.json(rows);
   })

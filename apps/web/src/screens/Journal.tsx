@@ -16,12 +16,12 @@ interface Row {
 const PAGE = 200;
 
 /** Редакция на контиране (Ctrl+F2): list with period/text filters (spec 02a 7). */
-export function Journal() {
+export function Journal({ initial = false }: { initial?: boolean; tab?: unknown }) {
   const s = useSession();
   const ws = useWorkspace();
   const can = useCan();
   const lookups = useLookups();
-  const [f, setF] = useState({ from: `${s.year.year}-01-01`, to: `${s.year.year}-12-31`, text: '', account: '', documentTypeId: '', initial: '' });
+  const [f, setF] = useState({ from: `${s.year.year}-01-01`, to: `${s.year.year}-12-31`, text: '', account: '', documentTypeId: '', initial: initial ? '1' : '' });
   const [applied, setApplied] = useState(f);
   const [page, setPage] = useState(0);
   const [sel, setSel] = useState<number | null>(null);
@@ -39,8 +39,8 @@ export function Journal() {
   return (
     <div className="flex h-full flex-col">
       <CommandBar right={<span className="text-[12px] text-slate-500">{q.data ? `${q.data.total} контировки` : ''}</span>}>
-        <Button variant="primary" icon={<FilePlus2 className="size-3.5" />} onClick={() => ws.open('entry')} disabled={!can('UI_Operations_Accounting')}>
-          Ново (F2)
+        <Button variant="primary" icon={<FilePlus2 className="size-3.5" />} onClick={() => ws.open('entry', initial ? { title: 'Начално салдо', params: { initial: true } } : undefined)} disabled={!can(initial ? 'UI_Operations_ChartOfAccounts_ChartOfAccountsBalance' : 'UI_Operations_Accounting')}>
+          {initial ? 'Ново начално салдо' : 'Ново (F2)'}
         </Button>
         <Button icon={<Pencil className="size-3.5" />} disabled={!sel} onClick={() => sel && edit(sel)}>
           Редакция
@@ -68,7 +68,7 @@ export function Journal() {
         <Field label="Тип документ">
           <Select value={f.documentTypeId} onChange={(e) => setF({ ...f, documentTypeId: e.target.value })} className="w-44">
             <option value="">Всички</option>
-            {lookups.data?.documentTypes.filter((t) => t.visible).map((t) => (
+            {lookups.data?.documentTypes.filter((t) => t.isVisible).map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
               </option>

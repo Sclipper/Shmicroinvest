@@ -102,7 +102,7 @@ export function EntryEditor({ tab }: ScreenProps) {
   const td = totals(d.debits);
   const tc = totals(d.credits);
   const diff = td.minus(tc);
-  const docTypes = lookups.data.documentTypes.filter((t) => t.visible || t.id === d.documentTypeId);
+  const docTypes = lookups.data.documentTypes.filter((t) => t.isVisible || t.id === d.documentTypeId);
   const readOnly = !!d.id && !can('UI_Edit_Accountings');
 
   const setLine = (side: 'debits' | 'credits', i: number, p: Partial<Line>) => {
@@ -272,7 +272,7 @@ export function EntryEditor({ tab }: ScreenProps) {
             <Select value={d.transactionTypeId} onChange={(e) => patch({ transactionTypeId: Number(e.target.value) })}>
               {lookups.data.transactionTypes.map((t) => (
                 <option key={t.id} value={t.id}>
-                  {t.name}
+                  {t.description}
                 </option>
               ))}
             </Select>
@@ -317,7 +317,7 @@ export function EntryEditor({ tab }: ScreenProps) {
 }
 
 function LinesGrid({ title, lines, byId, headerCompanyId, vatTerms, total, onChange, onAdd, onRemove }: {
-  title: string; lines: Line[]; byId: Map<number, Account>; headerCompanyId: number | null; vatTerms: { id: number; code: string; description: string }[];
+  title: string; lines: Line[]; byId: Map<number, Account>; headerCompanyId: number | null; vatTerms: { id: number; description: string; vatValue: string }[];
   total: ReturnType<typeof dec>; onChange: (i: number, p: Partial<Line>) => void; onAdd: () => void; onRemove: (i: number) => void;
 }) {
   const accs = lines.map((l) => (l.accountId ? byId.get(l.accountId) : undefined));
@@ -378,7 +378,7 @@ function LinesGrid({ title, lines, byId, headerCompanyId, vatTerms, total, onCha
                     <option value="" />
                     {vatTerms.map((v) => (
                       <option key={v.id} value={v.id} title={v.description}>
-                        {v.code} {v.description.slice(0, 40)}
+                        {v.description}
                       </option>
                     ))}
                   </Select>

@@ -139,14 +139,14 @@ export function Partners() {
             </table>
           )}
         </div>
-        <aside className="flex w-[460px] shrink-0 flex-col bg-slate-50">
+        <aside className="flex w-[500px] shrink-0 flex-col bg-slate-50">
           {!form ? (
             <Empty>Изберете партньор или „Нова фирма“</Empty>
           ) : (
             <>
               <div className="flex gap-px border-b border-slate-300 bg-slate-200 px-2 pt-1 text-[12.5px]">
                 {([['main', 'Основни данни'], ['other', 'Други данни'], ['addresses', 'Адреси'], ['banks', 'Банкови сметки'], ['accounts', 'Сметки']] as [TabId, string][]).map(([id, label]) => (
-                  <button key={id} onClick={() => setTab(id)} className={cx('rounded-t-sm px-2.5 py-1', tab === id ? 'bg-slate-50 font-medium' : 'text-slate-600 hover:bg-slate-100')}>
+                  <button key={id} onClick={() => setTab(id)} className={cx('rounded-t-sm px-2 py-1 whitespace-nowrap', tab === id ? 'bg-slate-50 font-medium' : 'text-slate-600 hover:bg-slate-100')}>
                     {label}
                   </button>
                 ))}
@@ -209,7 +209,7 @@ export function Partners() {
                           <Field label="Тип">
                             <Select value={a.addressTypeId ?? ''} onChange={(e) => set('addresses', form.addresses.map((x, j) => (j === i ? { ...x, addressTypeId: e.target.value ? Number(e.target.value) : null } : x)))}>
                               <option value="" />
-                              {lookups.data?.addressTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                              {lookups.data?.addressTypes.map((t) => <option key={t.id} value={t.id}>{t.description}</option>)}
                             </Select>
                           </Field>
                           <Field label="Държава">

@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, FolderPlus, Plus, Save, Trash2 } from 'lucide-react';
 import { ACCOUNT_CATEGORIES } from '@shmi/core';
 import { api } from '../api.ts';
-import { money } from '../format.ts';
+import { compareAccountNumbers as cmp, money } from '../format.ts';
 import { useDialogs } from '../components/dialogs.tsx';
 import { Button, Checkbox, CommandBar, Empty, Field, Panel, Select, Spinner, TextInput, cx } from '../components/ui.tsx';
 import { useAccounts, useCan, useInvalidate, useLookups, useSession } from '../session.tsx';
@@ -257,17 +257,4 @@ export function ChartOfAccounts() {
       </div>
     </div>
   );
-}
-
-/** Account sort order (spec 05 2.1): first part as text, further parts numerically. */
-function cmp(a: string, b: string) {
-  const pa = a.split('/');
-  const pb = b.split('/');
-  if (pa[0] !== pb[0]) return pa[0]! < pb[0]! ? -1 : 1;
-  for (let i = 1; i < Math.max(pa.length, pb.length); i++) {
-    const x = Number(pa[i] ?? -1);
-    const y = Number(pb[i] ?? -1);
-    if (x !== y) return x - y;
-  }
-  return 0;
 }

@@ -14,6 +14,7 @@
 html, body, #root { height: 100%; }
 body { font-size: 13px; @apply bg-slate-100 text-slate-900 antialiased; }
 
+@layer components {
 .num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
 
 /* Dense desktop grid */
@@ -27,3 +28,4 @@ body { font-size: 13px; @apply bg-slate-100 text-slate-900 antialiased; }
 .grid-table tfoot td { @apply sticky bottom-0 bg-slate-200 px-2 py-1 font-semibold border-t border-r border-slate-300 whitespace-nowrap; }
 
 .field-input { @apply h-7 w-full rounded-sm border border-slate-300 bg-white px-2 text-[13px] outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200 disabled:bg-slate-100 disabled:text-slate-500; }
+}

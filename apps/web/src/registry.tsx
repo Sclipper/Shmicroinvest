@@ -9,6 +9,7 @@ import { ADMIN_SCREENS } from './registry.admin.tsx';
 const defs: ScreenDef[] = [
   { id: 'entry', title: 'Контиране', component: EntryEditor, permission: 'UI_Operations_Accounting', multi: true },
   { id: 'journal', title: 'Редакция на контиране', component: Journal, permission: 'UI_Edit_Accountings' },
+  { id: 'initialBalances', title: 'Начални салда', component: () => <Journal initial />, permission: 'UI_Operations_ChartOfAccounts_ChartOfAccountsBalance' },
   { id: 'chart', title: 'Индивидуален сметкоплан', component: ChartOfAccounts, permission: 'UI_Operations_ChartOfAccounts_IndividualChartOfAccounts' },
   { id: 'partners', title: 'Партньори', component: Partners, permission: 'UI_Edit_Companies' },
   ...REPORT_SCREENS,
