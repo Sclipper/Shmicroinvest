@@ -282,7 +282,7 @@ export async function journalLines(db: DbOrTx, o: JournalLineFilter) {
   if (o.debitAccount) conds.push(accountRuleSql(sql`da.number`, o.debitAccount, o.debitWithSub ?? true));
   if (o.creditAccount) conds.push(accountRuleSql(sql`ca.number`, o.creditAccount, o.creditWithSub ?? true));
   if (o.account) conds.push(sql`(${accountRuleSql(sql`da.number`, o.account, o.accountWithSub ?? true)} OR ${accountRuleSql(sql`ca.number`, o.account, o.accountWithSub ?? true)})`);
-  if (o.companyIds?.length) conds.push(sql`d.company_id IN (${sql.join(o.companyIds.map((c) => sql`${c}`), sql`, `)})`);
+  if (o.companyIds?.length) conds.push(sql`co.id IN (${sql.join(o.companyIds.map((c) => sql`${c}`), sql`, `)})`);
   if (o.fromNumber) conds.push(sql`a.number >= ${o.fromNumber}`);
   if (o.toNumber) conds.push(sql`a.number <= ${o.toNumber}`);
   if (o.documentTypeId) conds.push(sql`doc.document_type_id = ${o.documentTypeId}`);
@@ -305,7 +305,8 @@ export async function journalLines(db: DbOrTx, o: JournalLineFilter) {
       JOIN accountings a ON a.id = d.accounting_id
       JOIN accounts da ON da.id = d.account_id
       JOIN accounts ca ON ca.id = d.ref_account_id
-      LEFT JOIN companies co ON co.id = d.company_id
+      LEFT JOIN companies co ON co.id = coalesce(d.company_id, (SELECT m.company_id FROM accounting_details m WHERE m.accounting_id = d.accounting_id AND m.sign = -1
+        AND m.account_id = d.ref_account_id AND m.ref_account_id = d.account_id AND m.company_id IS NOT NULL LIMIT 1))
       LEFT JOIN documents doc ON doc.id = a.document_id
       LEFT JOIN document_types dt ON dt.id = doc.document_type_id
       LEFT JOIN terms t ON t.id = a.term_id
