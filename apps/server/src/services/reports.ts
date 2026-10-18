@@ -77,7 +77,7 @@ function ancestorsOf(a: TreeAccount, byId: Map<number, TreeAccount>) {
 }
 
 export interface TrialBalanceOptions extends PeriodFilter {
-  accountNumber?: string;
+  /** Deepest tree level shown, counted from the classes: 0 = classes ("5"), 1 = groups ("50"), 2 = synthetic ("501"), 3+ = analytic levels. */
   /** 0 = synthetic, 1..5 analytical levels. */
   subAccountLevel?: number;
   showZeroRows?: boolean;

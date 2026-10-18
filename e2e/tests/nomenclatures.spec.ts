@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { ADMIN, COMPANY, accountId, activeTab, api, menu, openApp } from './fixtures.ts';
+import { ADMIN, COMPANY, accountId, activeTab, api, loginFresh, menu, openApp } from './fixtures.ts';
 
 test('partner groups: create, rename and filter the list', async ({ page }) => {
   await openApp(page);
@@ -55,7 +55,7 @@ test('branches of the own company and switching the active branch', async ({ pag
 });
 
 test('change active user (Ctrl+0)', async ({ page }) => {
-  await openApp(page);
+  await loginFresh(page);
   await api(page, 'POST', '/users', { name: 'Оператор Е2Е', password: 'parola1', roleId: 5 });
   await page.keyboard.press('Control+0');
   const dlg = page.getByRole('dialog');
@@ -71,10 +71,7 @@ test('change active user (Ctrl+0)', async ({ page }) => {
 
 test('new company: duplicate name asks, partners are carried over', async ({ page }) => {
   // Own session: creating a company switches the session to it.
-  await page.context().clearCookies();
-  await page.goto('/');
-  await page.getByLabel('Парола').fill(ADMIN.password);
-  await page.getByRole('button', { name: 'Вход' }).click();
+  await loginFresh(page);
   await expect(page.locator('footer')).toContainText(COMPANY.name);
   await api(page, 'POST', '/partners', { name: 'Пренесен Партньор ООД', accountIds: [await accountId(page, '411')] });
 
@@ -91,4 +88,21 @@ test('new company: duplicate name asks, partners are carried over', async ({ pag
   const partners = await api(page, 'GET', '/partners?q=Пренесен');
   expect(partners.map((p: { name: string }) => p.name)).toEqual(['Пренесен Партньор ООД']);
   expect((await api(page, 'GET', '/entries')).total).toBe(0);
+});
+
+test('chart: delete asks with the spec text; a used account lists why it cannot be deleted', async ({ page }) => {
+  await openApp(page);
+  await page.keyboard.press('Control+h');
+  const tab = activeTab(page);
+  await tab.getByPlaceholder('Търсене по номер или име').fill('109');
+  await tab.getByRole('cell', { name: '109', exact: true }).click();
+  await tab.getByRole('button', { name: 'Изтриване' }).click();
+  await expect(page.getByText('Желаете ли да изтриете избраната сметка?')).toBeVisible();
+  await page.getByRole('dialog').getByRole('button', { name: 'Не', exact: true }).click();
+
+  await tab.getByPlaceholder('Търсене по номер или име').fill('10');
+  await tab.getByRole('cell', { name: '10', exact: true }).click();
+  await tab.getByRole('button', { name: 'Изтриване' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Да', exact: true }).click();
+  await expect(page.getByText('Сметката има подсметки.')).toBeVisible();
 });

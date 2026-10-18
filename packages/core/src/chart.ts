@@ -85,6 +85,32 @@ export function nextSubAccountNumber(parentNumber: string, childNumbers: string[
   return prefix + n;
 }
 
+/** Typed number with "." and " " normalised to the separator (03a 1.5). */
+export const normalizeAccountNumber = (n: string, separator = '/') => n.trim().replace(/[.\s]+/g, separator);
+
+/**
+ * Number shape under a parent (03a 1.5, strInvalidAccountNumber). The commercial
+ * chart keeps the national-chart levels: classes (1 digit) under the root,
+ * groups (2 digits) under a class, synthetic accounts (3 digits) under a group,
+ * then analytic sub-accounts "parent/n".
+ */
+export function isValidAccountNumber(parentNumber: string, number: string, separator = '/'): boolean {
+  if (parentNumber === '0') return /^\d$/.test(number);
+  if (/^\d{1,2}$/.test(parentNumber)) return /^\d+$/.test(number) && number.length === parentNumber.length + 1 && number.startsWith(parentNumber);
+  const prefix = parentNumber + separator;
+  return number.startsWith(prefix) && /^\d+$/.test(number.slice(prefix.length)) && Number(number.slice(prefix.length)) > 0;
+}
+
+/** Default number of a new account under a parent: next free digit above synthetic level, else "parent/n". */
+export function nextAccountNumber(parentNumber: string, childNumbers: string[], separator = '/'): string {
+  if (parentNumber === '0' || /^\d{1,2}$/.test(parentNumber)) {
+    const base = parentNumber === '0' ? '' : parentNumber;
+    for (let d = parentNumber === '0' ? 1 : 0; d <= 9; d++) if (!childNumbers.includes(base + d)) return base + d;
+    return base + '9';
+  }
+  return nextSubAccountNumber(parentNumber, childNumbers, separator);
+}
+
 /** Leaf test used by the app: Right - Left <= 1. */
 export function isLeaf(pos: { left: number; right: number }): boolean {
   return pos.right - pos.left <= 1;

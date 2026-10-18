@@ -10,6 +10,15 @@ export async function openApp(page: Page) {
   await expect(page.locator('footer')).toContainText(COMPANY.name);
 }
 
+/** Logs in with a session of its own, for tests that switch user or company (they would end the shared session). */
+export async function loginFresh(page: Page) {
+  await page.context().clearCookies();
+  await page.goto('/');
+  await page.getByLabel('Парола').fill(ADMIN.password);
+  await page.getByRole('button', { name: 'Вход' }).click();
+  await page.locator('footer').waitFor();
+}
+
 /** Clicks through the main menu, e.g. menu(page, 'Редакция', 'Администриране', 'Потребители'). */
 export async function menu(page: Page, ...path: string[]) {
   const bar = page.locator('div').filter({ has: page.getByRole('button', { name: 'Файл', exact: true }) }).first();

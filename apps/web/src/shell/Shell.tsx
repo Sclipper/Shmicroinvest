@@ -122,18 +122,20 @@ function ChangeUserDialog({ onClose }: { onClose: () => void }) {
   const s = useSession();
   const qc = useQueryClient();
   const dialogs = useDialogs();
-  const users = useQuery({ queryKey: ['companyUsers', s.company.db], queryFn: () => api.get<{ id: number; name: string }[]>(`/companies/${s.company.db}/users`) });
+  // Always re-read: users may have been added since the list was cached (e.g. on the login screen).
+  const users = useQuery({ queryKey: ['companyUsers', s.company.db], queryFn: () => api.get<{ id: number; name: string }[]>(`/companies/${s.company.db}/users`), refetchOnMount: 'always' });
   const others = (users.data ?? []).filter((u) => u.id !== s.user.id);
   const [userId, setUserId] = useState<number | null>(null);
   const [password, setPassword] = useState('');
   const [error, setError] = useState<unknown>(null);
   useEffect(() => {
+    if (users.isFetching) return;
     if (users.data && !others.length) {
       void dialogs.alert('В системата няма дефинирани други потребители!').then(onClose);
     } else if (others.length && userId === null) setUserId(others[0]!.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [users.data]);
-  if (!others.length) return null;
+  }, [users.data, users.isFetching]);
+  if (users.isFetching || !others.length) return null;
   const submit = async () => {
     if (!(await dialogs.confirm('Всички прозорци ще бъдат затворени! Желаете ли да продължите?'))) return;
     try {

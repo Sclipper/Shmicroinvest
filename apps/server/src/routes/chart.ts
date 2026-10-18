@@ -7,14 +7,14 @@ import * as s from '../db/company/schema/index.ts';
 import { exec } from '../db/provider.ts';
 import type { AppEnv } from '../context.ts';
 import { requirePermission } from '../session.ts';
-import { addAccount, applyChartTemplate, deleteAccount, editAccount, suggestSubAccountNumber } from '../services/chart.ts';
+import { addAccount, applyChartTemplate, copyAccounts, deleteAccount, deleteInfo, editAccount, suggestSubAccountNumber } from '../services/chart.ts';
 import { baseCurrencyId } from '../services/journal.ts';
 import { accountBalances } from '../services/reports.ts';
 
 const accountBody = z.object({
   number: z.string().trim().max(50).optional(),
   parentId: z.number().int(),
-  description: z.string().trim().min(1, 'Не е въведено описание на сметката.').max(255),
+  description: z.string().trim().max(255),
   englishDescription: z.string().max(255).nullable().optional(),
   accountCategoryId: z.number().int().nullable().optional(),
   currencyId: z.number().int().optional(),
@@ -63,6 +63,13 @@ export const chartRoutes = new Hono<AppEnv>()
   .put('/accounts/:id', requirePermission('UI_Operations_ChartOfAccounts_IndividualChartOfAccounts'), zValidator('json', accountBody.partial()), async (c) => {
     const row = await c.var.db.transaction((tx) => editAccount(tx, Number(c.req.param('id')), c.req.valid('json')));
     return c.json(row);
+  })
+
+  .get('/accounts/:id/delete-info', async (c) => c.json(await deleteInfo(c.var.db, Number(c.req.param('id')))))
+
+  .post('/accounts/:id/copy', requirePermission('UI_Operations_ChartOfAccounts_IndividualChartOfAccounts'), zValidator('json', z.object({ targetId: z.number().int() })), async (c) => {
+    const r = await c.var.db.transaction((tx) => copyAccounts(tx, Number(c.req.param('id')), c.req.valid('json').targetId));
+    return c.json(r, 201);
   })
 
   .delete('/accounts/:id', requirePermission('UI_Operations_ChartOfAccounts_IndividualChartOfAccounts'), async (c) => {

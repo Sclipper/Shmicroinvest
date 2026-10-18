@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { isValidAccountNumber, nextAccountNumber, normalizeAccountNumber } from '../src/index.ts';
 import {
   rebuildNestedSet, nextSubAccountNumber, lockMonth, unlockMonth, isMonthLocked,
   isValidEik, isValidEgn, isValidEgnChecksum, isValidLnch, isValidIban, amountInWords,
@@ -196,5 +197,27 @@ describe('commercial chart template', () => {
     for (const a of accs) if (a.parentNumber !== '0') expect(numbers.has(a.parentNumber), a.number).toBe(true);
     expect(accs.find((a) => a.number === '453/1')!.categoryId).toBe(16);
     expect(new Set(accs.map((a) => a.number)).size).toBe(accs.length);
+  });
+});
+
+describe('account numbers (03a 1.5)', () => {
+  it('checks the shape under each level', () => {
+    expect(isValidAccountNumber('0', '7')).toBe(true);
+    expect(isValidAccountNumber('0', '40')).toBe(false);
+    expect(isValidAccountNumber('4', '40')).toBe(true);
+    expect(isValidAccountNumber('40', '401')).toBe(true);
+    expect(isValidAccountNumber('40', '411')).toBe(false);
+    expect(isValidAccountNumber('40', '4011')).toBe(false);
+    expect(isValidAccountNumber('401', '401/2')).toBe(true);
+    expect(isValidAccountNumber('401', '401/x')).toBe(false);
+    expect(isValidAccountNumber('401', '4012')).toBe(false);
+    expect(isValidAccountNumber('401/2', '401/2/1')).toBe(true);
+  });
+  it('suggests the next number and normalises separators', () => {
+    expect(nextAccountNumber('401', ['401/1', '401/3'])).toBe('401/2');
+    expect(nextAccountNumber('40', ['401', '402'])).toBe('400');
+    expect(nextAccountNumber('0', ['1', '2'])).toBe('3');
+    expect(normalizeAccountNumber('401.2')).toBe('401/2');
+    expect(normalizeAccountNumber(' 401 2 ')).toBe('401/2');
   });
 });

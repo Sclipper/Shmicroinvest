@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, FolderPlus, Plus, Save, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Copy, FolderPlus, Plus, Save, Trash2 } from 'lucide-react';
+import { AccountPicker } from '../components/pickers.tsx';
 import { ACCOUNT_CATEGORIES } from '@shmi/core';
 import { api } from '../api.ts';
 import { compareAccountNumbers as cmp, money } from '../format.ts';
@@ -98,13 +99,37 @@ export function ChartOfAccounts() {
     }
   };
 
+  // 03a 1.8: the confirmation names partners and bank accounts linked to the account.
   const remove = async () => {
-    if (!selected || !(await dialogs.confirm(`Желаете ли да изтриете сметка ${selected.number} ${selected.description}?`))) return;
+    if (!selected) return;
+    const info = await api.get<{ hasPartners: boolean; hasBankAccount: boolean }>(`/accounts/${selected.id}/delete-info`);
+    const text = info.hasPartners
+      ? 'Към избраната сметка има партньор/и. Желаете ли да я изтриете?'
+      : info.hasBankAccount
+        ? 'Счетоводната сметка е обвързана с банкова сметка! Желаете ли да продължите?'
+        : 'Желаете ли да изтриете избраната сметка?';
+    if (!(await dialogs.confirm(text))) return;
     try {
       await api.del(`/accounts/${selected.id}`);
       await invalidate('accounts');
       setSelId(null);
       setForm(null);
+    } catch (e) {
+      await dialogs.error(e);
+    }
+  };
+
+  // "Move" is copy (03a 1.7): the subtree is copied under the chosen account with new numbers.
+  const [copying, setCopying] = useState(false);
+  const copyTo = async (target: Account | null) => {
+    if (!selected || !target) return;
+    setCopying(false);
+    if (!(await dialogs.confirm('Желаете ли да копирате избраните сметки?'))) return;
+    try {
+      const r = await api.post<{ copied: number }>(`/accounts/${selected.id}/copy`, { targetId: target.id });
+      await invalidate('accounts');
+      setCollapsed((c) => new Set([...c].filter((x) => x !== target.id)));
+      await dialogs.alert(`Копирани сметки: ${r.copied}.`);
     } catch (e) {
       await dialogs.error(e);
     }
@@ -131,6 +156,14 @@ export function ChartOfAccounts() {
         <Button variant="danger" icon={<Trash2 className="size-3.5" />} disabled={!editable || !selected} onClick={remove}>
           Изтриване
         </Button>
+ <Button icon={<Copy className="size-3.5" />} disabled={!editable || !selected} onClick={() => setCopying(true)}>
+          Копиране в...
+        </Button>
+        {copying && (
+          <div className="w-64">
+            <AccountPicker value={null} leafOnly={false} autoFocus onChange={copyTo} />
+          </div>
+        )}
         <TextInput className="ml-3 w-64" placeholder="Търсене по номер или име" value={filter} onChange={(e) => setFilter(e.target.value)} />
         {!filter && (
           <>
