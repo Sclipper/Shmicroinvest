@@ -56,6 +56,8 @@ export interface SaveContext {
   force?: boolean;
   /** Interactive save: VAT Yes/No questions (02b 12) are returned as 409 unless `force`. */
   confirm?: boolean;
+  /** Validation keys to drop (system entries, e.g. revaluation legs that move only the base amount of a currency account). */
+  ignoreKeys?: string[];
 }
 
 async function resolveDictionary(db: DbOrTx, table: typeof s.terms | typeof s.referenceTexts | typeof s.paragraphs, text: string | null | undefined) {
@@ -154,6 +156,7 @@ export async function saveEntry(db: DbOrTx, input: EntryInput, ctx: SaveContext,
   }
   const vatChecks = await vatEntryChecks(db, input, debits, credits, fy, existingId);
   messages.push(...vatChecks.messages);
+  if (ctx.ignoreKeys?.length) for (let i = messages.length - 1; i >= 0; i--) if (ctx.ignoreKeys.includes(messages[i]!.key)) messages.splice(i, 1);
   if (hasCritical(messages)) throw new ApiError(422, JOURNAL_MESSAGES.strCannotCompleteOperation, messages);
   if (input.documentTypeId && INVOICE_LIKE_TYPES.includes(input.documentTypeId) && !input.isInitialBalance) {
     const docSeq = await findSequence(db, CHANNEL.Invoice, fy.id, ctx.userId);

@@ -6,6 +6,7 @@ import { Partners } from './screens/Partners.tsx';
 import { InitialBalances } from './screens/InitialBalances.tsx';
 import { REPORT_SCREENS } from './registry.reports.tsx';
 import { ADMIN_SCREENS } from './registry.admin.tsx';
+import { PAYMENT_SCREENS } from './registry.payments.tsx';
 import { STATEMENT_SCREENS } from './registry.statements.tsx';
 import { JOURNAL_SCREENS } from './registry.journal.tsx';
 import { VAT_SCREENS } from './registry.vat.tsx';
@@ -19,6 +20,7 @@ const defs: ScreenDef[] = [
   { id: 'partners', title: 'Партньори', component: Partners, permission: 'UI_Edit_Companies' },
   ...REPORT_SCREENS,
   ...ADMIN_SCREENS,
+  ...PAYMENT_SCREENS,
   ...STATEMENT_SCREENS,
   ...JOURNAL_SCREENS,
   ...VAT_SCREENS,

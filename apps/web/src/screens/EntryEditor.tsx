@@ -18,6 +18,7 @@ import { useShortcuts } from './entry/shortcuts.ts';
 import { MaterialDetailsDialog, type MaterialLine } from './stock/MaterialDetailsDialog.tsx';
 import { LoadTemplateDialog, SaveTemplateDialog } from './templates/TemplateDialogs.tsx';
 import { useEntryVat } from './vat/EntryVat.tsx';
+import { EntryPaymentPanel, useEntryPayment } from '../payments/EntryPaymentPanel.tsx';
 
 export interface Line {
   accountId: number | null;
@@ -102,6 +103,7 @@ export function EntryEditor({ tab, mode }: ScreenProps & { mode?: EditorMode }) 
   const [d, setD] = useState<Draft | null>(id ? null : (fromDraft ?? (tab.params?.initial ? newDraft(session.workingDate, true) : modeDraft(session.workingDate, mode))));
   const [saving, setSaving] = useState(false);
   const [dlg, setDlg] = useState<Dlg>(mode && !id && !fromDraft ? mode : null);
+  const pay = useEntryPayment();
 
   useEffect(() => {
     if (loaded.data && !d) setD(fromServer(loaded.data));
@@ -184,12 +186,14 @@ export function EntryEditor({ tab, mode }: ScreenProps & { mode?: EditorMode }) 
     try {
       if (!(await confirmBeforeSave(dialogs, source))) return null;
       const body = payload(source);
+      if (!(await pay.beforeSave(body))) return null;
       type Saved = { id: number; number: string; warnings: { key: string; text: string; severity: 'warning' }[] };
       // VAT questions (02b 12) come back as a 409 confirm and are resent with `force`.
       const r = await vat.confirmSave((force) => source.id
         ? api.put<Saved>(`/entries/${source.id}`, { ...body, force })
         : api.post<Saved>('/entries', { ...body, force }));
       if (!r) return null;
+      await pay.afterSave(r.id, body);
       await afterSave(r, !source.id);
       setDirty(false);
       const next = after === 'close' && keepOpen ? 'new' : after;
@@ -449,6 +453,7 @@ export function EntryEditor({ tab, mode }: ScreenProps & { mode?: EditorMode }) 
             <TextInput type="date" value={d.dueDate} onChange={(e) => patch({ dueDate: e.target.value })} className="px-1" />
           </Field>
           {vat.header}
+          <EntryPaymentPanel ctl={pay} payload={payload(d)} entryId={d.id} readOnly={readOnly} />
           {session.settings.IsParagraphEnabled === 'True' && (
             <Field label="Параграф" className="col-span-12">
               <DictionaryInput type="paragraphs" value={d.paragraph} onChange={(v) => patch({ paragraph: v })} />

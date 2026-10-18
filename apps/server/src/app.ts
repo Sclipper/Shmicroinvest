@@ -15,6 +15,10 @@ import { nomenclatureRoutes } from './routes/nomenclatures.ts';
 import { journalRoutes } from './routes/journal.ts';
 import { reportRoutes } from './routes/reports.ts';
 import { userRoutes } from './routes/users.ts';
+import { paymentsRoutes } from './routes/payments.ts';
+import { paymentDocumentsRoutes } from './routes/paymentDocuments.ts';
+import { closingsRoutes } from './routes/closings.ts';
+import { partnerReportsRoutes } from './routes/partnerReports.ts';
 import { platformRoutes } from './routes/platform.ts';
 import { initialBalanceRoutes } from './routes/initialBalances.ts';
 import { logApp } from './services/appLog.ts';
@@ -38,6 +42,10 @@ export function createApp(driver: DbDriver, opts: { serveWeb?: boolean } = {}) {
     .route('/', journalRoutes)
     .route('/', reportRoutes)
     .route('/', userRoutes)
+    .route('/', paymentsRoutes)
+    .route('/', paymentDocumentsRoutes)
+    .route('/', closingsRoutes)
+    .route('/', partnerReportsRoutes)
     .route('/', platformRoutes)
     .route('/', initialBalanceRoutes)
     .route('/', statementRoutes)

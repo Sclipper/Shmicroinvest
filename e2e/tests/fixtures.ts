@@ -12,6 +12,7 @@ export const MODULE_COMPANIES = {
   statements: 'Отчети Е2Е ООД',
   vat: 'ДДС Е2Е ООД',
   journal: 'Журнал Е2Е ООД',
+  payments: 'Разплащания Е2Е ООД',
 } as const;
 export type ModuleKey = keyof typeof MODULE_COMPANIES;
 export const moduleState = (m: ModuleKey) => `.auth/${m}.json`;
@@ -44,12 +45,19 @@ export async function loginFresh(page: Page) {
   await page.locator('footer').waitFor();
 }
 
-/** Clicks through the main menu, e.g. menu(page, 'Редакция', 'Администриране', 'Потребители'). */
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Clicks through the main menu, e.g. menu(page, 'Редакция', 'Администриране', 'Потребители').
+ * Items that show a keyboard gesture are found by their label alone
+ * (their accessible name is "<label> <gesture>", e.g. "Разплащания F3").
+ */
 export async function menu(page: Page, ...path: string[]) {
+  const name = (label: string) => new RegExp(`^${escapeRe(label)}( [A-Za-z0-9+]+)?$`);
   const bar = page.locator('div').filter({ has: page.getByRole('button', { name: 'Файл', exact: true }) }).first();
   await bar.getByRole('button', { name: path[0], exact: true }).dispatchEvent('mousedown');
   for (const [i, label] of path.slice(1).entries()) {
-    const item = page.getByRole('button', { name: label, exact: true }).last();
+    const item = page.getByRole('button', { name: name(label) }).last();
     if (i < path.length - 2) await item.hover();
     else await item.click();
   }

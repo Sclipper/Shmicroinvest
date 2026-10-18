@@ -38,7 +38,7 @@ test.describe('financial statements', () => {
 
   test('opens Отчети и баланс from the menu and generates a balanced balance sheet', async ({ page }) => {
     await openApp(page);
-    await menu(page, 'Справки', 'Отчети и баланс Alt+B');
+    await menu(page, 'Справки', 'Отчети и баланс');
     const tab = activeTab(page);
     await expect(tab.getByRole('combobox', { name: 'Отчети' })).toHaveValue('balance');
     await runBalance(page);
