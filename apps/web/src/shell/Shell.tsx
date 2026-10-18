@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Component, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Banknote, BookOpen, Building2, CalendarDays, ChartColumn, ChevronRight, ClipboardList, FileCheck2, FilePlus2, FileText, HandCoins, LayoutTemplate, Library, ListTree,
@@ -109,7 +109,9 @@ export function Shell({ screens, onCommand }: { screens: Record<string, ScreenDe
           const C = def.component;
           return (
             <div key={t.key} className={cx('absolute inset-0 flex flex-col overflow-hidden bg-white', t.key !== ws.active && 'hidden')}>
-              <C tab={t} />
+              <ScreenBoundary title={t.title}>
+                <C tab={t} />
+              </ScreenBoundary>
             </div>
           );
         })}
@@ -118,6 +120,24 @@ export function Shell({ screens, onCommand }: { screens: Record<string, ScreenDe
       {changeUser && <ChangeUserDialog onClose={() => setChangeUser(false)} />}
     </div>
   );
+}
+
+/** A screen that fails to render shows the error in its own tab; the menu and other tabs keep working. */
+class ScreenBoundary extends Component<{ title: string; children: ReactNode }, { error: Error | null }> {
+  override state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  override render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div role="alert" className="m-6 rounded-sm border border-red-300 bg-red-50 px-4 py-3 text-red-900">
+        <div className="font-medium">Възникна неочаквана грешка в „{this.props.title}“.</div>
+        <div className="mt-1 text-[12px] opacity-80">{this.state.error.message}</div>
+        <div className="mt-2 text-[12px]">Затворете прозореца и го отворете отново. Останалите прозорци не са засегнати.</div>
+      </div>
+    );
+  }
 }
 
 /** Смяна на активния потребител (Ctrl+0, 01b 4): all windows close after the switch. */
@@ -213,7 +233,7 @@ function MenuBar({ run, screens }: { run: (i: Extract<MenuItem, { label: string 
     run(i);
   };
   return (
-    <div ref={ref} className="flex items-center border-b border-slate-300 bg-white px-1 text-[13px] select-none">
+    <div ref={ref} data-testid="menu-bar" className="flex items-center border-b border-slate-300 bg-white px-1 text-[13px] select-none">
       <div className="mr-2 flex items-center gap-1.5 px-2 font-semibold text-brand-700">
         <span className="grid size-5 place-items-center rounded-sm bg-brand-600 text-[11px] font-bold text-white">Ш</span>
         Шмелта Про

@@ -56,7 +56,7 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  */
 export async function menu(page: Page, ...path: string[]) {
   const name = (label: string) => new RegExp(`^${escapeRe(label)}( [A-Za-z0-9+]+)?$`);
-  const bar = page.locator('div').filter({ has: page.getByRole('button', { name: 'Файл', exact: true }) }).first();
+  const bar = page.getByTestId('menu-bar');
   await bar.getByRole('button', { name: path[0], exact: true }).dispatchEvent('mousedown');
   for (const [i, label] of path.slice(1).entries()) {
     // The innermost open list: a submenu is nested inside its parent's list.
