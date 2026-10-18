@@ -8,6 +8,7 @@ import * as s from '../db/company/schema/index.ts';
 import type { DbOrTx } from '../db/provider.ts';
 import { hashPassword } from '../lib/password.ts';
 import { applyChartTemplate } from './chart.ts';
+import { recordPasswordQuality } from './gdpr.ts';
 
 export const PRODUCT_VERSION = '1.01.089';
 
@@ -46,6 +47,7 @@ export async function seedCompany(db: DbOrTx, o: NewCompanyOptions) {
 
   await db.insert(s.users).values({ id: 1, name: o.adminName, passwordHash: await hashPassword(o.adminPassword), userRoleId: 2 });
   await fixIdentity(db, 'users');
+  await recordPasswordQuality(db, 1, o.adminPassword);
 
   await db.insert(s.configuration).values([
     { key: 'AccountsSeparator', value: '/', userId: null },

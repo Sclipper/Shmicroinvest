@@ -9,6 +9,7 @@ import { badRequest, notFound } from '../lib/errors.ts';
 import { hashPassword, isStrongPassword, verifyPassword } from '../lib/password.ts';
 import { requirePermission } from '../session.ts';
 import { logActivity } from '../services/audit.ts';
+import { recordPasswordQuality } from '../services/gdpr.ts';
 
 const ADMIN_ROLE = 2;
 const USERS = 'UI_Edit_Administration_Users';
@@ -34,6 +35,7 @@ export const userRoutes = new Hono<AppEnv>()
     if (dup.length) throw badRequest('Вече съществува потребител с това име.');
     if (b.roleId === 1) throw badRequest('Изберете потребителска група.');
     const [row] = await db.insert(s.users).values({ name: b.name, passwordHash: await hashPassword(b.password), userRoleId: b.roleId, email: b.email ?? null }).returning();
+    await recordPasswordQuality(db, row!.id, b.password);
     await logActivity(db, user.id, 'add', 'user', row!.id, b.name);
     return c.json({ id: row!.id }, 201);
   })
@@ -59,6 +61,7 @@ export const userRoutes = new Hono<AppEnv>()
       patch.passwordHash = await hashPassword(b.password);
     }
     await db.update(s.users).set(patch).where(eq(s.users.id, id));
+    if (b.password !== undefined) await recordPasswordQuality(db, id, b.password);
     await logActivity(db, user.id, 'edit', 'user', id, b.name);
     return c.json({ ok: true });
   })
@@ -83,6 +86,7 @@ export const userRoutes = new Hono<AppEnv>()
     if (!(await verifyPassword(b.current, u!.passwordHash))) throw badRequest('Грешна текуща парола.');
     if (!isStrongPassword(b.password)) throw badRequest('Паролата трябва да е поне 6 символа.');
     await db.update(s.users).set({ passwordHash: await hashPassword(b.password) }).where(eq(s.users.id, user.id));
+    await recordPasswordQuality(db, user.id, b.password);
     return c.json({ ok: true });
   })
 

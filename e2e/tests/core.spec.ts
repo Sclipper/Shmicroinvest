@@ -176,3 +176,24 @@ test.describe('financial year', () => {
     await api(page, 'PUT', `/years/${years[0]!.id}/locks`, { months: [] });
   });
 });
+
+test.describe('platform services', () => {
+  test('GDPR validator runs the checks per rule', async ({ page }) => {
+    await openApp(page);
+    await menu(page, 'Други', 'GDPR проверка');
+    const tab = activeTab(page);
+    await tab.getByRole('button', { name: 'Проверка' }).click();
+    await expect(tab.getByTestId('gdpr-overall')).toBeVisible();
+    await expect(tab.getByText('Потребители на програмата')).toBeVisible();
+    await expect(tab.getByText(/^Сложни пароли/)).toBeVisible();
+    await expect(tab.getByText('Криптирана връзка (HTTPS)')).toBeVisible();
+  });
+
+  test('application log lists logins; update check reports the version', async ({ page }) => {
+    await openApp(page);
+    await menu(page, 'Помощ', 'Дневник на приложението');
+    await expect(activeTab(page).getByRole('cell', { name: `Вписване на потребител ${ADMIN.name}` }).first()).toBeVisible();
+    await menu(page, 'Помощ', 'Нови версии');
+    await expect(page.getByRole('dialog')).toContainText('Използвате актуалната версия 1.01.089');
+  });
+});

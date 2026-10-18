@@ -11,7 +11,7 @@ export type MenuItem =
       /** Screen id to open. */
       screen?: string;
       /** Shell command. */
-      command?: 'newCompany' | 'chooseCompany' | 'logout' | 'closeCurrent' | 'closeAllButCurrent' | 'closeAll' | 'about' | 'changeUser';
+      command?: 'newCompany' | 'chooseCompany' | 'logout' | 'closeCurrent' | 'closeAllButCurrent' | 'closeAll' | 'about' | 'changeUser' | 'updateCheck';
       children?: MenuItem[];
     };
 
@@ -125,6 +125,7 @@ export const MENU: TopMenu[] = [
     label: 'Други', permission: 'UI_Other', items: [
       { label: 'Настройки', permission: 'UI_Other_Settings', gesture: 'Ctrl+T', screen: 'settings' },
       { label: 'Проверка на ДДС номер, ЕИК, ЕГН, IBAN', permission: 'UI_Other_Validator', gesture: 'Alt+V', screen: 'validator' },
+      { label: 'GDPR проверка', permission: 'UI_Other_GDPRValidator', screen: 'gdpr' },
     ],
   },
   {
@@ -136,6 +137,9 @@ export const MENU: TopMenu[] = [
   },
   {
     label: 'Помощ', permission: 'UI_Help', items: [
+      { label: 'Нови версии', permission: 'UI_Help_UpdateCheck', command: 'updateCheck' },
+      { label: 'Дневник на приложението', permission: 'UI_Help_ApplicationLog', screen: 'appLog' },
+      { sep: true },
       { label: 'За Шмелта Про', permission: 'UI_Help_About', command: 'about' },
     ],
   },

@@ -11,6 +11,7 @@ import { verifyPassword, isStrongPassword } from '../lib/password.ts';
 import { createSession, destroySession, readSession, permissionResolver } from '../session.ts';
 import { PRODUCT_VERSION, seedCompany } from '../services/companySetup.ts';
 import { logActivity } from '../services/audit.ts';
+import { logApp } from '../services/appLog.ts';
 
 /** Physical name of a new company database: delta_<yyMMddHHmmss><random>. */
 function newDatabaseName() {
@@ -97,12 +98,14 @@ export const authRoutes = new Hono<AppEnv>()
       // Three consecutive failures -> short lock-out (Delta sleeps 5 s client-side).
       const count = (f?.count ?? 0) + 1;
       failedLogins.set(key, { count: count >= 3 ? 0 : count, until: count >= 3 ? Date.now() + 5000 : 0 });
+      await logApp({ level: 'warning', message: `Неуспешно вписване на потребител ${u?.name ?? userId}`, company: companyDb, user: u?.name ?? null });
       throw new ApiError(401, 'Въведено е грешно потребителско име или парола!');
     }
     failedLogins.delete(key);
     await destroySession(c);
     await createSession(c, companyDb, u.id);
     await logActivity(db, u.id, 'login', 'identification', null, 'Вписване');
+    await logApp({ level: 'info', message: `Вписване на потребител ${u.name}`, company: companyDb, user: u.name });
     return c.json({ ok: true });
   })
 

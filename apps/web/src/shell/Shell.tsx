@@ -34,6 +34,10 @@ export function Shell({ screens, onCommand }: { screens: Record<string, ScreenDe
     else if ((item.command === 'logout' || item.command === 'chooseCompany') && !(await closeMany())) return;
     else if (item.command === 'about') void dialogs.alert('Шмикроинвест Шмелта Про — уеб счетоводна система, съвместима с Microinvest Делта Про 1.01.089.', 'За програмата');
     else if (item.command === 'changeUser') setChangeUser(true);
+    else if (item.command === 'updateCheck') {
+      const v = await api.get<{ version: string }>('/version');
+      void dialogs.alert(`Използвате актуалната версия ${v.version}. Уеб приложението се обновява автоматично на сървъра.`, 'Нови версии');
+    }
     else if (item.command) onCommand(item.command);
   };
 
