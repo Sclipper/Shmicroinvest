@@ -163,7 +163,7 @@ export function Payments() {
           Обнови
         </Button>
       </CommandBar>
-      <div className="grid min-h-0 flex-1 grid-cols-[300px_1fr_1fr] gap-2 p-2">
+      <div className="grid min-h-0 flex-1 grid-cols-[300px_minmax(0,1fr)_minmax(0,1fr)] gap-2 p-2">
         <section className="flex min-h-0 flex-col rounded-sm border border-slate-300 bg-white">
           <div className="flex border-b border-slate-200 bg-slate-50" role="tablist">
             {TABS.map((t) => (
@@ -219,7 +219,7 @@ export function Payments() {
           </div>
         </section>
 
-        <section className="flex min-h-0 flex-col rounded-sm border border-slate-300 bg-white">
+        <section className="flex min-h-0 min-w-0 flex-col rounded-sm border border-slate-300 bg-white">
           <header className="border-b border-slate-200 bg-slate-50 px-3 py-1.5 text-[12px] font-semibold tracking-wide text-slate-600 uppercase">Документи за задължения и вземания</header>
           <div className="flex flex-wrap items-end gap-1.5 border-b border-slate-200 p-2">
             <Field label="От дата">
@@ -254,7 +254,7 @@ export function Payments() {
           </div>
         </section>
 
-        <section className="flex min-h-0 flex-col rounded-sm border border-slate-300 bg-white">
+        <section className="flex min-h-0 min-w-0 flex-col rounded-sm border border-slate-300 bg-white">
           <header className="border-b border-slate-200 bg-slate-50 px-3 py-1.5 text-[12px] font-semibold tracking-wide text-slate-600 uppercase">Документи за съществуващи плащания</header>
           <div className="min-h-0 flex-1 overflow-auto">
             {companyId && (

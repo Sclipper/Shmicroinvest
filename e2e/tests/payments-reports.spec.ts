@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
-import { accountId, activeTab, api, menu, openApp } from './fixtures.ts';
+import { accountId, activeTab, api, openApp } from './fixtures.ts';
+import { menuPath } from './payments-fixtures.ts';
 
 /** Partner and cash reports (spec 05 6). The e2e company is shared (active year 2026): every test uses its own partner. */
 
@@ -26,7 +27,7 @@ test.describe('partner and cash reports', () => {
     const doc = `D${id}`;
     await post(page, { date: '2026-03-02', docType: 1, docNumber: doc, companyId: cli, dr: ['411', '321.50'], cr: ['702', '321.50'] });
 
-    await menu(page, 'Справки', 'Фирми', 'Задължения/вземания по партньори');
+    await menuPath(page, 'Справки', 'Фирми', 'Задължения/вземания по партньори');
     const tab = activeTab(page);
     await tab.getByLabel('Ниво на справка').selectOption('document');
     await tab.getByLabel('Филтър', { exact: true }).fill(doc);
@@ -42,11 +43,11 @@ test.describe('partner and cash reports', () => {
     const sup = await partner(page, name, ['401']);
     await post(page, { date: '2026-02-10', docType: 1, docNumber: `L${id}`, companyId: sup, dr: ['602', '480'], cr: ['401', '480'] });
 
-    await menu(page, 'Справки', 'Фирми', 'Потвърдително писмо за задължения/вземания');
+    await menuPath(page, 'Справки', 'Фирми', 'Потвърдително писмо за задължения/вземания');
     const tab = activeTab(page);
     await tab.getByLabel('Партньор', { exact: true }).fill(name);
     await tab.getByRole('button', { name: 'Справка' }).click();
-    await expect(tab.getByText('ПОТВЪРДИТЕЛНО ПИСМО')).toBeVisible();
+    await expect(tab.getByText('ПОТВЪРДИТЕЛНО ПИСМО').first()).toBeVisible();
     await expect(tab.getByText(/чл\. 22 от Закона за счетоводството/)).toBeVisible();
     await expect(tab.getByText(/ние Ви дължим 480,00 евро/)).toBeVisible();
     await expect(tab.getByRole('button', { name: 'Печат на писмата' })).toBeEnabled();
@@ -63,7 +64,7 @@ test.describe('partner and cash reports', () => {
     const cli = await partner(page, name, ['411']);
     await post(page, { date: '2026-03-01', docType: 1, docNumber: `O${id}`, companyId: cli, dueDate: '2026-03-10', dr: ['411', '75'], cr: ['702', '75'] });
 
-    await menu(page, 'Справки', 'Фирми', 'Просрочени задължения');
+    await menuPath(page, 'Справки', 'Фирми', 'Просрочени задължения');
     const tab = activeTab(page);
     await tab.getByLabel('Към дата').fill('2026-03-20');
     await tab.getByRole('button', { name: 'Справка' }).click();
@@ -80,7 +81,7 @@ test.describe('partner and cash reports', () => {
     const num = String(Number(id.slice(-9)));
     await post(page, { date: '2026-05-05', docType: 8, docNumber: num, companyId: cli, term: 'Е2Е вноска', dr: ['501', '200'], cr: ['411', '200'] });
 
-    await menu(page, 'Справки', 'Каса', 'Касова книга');
+    await menuPath(page, 'Справки', 'Каса', 'Касова книга');
     let tab = activeTab(page);
     await tab.getByLabel('Партньор', { exact: true }).fill(name);
     await tab.getByRole('button', { name: 'Справка' }).click();
@@ -89,7 +90,7 @@ test.describe('partner and cash reports', () => {
     await expect(row).toContainText('411');
     await expect(tab.locator('tbody')).toContainText('Начално салдо');
 
-    await menu(page, 'Справки', 'Каса', 'Касов ордер');
+    await menuPath(page, 'Справки', 'Каса', 'Касов ордер');
     tab = activeTab(page);
     await tab.getByLabel('Партньор', { exact: true }).fill(name);
     await tab.getByLabel('Получил').fill('Е2Е Касиер');

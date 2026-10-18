@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
-import { accountId, activeTab, api, menu, openApp } from './fixtures.ts';
+import { accountId, activeTab, api, openApp } from './fixtures.ts';
+import { menuPath } from './payments-fixtures.ts';
 
 const uid = () => `${Date.now()}${Math.floor(Math.random() * 1000)}`;
 
@@ -27,7 +28,7 @@ test.describe('payments', () => {
     const doc = `F${id}`;
     await post(page, { date: '2026-03-02', docType: 1, docNumber: doc, companyId: cli, dr: ['411', '150'], cr: ['702', '150'] });
 
-    await menu(page, 'Операции', 'Разплащания');
+    await menuPath(page, 'Операции', 'Разплащания');
     const tab = activeTab(page);
     await tab.getByLabel('Търсене на партньор').fill(name);
     await tab.getByTestId('payments-partners').getByRole('cell', { name }).click();
@@ -55,7 +56,7 @@ test.describe('payments', () => {
     await post(page, { date: '2026-04-01', docType: 1, docNumber: doc, companyId: cli, dr: ['411', '100'], cr: ['702', '100'] });
     await post(page, { date: '2026-04-03', docType: 8, docNumber: `P${id}`, companyId: cli, dr: ['501', '100'], cr: ['411', '100'] });
 
-    await menu(page, 'Операции', 'Автоматични операции', 'Закриване на документи');
+    await menuPath(page, 'Операции', 'Автоматични операции', 'Закриване на документи');
     const tab = activeTab(page);
     await tab.getByLabel('Начин на търсене').selectOption('amount');
     await tab.getByLabel('№ на документ').fill(doc);
@@ -95,7 +96,7 @@ test.describe('payments', () => {
     await tab.getByRole('button', { name: 'Изравняване' }).click();
 
     const panel = tab.getByTestId('entry-payment');
-    await panel.getByText('Автоматично разплащане').click();
+    await panel.getByText('Автоматично разплащане', { exact: true }).click();
     const payAcc = panel.getByPlaceholder('Сметка (F4)');
     await payAcc.fill('501');
     await payAcc.press('Enter');

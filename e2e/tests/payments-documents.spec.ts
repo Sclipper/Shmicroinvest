@@ -1,10 +1,11 @@
 import { expect, test } from '@playwright/test';
-import { activeTab, api, menu, openApp } from './fixtures.ts';
+import { activeTab, api, openApp } from './fixtures.ts';
+import { menuPath } from './payments-fixtures.ts';
 
 test.describe('payment documents (02c 1)', () => {
   test('adds a credit transfer, shows the words and warnings, saves, lists and deletes it', async ({ page }) => {
     await openApp(page);
-    await menu(page, 'Операции', 'Платежни документи', 'Платежно нареждане за кредитен превод');
+    await menuPath(page, 'Операции', 'Платежни документи', 'Платежно нареждане за кредитен превод');
     const tab = activeTab(page);
     await tab.getByRole('button', { name: 'Добавяне' }).click();
 
@@ -38,7 +39,7 @@ test.describe('payment documents (02c 1)', () => {
     await row.click();
     await tab.getByRole('button', { name: 'Изтриване' }).click();
     await expect(page.getByText('Желаете ли изтриване на избрания(те) документ(и)?')).toBeVisible();
-    await page.getByRole('button', { name: 'Да' }).click();
+    await page.getByRole('button', { name: 'Да', exact: true }).click();
     await expect(row).toHaveCount(0);
 
     await tab.getByText('Покажи всички документи').click();

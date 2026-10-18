@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
-import { accountId, activeTab, api, menu, openApp } from './fixtures.ts';
+import { accountId, activeTab, api, openApp } from './fixtures.ts';
+import { menuPath } from './payments-fixtures.ts';
 
 const uid = () => `${Date.now()}${Math.floor(Math.random() * 1000)}`;
 
@@ -12,7 +13,7 @@ test.describe('automatic operations: revaluation and closings', () => {
       debits: [{ accountId: sub.id, amount: '110', currencyAmount: '120' }], credits: [{ accountId: await accountId(page, '702'), amount: '110' }],
     });
 
-    await menu(page, 'Операции', 'Автоматични операции', 'Преоценка');
+    await menuPath(page, 'Операции', 'Автоматични операции', 'Преоценка');
     const tab = activeTab(page);
     await tab.getByLabel('Дата', { exact: true }).fill('2026-09-30');
     const acc = tab.getByPlaceholder('Сметка (F4)');
@@ -39,7 +40,7 @@ test.describe('automatic operations: revaluation and closings', () => {
       debits: [{ accountId: await accountId(page, '602'), amount: '75' }], credits: [{ accountId: await accountId(page, '503'), amount: '75' }],
     });
 
-    await menu(page, 'Операции', 'Автоматични операции', 'Приключване на разходни и приходни сметки');
+    await menuPath(page, 'Операции', 'Автоматични операции', 'Приключване на разходни и приходни сметки');
     const tab = activeTab(page);
     await tab.getByLabel('Период').selectOption({ label: 'Ноември' });
     await tab.getByLabel('Филтър по сметка').fill('602');
