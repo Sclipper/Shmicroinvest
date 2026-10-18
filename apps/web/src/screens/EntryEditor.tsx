@@ -10,6 +10,7 @@ import { Button, CommandBar, Field, Select, Spinner, TextInput, cx } from '../co
 import { useAccounts, useCan, useInvalidate, useLookups, useSession } from '../session.tsx';
 import { useWorkspace, type ScreenProps } from '../shell/workspace.tsx';
 import type { Account } from '../types.ts';
+import { EntryPaymentPanel, useEntryPayment } from '../payments/EntryPaymentPanel.tsx';
 
 interface Line {
   accountId: number | null;
@@ -78,6 +79,7 @@ export function EntryEditor({ tab }: ScreenProps) {
   const nextNumber = useQuery({ queryKey: ['entries', 'next-number'], queryFn: () => api.get<{ number: string }>('/entries/next-number'), enabled: !id });
   const [d, setD] = useState<Draft | null>(id ? null : (fromDraft ?? newDraft(session.workingDate, !!tab.params?.initial)));
   const [saving, setSaving] = useState(false);
+  const pay = useEntryPayment();
 
   useEffect(() => {
     if (loaded.data && !d) setD(fromServer(loaded.data));
@@ -149,8 +151,10 @@ export function EntryEditor({ tab }: ScreenProps) {
     if (saving) return;
     setSaving(true);
     try {
+      if (!(await pay.beforeSave(payload()))) return;
       const r = d.id ? await api.put<{ id: number; number: string; warnings: { key: string; text: string; severity: 'warning' }[] }>(`/entries/${d.id}`, payload()) : await api.post<{ id: number; number: string; warnings: { key: string; text: string; severity: 'warning' }[] }>('/entries', payload());
       await invalidate('entries', 'reports', 'accounts', 'dictionary');
+      await pay.afterSave(r.id, payload());
       if (r.warnings?.length) await dialogs.messages(`Контиране ${r.number} е записано с предупреждения`, r.warnings);
       setDirty(false);
       if (andNew) {
@@ -283,6 +287,7 @@ export function EntryEditor({ tab }: ScreenProps) {
           <Field label="Падеж" className="col-span-1">
             <TextInput type="date" value={d.dueDate} onChange={(e) => patch({ dueDate: e.target.value })} className="px-1" />
           </Field>
+          <EntryPaymentPanel ctl={pay} payload={payload()} entryId={d.id} readOnly={readOnly} />
           {session.settings.IsParagraphEnabled === 'True' && (
             <Field label="Параграф" className="col-span-12">
               <DictionaryInput type="paragraphs" value={d.paragraph} onChange={(v) => patch({ paragraph: v })} />

@@ -8,6 +8,7 @@ import { useDialogs } from '../../components/dialogs.tsx';
 import { Button, Checkbox, Empty, Field, Panel, Select, Spinner, cx } from '../../components/ui.tsx';
 import { useCan, useInvalidate, useSession } from '../../session.tsx';
 import { TabStrip } from './common.tsx';
+import { ConcludeYearPanel } from '../../payments/ConcludeYear.tsx';
 
 interface FinancialYear { id: number; year: number; startDate: string; isConcluded: boolean; isLocked: boolean; lockedMonths: number }
 /** A row of the "Избор" list: an existing year or a virtual (not yet created) one before/after. */
@@ -130,7 +131,7 @@ export function Years() {
 
   return (
     <div className="flex h-full flex-col">
-      <TabStrip<TabId> tabs={[['select', 'Избор'], ['conclude', 'Приключване', true], ['lock', 'Заключване'], ['delete', 'Изтриване']]} value={tab} onChange={setTab} />
+      <TabStrip<TabId> tabs={[['select', 'Избор'], ['conclude', 'Приключване'], ['lock', 'Заключване'], ['delete', 'Изтриване']]} value={tab} onChange={setTab} />
       <div className="flex min-h-0 flex-1 gap-3 overflow-auto p-3">
         {tab === 'select' && (
           <>
@@ -180,6 +181,8 @@ export function Years() {
             </Panel>
           </>
         )}
+
+        {tab === 'conclude' && <ConcludeYearPanel />}
 
         {tab === 'lock' && lockFy && (
           <Panel title="Заключване за редакция" className="w-[560px] self-start">

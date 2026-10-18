@@ -12,3 +12,4 @@ export * from './payments.ts';
 export * from './paymentDocuments.ts';
 export * from './revaluation.ts';
 export * from './closing.ts';
+export * from './partnerReports.ts';
