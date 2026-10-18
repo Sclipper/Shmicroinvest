@@ -11,6 +11,7 @@ import { ApiError, badRequest } from '../lib/errors.ts';
 import { requirePermission, updateSessionState, workingDate, todayInSofia, daysBetween } from '../session.ts';
 import { getConfig, setConfig, BASIC_SETTINGS } from '../services/config.ts';
 import { applyChartTemplate } from '../services/chart.ts';
+import { PRODUCT_VERSION } from '../services/companySetup.ts';
 
 export const sessionRoutes = new Hono<AppEnv>()
   /** Everything the shell needs: status bar cells, permissions, settings. */
@@ -37,6 +38,21 @@ export const sessionRoutes = new Hono<AppEnv>()
       chartIsEmpty: count === 0,
       permissions,
       settings,
+    });
+  })
+
+  /** Hidden hotkey Ctrl+Shift+F8 (06 2.5): active database information. */
+  .get('/session/database-info', async (c) => {
+    const { driver, session } = c.var;
+    const catalog = await driver.catalog();
+    const [company] = await catalog.select().from(cat.companiesCatalog).where(eq(cat.companiesCatalog.name, session.companyDb!));
+    const [{ version }] = (await exec(c.var.db, sql`SELECT version() AS version`)).rows as [{ version: string }];
+    return c.json({
+      server: driver.kind === 'pglite' ? 'PGlite (вграден)' : 'PostgreSQL',
+      engine: version.split(',')[0],
+      company: company?.companyName ?? '',
+      database: session.companyDb,
+      version: PRODUCT_VERSION,
     });
   })
 

@@ -8,6 +8,7 @@ import { Settings } from './screens/admin/Settings.tsx';
 import { Users } from './screens/admin/Users.tsx';
 import { Validator } from './screens/admin/Validator.tsx';
 import { Years } from './screens/admin/Years.tsx';
+import { ApplicationLog, GdprValidator } from './screens/admin/Platform.tsx';
 
 /** Administration and nomenclature screens. */
 export const ADMIN_SCREENS: ScreenDef[] = [
@@ -22,5 +23,7 @@ export const ADMIN_SCREENS: ScreenDef[] = [
   { id: 'validator', title: 'Проверка на ДДС номер, ЕИК, ЕГН, IBAN', component: Validator, permission: 'UI_Other_Validator' },
   { id: 'activeCompany', title: 'Активна фирма', component: ActiveCompany, permission: 'UI_File_ActiveCompany' },
   { id: 'activity', title: 'Действия по потребители', component: Activity, permission: 'UI_Reporting_UsersActivitiesReport' },
+  { id: 'gdpr', title: 'GDPR проверка', component: GdprValidator, permission: 'UI_Other_GDPRValidator' },
+  { id: 'appLog', title: 'Дневник на приложението', component: ApplicationLog, permission: 'UI_Help_ApplicationLog' },
   { id: 'chartSelection', title: 'Избор на сметкоплан', component: ChartSelection, permission: 'UI_Operations_ChartOfAccounts_ChartOfAccountsSelection' },
 ];

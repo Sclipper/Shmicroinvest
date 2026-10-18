@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
+import { lookupCompany } from '../services/companyLookup.ts';
 import { zValidator } from '../lib/validate.ts';
 import { z } from 'zod';
 import { and, asc, desc, eq, ilike, inArray, ne, or, sql } from 'drizzle-orm';
 import {
-  BULSTAT_PLACEHOLDER, isCompanyCategory, isEmail, isValidEgn, isValidIban, isValidPartnerIdentifier, normalizeIban,
+  BULSTAT_PLACEHOLDER, isCompanyCategory, isEmail, isValidEgn, isValidEik, isValidIban, isValidPartnerIdentifier, normalizeIban,
   bankCodeFromIban, detectIdentifier, type ValidationMessage,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
@@ -18,7 +19,7 @@ const addressBody = z.object({
   id: z.number().int().optional(),
   addressTypeId: z.number().int().nullable().optional(),
   countryId: z.number().int().nullable().optional(),
-  city: z.string().max(50).nullable().optional(),
+  city: z.string().max(255).nullable().optional(),
   city1: z.string().max(50).nullable().optional(),
   postalCode: z.string().max(10).nullable().optional(),
   address: z.string().max(255).nullable().optional(),
@@ -68,6 +69,7 @@ async function validatePartner(db: DbOrTx, b: PartnerBody, selfId?: number): Pro
   for (const a of b.addresses) {
     if (a.postalCode && !/^\d{1,10}$/.test(a.postalCode)) crit('strInvalidAddressPostalCode', 'Невалиден пощенски код');
     if (!a.countryId) warn('strCountryNotSelected', 'Не е избрана държава.');
+    if (a.city && a.city.length > 50) crit('strCityNameTooLong', 'Името на населеното място е твърде дълго');
   }
   const types = b.addresses.map((a) => a.addressTypeId).filter(Boolean);
   if (new Set(types).size !== types.length) crit('strDuplicateAddressType', 'Може да има само по един адрес от тип.');
@@ -75,6 +77,7 @@ async function validatePartner(db: DbOrTx, b: PartnerBody, selfId?: number): Pro
     if (!ba.account.trim()) crit('strBankAccountNumberIsEmpty', 'Не е попълнен IBAN!');
     else if (!isValidIban(ba.account)) warn('strInvalidIBAN', 'Въведен е невалиден IBAN!');
   }
+  if (hasLedgerAccountTwice(b.bankAccounts)) crit('strErrorAccountWithMultipleBankAccounts', LEDGER_TWICE);
   if (b.accountIds.length === 0) warn('strNoAccountsAttached', 'Не е прикачена нито една счетоводна сметка');
   // Duplicates (CheckForDuplicates): name, bulstat (not placeholder), code.
   const conds = [sql`lower(${s.companies.name}) = lower(${b.name})`];
@@ -89,9 +92,18 @@ async function validatePartner(db: DbOrTx, b: PartnerBody, selfId?: number): Pro
     else crit('strCompanyCodeExists', 'Вече съществува партньор с такъв код');
   }
   if (b.accountIds.length) {
-    const accs = await db.select().from(s.accounts).where(inArray(s.accounts.id, b.accountIds));
-    for (const a of accs) if (!isCompanyCategory(a.accountCategoryId)) {
-      crit('strAccountDoesNotSupportCompanies', `Сметка ${a.number} не може да бъде добавена, тъй като не поддържа работа с партньори!`);
+    // The account or one of its ancestors must carry a partner category (03a 2.9).
+    const all = await db.select({ id: s.accounts.id, parentId: s.accounts.parentId, number: s.accounts.number, cat: s.accounts.accountCategoryId }).from(s.accounts);
+    const byId = new Map(all.map((a) => [a.id, a]));
+    for (const id of b.accountIds) {
+      let a = byId.get(id);
+      const number = a?.number;
+      let ok = false;
+      while (a) {
+        if (isCompanyCategory(a.cat)) { ok = true; break; }
+        a = a.parentId != null ? byId.get(a.parentId) : undefined;
+      }
+      if (!ok) crit('strAccountDoesNotSupportCompanies', `Сметка ${number ?? id}: Избраната сметка не може да бъде добавена, тъй като не поддържа работа с партньори!`);
     }
   }
   return msgs;
@@ -129,7 +141,7 @@ async function loadPartner(db: DbOrTx, id: number) {
 }
 
 const myCompanyBody = z.object({
-  name: z.string().trim().min(1).max(255),
+  name: z.string().trim().max(255),
   name1: z.string().max(255).nullable().optional(),
   contactName: z.string().max(255).nullable().optional(),
   contactName1: z.string().max(255).nullable().optional(),
@@ -148,6 +160,98 @@ const myCompanyBody = z.object({
   addresses: z.array(addressBody).max(3).default([]),
   bankAccounts: z.array(bankAccountBody).default([]),
 });
+
+const LEDGER_TWICE = 'Една счетоводна сметка не може да бъде обвързана с повече от една банкова сметка!';
+/** 03a 7.2: among normal (and among online) bank accounts a ledger account is linked at most once. */
+export function hasLedgerAccountTwice(rows: { bankStatementAccountId?: number | null; isOnlineAccount?: boolean | null }[]) {
+  const seen = new Set<string>();
+  for (const r of rows) {
+    if (r.bankStatementAccountId == null) continue;
+    const k = `${r.isOnlineAccount ? 'o' : 'n'}${r.bankStatementAccountId}`;
+    if (seen.has(k)) return true;
+    seen.add(k);
+  }
+  return false;
+}
+
+const rate = z.string().regex(/^\d+(\.\d+)?$/, 'Невалиден курс.');
+const currencyBody = z.object({ isoCode: z.string().trim().max(50).optional(), name: z.string().trim().max(50).optional(), exchangeRate: rate.optional(), fixedRate: rate.optional() });
+
+/** 03a 5.3: name required; ISO code of exactly 3 characters (length only), unique by exact match. */
+async function validateCurrency(db: DbOrTx, b: { name?: string; isoCode?: string }, exceptId?: number) {
+  const msgs: ValidationMessage[] = [];
+  if (!b.name?.trim()) msgs.push({ key: 'strCurrencyNameError', text: 'Не е попълнено име на валута!', severity: 'critical' });
+  const iso = b.isoCode ?? '';
+  if (iso.length !== 3) msgs.push({ key: 'strCurrencyCodeLengthError', text: 'Зададен е невалиден код на валутата. Кодът трябва да се състои от три главни латински букви.', severity: 'critical' });
+  else {
+    const dup = await db.select({ id: s.currencies.id }).from(s.currencies).where(eq(s.currencies.isoCode, iso));
+    if (dup.some((d) => d.id !== exceptId)) msgs.push({ key: 'strCurrencyCodeUniquenessError', text: 'Валута със зададения код вече съществува в базата от данни. Моля, задайте друг код.', severity: 'critical' });
+  }
+  if (msgs.length) throw new ApiError(422, 'Валутата не може да бъде записана.', msgs);
+}
+
+const countryBody = z.object({ code: z.string().max(10), name: z.string().max(200), nameInOtherLang: z.string().max(200).default('') });
+/** 03a 6: name and a 1-3 character code required; foreign name only warns; no uniqueness. */
+function validateCountry(b: z.infer<typeof countryBody>) {
+  const msgs: ValidationMessage[] = [];
+  if (!b.name.length) msgs.push({ key: 'strCountriesNameIsNotAdded', text: 'Не е въведено име на държава.', severity: 'critical' });
+  else if (b.name.length > 80) msgs.push({ key: 'strNameIncorectFormat', text: 'Некоректен формат на име', severity: 'critical' });
+  if (!b.code.length) msgs.push({ key: 'strCountriesCodeIsNotAdded', text: 'Не е въведен код на държава (от 1 до 3 символа).', severity: 'critical' });
+  else if (b.code.length > 3) msgs.push({ key: 'strCodeIncorectFormat', text: 'Некоректен формат на код', severity: 'critical' });
+  if (b.nameInOtherLang.length > 80) msgs.push({ key: 'strNameInOtherLangIncorectFormat', text: 'Некоректен формат на име на чужд език', severity: 'critical' });
+  else if (!b.nameInOtherLang.length) msgs.push({ key: 'strCountriesNameInOtherLangIsNotAdded', text: 'Не е въведено име на държава на чужд език.', severity: 'warning' });
+  if (msgs.some((m) => m.severity === 'critical')) throw new ApiError(422, 'Държавата не може да бъде записана.', msgs);
+  return msgs;
+}
+
+const DICT_COLUMNS: Record<string, string[]> = { terms: ['term_id'], references: ['reference_id', 'optional_reference_id'], paragraphs: ['paragraph_id'] };
+const DICT_TEXTS: Record<string, { one: string }> = {
+  terms: { one: 'Избраните основания не могат да бъдат изтрити, защото участват в операции от тип Покупка/Продажба.' },
+  references: { one: 'Избраните забележки не могат да бъдат изтрити, защото участват в операции от тип Покупка/Продажба.' },
+  paragraphs: { one: 'Избраните параграфи не могат да бъдат изтрити, защото участват в операции от тип Покупка/Продажба.' },
+};
+
+/** Rename (all postings follow) and merge into an existing equal description (spDublicatedTerms / References). */
+async function renameDictionary(db: DbOrTx, type: string, id: number, description: string, isHidden?: boolean) {
+  const t = dictionaryTable(type);
+  const cols = DICT_COLUMNS[type]!;
+  const [row] = await db.select().from(t).where(eq(t.id, id));
+  if (!row) throw notFound('Описанието');
+  const [keeper] = await db.select().from(t).where(and(eq(t.description, description), sql`${t.id} <> ${id}`)).limit(1);
+  if (keeper) {
+    for (const col of cols) await db.execute(sql`UPDATE accountings SET ${sql.raw(col)} = ${keeper.id} WHERE ${sql.raw(col)} = ${id}`);
+    await db.update(t).set({ usageFrequency: sql`${t.usageFrequency} + ${type === 'terms' ? row.usageFrequency : 0}`, ...(isHidden !== undefined ? { isHidden } : {}) }).where(eq(t.id, keeper.id));
+    await db.delete(t).where(eq(t.id, id));
+    return { ...keeper, merged: true };
+  }
+  const [updated] = await db.update(t).set({ description, ...(isHidden !== undefined ? { isHidden } : {}) }).where(eq(t.id, id)).returning();
+  return updated;
+}
+
+/** Real deletion; refused when used in a Purchase or Sale posting, otherwise unlinked from every posting (03a 8.1). */
+async function deleteDictionary(db: DbOrTx, type: string, id: number) {
+  const t = dictionaryTable(type);
+  const cols = DICT_COLUMNS[type]!;
+  const usedIn = sql.join(cols.map((c) => sql`${sql.raw(c)} = ${id}`), sql` OR `);
+  const sale = await exec(db, sql`SELECT 1 FROM accountings WHERE (${usedIn}) AND transaction_type_id IN (2, 3) LIMIT 1`);
+  if (sale.rows.length) throw badRequest(DICT_TEXTS[type]!.one);
+  for (const col of cols) await db.execute(sql`UPDATE accountings SET ${sql.raw(col)} = NULL WHERE ${sql.raw(col)} = ${id}`);
+  await db.delete(t).where(eq(t.id, id));
+}
+
+const branchBody = z.object({
+  code: z.string().max(50),
+  name: z.string().max(50),
+  contactName: z.string().max(50).nullable().optional(),
+  address: addressBody.nullable().optional(),
+});
+
+function checkBranch(b: z.infer<typeof branchBody>) {
+  const msgs: ValidationMessage[] = [];
+  if (!b.name.trim()) msgs.push({ key: 'strBranchNameIsEmpty', text: 'Не е попълнено име на клона!', severity: 'critical' });
+  if (!b.code.trim()) msgs.push({ key: 'strBranchCodeIsEmpty', text: 'Не е попълнен код на клона!', severity: 'critical' });
+  if (msgs.length) throw new ApiError(422, 'Клонът не може да бъде записан:', msgs);
+}
 
 const dictionaryTable = (type: string) => {
   if (type === 'terms') return s.terms;
@@ -195,6 +299,12 @@ export const nomenclatureRoutes = new Hono<AppEnv>()
       address: sql<string | null>`(SELECT address FROM addresses ad WHERE ad.owner_type = 'company' AND ad.owner_id = companies.id ORDER BY ad.is_primary DESC, ad.id LIMIT 1)`,
     }).from(s.companies).where(and(...conds)).orderBy(desc(s.companies.priority), asc(s.companies.name)).limit(Number(c.req.query('limit') ?? 500));
     return c.json(rows);
+  })
+
+  /** Online lookup of a partner by EIK / VAT number (03a 2.5; VIES). */
+  .get('/partners/lookup', requirePermission('UI_Edit_Companies'), async (c) => {
+    const q = c.req.query();
+    return c.json(await lookupCompany({ bulstat: q.bulstat, vatNumber: q.vatNumber, name: q.name }));
   })
 
   .get('/partners/:id', async (c) => c.json(await loadPartner(c.var.db, Number(c.req.param('id')))))
@@ -257,10 +367,19 @@ export const nomenclatureRoutes = new Hono<AppEnv>()
   })
 
   // Partner groups (nested set kept by rebuild; the tree is small).
-  .post('/partner-groups', requirePermission('UI_Edit_Companies'), zValidator('json', z.object({ name: z.string().trim().min(1).max(50), parentId: z.number().int().default(1) })), async (c) => {
+  .post('/partner-groups', requirePermission('UI_Edit_Companies'), zValidator('json', z.object({ name: z.string().trim().max(50).optional(), parentId: z.number().int().default(1) })), async (c) => {
     const { db } = c.var;
     const b = c.req.valid('json');
-    const [row] = await db.insert(s.companyGroups).values({ name: b.name, parentId: b.parentId }).returning();
+    let name = b.name;
+    if (!name) {
+      // strNewGroup + smallest free integer among the parent's children.
+      const sibs = await db.select({ name: s.companyGroups.name }).from(s.companyGroups).where(and(eq(s.companyGroups.parentId, b.parentId), eq(s.companyGroups.isDeleted, false)));
+      const used = new Set(sibs.map((x) => x.name));
+      let n = 1;
+      while (used.has(`Нова група ${n}`)) n++;
+      name = `Нова група ${n}`;
+    }
+    const [row] = await db.insert(s.companyGroups).values({ name, parentId: b.parentId }).returning();
     await rebuildGroupTree(db);
     return c.json(row, 201);
   })
@@ -284,6 +403,45 @@ export const nomenclatureRoutes = new Hono<AppEnv>()
     return c.json({ ok: true });
   })
 
+  // ---- Branches of the own company (Клонове, 03a 2.8) ----
+  .get('/branches', async (c) => {
+    const { db } = c.var;
+    const rows = await db.select().from(s.branches).where(eq(s.branches.isDeleted, false)).orderBy(asc(s.branches.id));
+    const addrs = rows.length ? await db.select().from(s.addresses).where(and(eq(s.addresses.ownerType, 'branch'), inArray(s.addresses.ownerId, rows.map((r) => r.id)))) : [];
+    return c.json(rows.map((r) => ({ ...r, address: addrs.find((a) => a.ownerId === r.id) ?? null })));
+  })
+  .post('/branches', requirePermission('UI_Edit_Administration_MyCompany'), zValidator('json', branchBody), async (c) => {
+    const b = c.req.valid('json');
+    checkBranch(b);
+    const id = await c.var.db.transaction(async (tx) => {
+      const [row] = await tx.insert(s.branches).values({ code: b.code.trim(), name: b.name.trim(), contactName: b.contactName ?? null }).returning();
+      if (b.address) await tx.insert(s.addresses).values({ ...b.address, id: undefined, ownerType: 'branch', ownerId: row!.id, isPrimary: true });
+      return row!.id;
+    });
+    return c.json({ id }, 201);
+  })
+  .put('/branches/:id', requirePermission('UI_Edit_Administration_MyCompany'), zValidator('json', branchBody), async (c) => {
+    const id = Number(c.req.param('id'));
+    const b = c.req.valid('json');
+    checkBranch(b);
+    await c.var.db.transaction(async (tx) => {
+      await tx.update(s.branches).set({ code: b.code.trim(), name: b.name.trim(), contactName: b.contactName ?? null }).where(eq(s.branches.id, id));
+      await tx.delete(s.addresses).where(and(eq(s.addresses.ownerType, 'branch'), eq(s.addresses.ownerId, id)));
+      if (b.address) await tx.insert(s.addresses).values({ ...b.address, id: undefined, ownerType: 'branch', ownerId: id, isPrimary: true });
+    });
+    return c.json({ ok: true });
+  })
+  .delete('/branches/:id', requirePermission('UI_Edit_Administration_MyCompany'), async (c) => {
+    const id = Number(c.req.param('id'));
+    const { db, session } = c.var;
+    if (id === 1) throw badRequest('Основният клон не може да бъде изтрит.');
+    if ((session.state.branchId ?? 1) === id) throw badRequest('Активният клон не може да бъде изтрит.');
+    const used = await db.select({ id: s.accountings.id }).from(s.accountings).where(eq(s.accountings.branchId, id)).limit(1);
+    if (used.length) throw badRequest('Избраният клон не може да бъде изтрит, тъй като участва в операции!');
+    await db.update(s.branches).set({ isDeleted: true }).where(eq(s.branches.id, id));
+    return c.json({ ok: true });
+  })
+
   // ---- Own company (Моята фирма, Ctrl+F) ----
   .get('/my-company', async (c) => {
     const { db } = c.var;
@@ -295,11 +453,26 @@ export const nomenclatureRoutes = new Hono<AppEnv>()
   .put('/my-company', requirePermission('UI_Edit_Administration_MyCompany'), zValidator('json', myCompanyBody), async (c) => {
     const { db, session } = c.var;
     const b = c.req.valid('json');
+    // 03a 3.2 (MyCompanyViewModel).
     const msgs: ValidationMessage[] = [];
-    if (b.bulstat && !isValidPartnerIdentifier(b.bulstat)) msgs.push({ key: 'strInvalidBulstat', text: 'Невалиден ЕИК!', severity: 'warning' });
-    if (b.isVat && !b.vatId) msgs.push({ key: 'strVatIdIsEmpty', text: 'Не е попълнен ДДС номер.', severity: 'critical' });
-    if (b.vatDeclarationSubscriberEgn && !isValidEgn(b.vatDeclarationSubscriberEgn)) msgs.push({ key: 'strInvalidEGN', text: 'Невалидно ЕГН на подаващото лице!', severity: 'warning' });
-    if (b.isVat && b.isNotVat) msgs.push({ key: 'strVatFlags', text: 'Фирмата не може едновременно да е регистрирана и да не подлежи на регистрация по ЗДДС.', severity: 'critical' });
+    const m3 = (key: string, text: string, severity: ValidationMessage['severity'] = 'warning') => msgs.push({ key, text, severity });
+    if (!b.name.trim()) m3('strMyCompanyNameIsEmpty', 'Не е попълнено име на фирмата', 'critical');
+    if (!b.bulstat) m3('strMyCompanyBulstatIsEmpty', 'Не е попълнен ЕИК за фирмата');
+    else if (!isValidEik(b.bulstat)) m3('strInvalidBulstat', 'Невалиден ЕИК');
+    if (b.isVat && !b.vatId?.trim()) m3('strMyCompanyVatNumberIsEmpty', 'Не е попълнен данъчен номер за фирмата', 'critical');
+    if (!b.contactName?.trim()) m3('strMyCompanyContactNameIsEmpty', 'Не е въведен МОЛ на фирмата');
+    if (b.email?.trim() && !isEmail(b.email.trim())) m3('strInvalidEmail', 'Невалиден e-mail адрес');
+    if (b.isVat) {
+      if (!b.vatDeclarationSubscriberName?.trim()) m3('strMyCompanyVATSubscriberNameIsEmpty', 'Не е попълнено име на подаващия ДДС декларацията');
+      if (!isValidEgn(b.vatDeclarationSubscriberEgn ?? '')) m3('strMyCompanyVATSubscriberEGNIsInvalid', 'ЕГН на подаващия ДДС декларацията е невалидeн');
+      if (!b.vatDeclarationSubscriberPosition?.trim()) m3('strMyCompanyVATSubscriberPositionIsEmpty', 'Не е попълнена длъжност за СД на подаващия ДДС декларацията');
+    }
+    if (b.isVat && b.isNotVat) m3('strVatFlags', 'Фирмата не може едновременно да е регистрирана и да не подлежи на регистрация по ЗДДС.', 'critical');
+    for (const ba of b.bankAccounts) {
+      if (!ba.account.trim()) m3('strBankAccountNumberIsEmpty', 'Не е попълнен IBAN!', 'critical');
+      else if (!isValidIban(ba.account)) m3('strInvalidIBAN', 'Въведен е невалиден IBAN!');
+    }
+    if (hasLedgerAccountTwice(b.bankAccounts)) m3('strErrorAccountWithMultipleBankAccounts', LEDGER_TWICE, 'critical');
     if (msgs.some((m) => m.severity === 'critical')) throw new ApiError(422, 'Данните не могат да бъдат записани:', msgs);
     const [m] = await db.select().from(s.myCompany).limit(1);
     const { addresses, bankAccounts, ...fields } = b;
@@ -323,46 +496,51 @@ export const nomenclatureRoutes = new Hono<AppEnv>()
 
   // ---- Currencies ----
   .get('/currencies', async (c) => c.json(await c.var.db.select().from(s.currencies).orderBy(asc(s.currencies.id))))
-  .post('/currencies', requirePermission('UI_Edit_Currencies'), zValidator('json', z.object({
-    isoCode: z.string().trim().length(3).toUpperCase(), name: z.string().trim().min(1).max(50),
-    exchangeRate: z.string().regex(/^\d+(\.\d+)?$/), fixedRate: z.string().regex(/^\d+(\.\d+)?$/).optional(),
-  })), async (c) => {
+  .post('/currencies', requirePermission('UI_Edit_Currencies'), zValidator('json', currencyBody), async (c) => {
     const b = c.req.valid('json');
-    const dup = await c.var.db.select().from(s.currencies).where(eq(s.currencies.isoCode, b.isoCode));
-    if (dup.length) throw badRequest('Вече съществува валута с този код.');
-    const [row] = await c.var.db.insert(s.currencies).values({ ...b, fixedRate: b.fixedRate ?? b.exchangeRate }).returning();
+    await validateCurrency(c.var.db, b);
+    const rate = b.exchangeRate ?? b.fixedRate ?? '1';
+    const [row] = await c.var.db.insert(s.currencies).values({ isoCode: b.isoCode!, name: b.name!, exchangeRate: rate, fixedRate: b.fixedRate ?? rate }).returning();
     return c.json(row, 201);
   })
-  .put('/currencies/:id', requirePermission('UI_Edit_Currencies'), zValidator('json', z.object({
-    name: z.string().trim().min(1).max(50).optional(), exchangeRate: z.string().regex(/^\d+(\.\d+)?$/).optional(),
-    fixedRate: z.string().regex(/^\d+(\.\d+)?$/).optional(), rateDate: z.string().optional(),
-  })), async (c) => {
+  .put('/currencies/:id', requirePermission('UI_Edit_Currencies'), zValidator('json', currencyBody.extend({ rateDate: z.string().optional() })), async (c) => {
     const id = Number(c.req.param('id'));
-    if (id <= 2 && (c.req.valid('json').exchangeRate || c.req.valid('json').fixedRate)) throw badRequest('Курсът на лева и еврото е фиксиран.');
-    const [row] = await c.var.db.update(s.currencies).set(c.req.valid('json')).where(eq(s.currencies.id, id)).returning();
+    const b = c.req.valid('json');
+    const [cur] = await c.var.db.select().from(s.currencies).where(eq(s.currencies.id, id));
+    if (!cur) throw notFound('Валутата');
+    if (['BGN', 'EUR'].includes(cur.isoCode) && (b.exchangeRate || b.fixedRate || (b.isoCode !== undefined && b.isoCode !== cur.isoCode))) throw badRequest('Курсът на лева и еврото е фиксиран.');
+    await validateCurrency(c.var.db, { name: b.name ?? cur.name, isoCode: b.isoCode ?? cur.isoCode }, id);
+    const [row] = await c.var.db.update(s.currencies).set(b).where(eq(s.currencies.id, id)).returning();
     return c.json(row);
   })
   .delete('/currencies/:id', requirePermission('UI_Edit_Currencies'), async (c) => {
     const id = Number(c.req.param('id'));
-    if (id <= 2) throw badRequest('Основните валути не могат да бъдат изтрити.');
-    const used = await c.var.db.select({ id: s.accounts.id }).from(s.accounts).where(eq(s.accounts.currencyId, id)).limit(1);
-    if (used.length) throw badRequest('Валутата се използва от сметка и не може да бъде изтрита.');
+    const [cur] = await c.var.db.select().from(s.currencies).where(eq(s.currencies.id, id));
+    if (!cur) throw notFound('Валутата');
+    if (['BGN', 'EUR'].includes(cur.isoCode)) throw badRequest('Основните валути не могат да бъдат изтрити.');
+    const used = await exec(c.var.db, sql`SELECT 1 FROM accounts WHERE currency_id = ${id} UNION ALL SELECT 1 FROM accounting_details WHERE currency_id = ${id} LIMIT 1`);
+    if (used.rows.length) throw badRequest('Валутата не може да бъде изтрита, защото се използва за аналитичност на една или повече сметки.');
     await c.var.db.delete(s.currencies).where(eq(s.currencies.id, id));
     return c.json({ ok: true });
   })
 
   // ---- Countries ----
   .get('/countries', async (c) => c.json(await c.var.db.select().from(s.countries).where(eq(s.countries.isDeleted, false)).orderBy(asc(s.countries.name))))
-  .post('/countries', zValidator('json', z.object({ code: z.string().trim().min(2).max(3).toUpperCase(), name: z.string().trim().min(1).max(80), nameInOtherLang: z.string().max(80).default('') })), async (c) => {
+  .post('/countries', requirePermission('UI_Edit_Administration_EditTermsAndReferences'), zValidator('json', countryBody), async (c) => {
+    const warnings = validateCountry(c.req.valid('json'));
     const [row] = await c.var.db.insert(s.countries).values(c.req.valid('json')).returning();
-    return c.json(row, 201);
+    return c.json({ ...row, warnings }, 201);
   })
-  .put('/countries/:id', zValidator('json', z.object({ code: z.string().trim().min(2).max(3).toUpperCase(), name: z.string().trim().min(1).max(80), nameInOtherLang: z.string().max(80).default('') })), async (c) => {
+  .put('/countries/:id', requirePermission('UI_Edit_Administration_EditTermsAndReferences'), zValidator('json', countryBody), async (c) => {
+    const warnings = validateCountry(c.req.valid('json'));
     const [row] = await c.var.db.update(s.countries).set(c.req.valid('json')).where(eq(s.countries.id, Number(c.req.param('id')))).returning();
-    return c.json(row);
+    return c.json({ ...row, warnings });
   })
-  .delete('/countries/:id', async (c) => {
-    await c.var.db.update(s.countries).set({ isDeleted: true }).where(eq(s.countries.id, Number(c.req.param('id'))));
+  .delete('/countries/:id', requirePermission('UI_Edit_Administration_EditTermsAndReferences'), async (c) => {
+    const id = Number(c.req.param('id'));
+    const used = await c.var.db.select({ id: s.addresses.id }).from(s.addresses).where(eq(s.addresses.countryId, id)).limit(1);
+    if (used.length) throw badRequest('Държавата не може да бъде изтрита, тъй като е избрана към партньор/и.');
+    await c.var.db.update(s.countries).set({ isDeleted: true }).where(eq(s.countries.id, id));
     return c.json({ ok: true });
   })
 
@@ -384,28 +562,24 @@ export const nomenclatureRoutes = new Hono<AppEnv>()
       .orderBy(desc(t.usageFrequency), asc(t.description)).limit(Number(c.req.query('limit') ?? 50));
     return c.json(rows);
   })
-  .post('/dictionary/:type', requirePermission('UI_Edit_Administration_EditTermsAndReferences'), zValidator('json', z.object({ description: z.string().trim().min(1).max(255) })), async (c) => {
+  // 03a 8.1: adding an existing description is skipped; renaming onto an existing one merges them.
+  .post('/dictionary/:type', requirePermission('UI_Edit_Administration_EditTermsAndReferences'), zValidator('json', z.object({ description: z.string().trim().min(1).max(254), isHidden: z.boolean().optional() })), async (c) => {
     const t = dictionaryTable(c.req.param('type'));
-    const [row] = await c.var.db.insert(t).values(c.req.valid('json')).returning();
+    const b = c.req.valid('json');
+    const [existing] = await c.var.db.select().from(t).where(eq(t.description, b.description)).limit(1);
+    if (existing) return c.json(existing, 200);
+    const [row] = await c.var.db.insert(t).values(b).returning();
     return c.json(row, 201);
   })
-  .put('/dictionary/:type/:id', requirePermission('UI_Edit_Administration_EditTermsAndReferences'), zValidator('json', z.object({ description: z.string().trim().min(1).max(255), isHidden: z.boolean().optional() })), async (c) => {
-    const t = dictionaryTable(c.req.param('type'));
-    const [row] = await c.var.db.update(t).set(c.req.valid('json')).where(eq(t.id, Number(c.req.param('id')))).returning();
-    return c.json(row);
+  .put('/dictionary/:type/:id', requirePermission('UI_Edit_Administration_EditTermsAndReferences'), zValidator('json', z.object({ description: z.string().trim().min(1).max(254), isHidden: z.boolean().optional() })), async (c) => {
+    const type = c.req.param('type');
+    const id = Number(c.req.param('id'));
+    const r = await c.var.db.transaction((tx) => renameDictionary(tx, type, id, c.req.valid('json').description, c.req.valid('json').isHidden));
+    return c.json(r);
   })
   .delete('/dictionary/:type/:id', requirePermission('UI_Edit_Administration_EditTermsAndReferences'), async (c) => {
     const type = c.req.param('type');
-    const t = dictionaryTable(type);
-    const id = Number(c.req.param('id'));
-    const col = type === 'terms' ? sql`term_id` : type === 'paragraphs' ? sql`paragraph_id` : sql`reference_id`;
-    const used = await exec(c.var.db, sql`SELECT 1 FROM accountings WHERE ${col} = ${id} ${type === 'references' ? sql`OR optional_reference_id = ${id}` : sql``} LIMIT 1`);
-    if (used.rows.length) {
-      // Used descriptions are hidden instead of deleted.
-      await c.var.db.update(t).set({ isHidden: true }).where(eq(t.id, id));
-      return c.json({ ok: true, hidden: true });
-    }
-    await c.var.db.delete(t).where(eq(t.id, id));
+    await c.var.db.transaction((tx) => deleteDictionary(tx, type, Number(c.req.param('id'))));
     return c.json({ ok: true });
   })
 

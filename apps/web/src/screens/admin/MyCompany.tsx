@@ -1,3 +1,4 @@
+import { Branches } from './Branches.tsx';
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Plus, RotateCcw, Save } from 'lucide-react';
@@ -27,7 +28,7 @@ const toForm = (m: Raw): Form => ({
   bankAccounts: ((m.bankAccounts ?? []) as Raw[]).map((b) => ({ account: b.account ?? '', bankId: b.bankId ?? null, isEuro: !!b.isEuro, bankStatementAccountId: b.bankStatementAccountId ?? null })),
 });
 
-type TabId = 'main' | 'addresses' | 'banks';
+type TabId = 'main' | 'addresses' | 'banks' | 'branches';
 
 /** Моята фирма (Ctrl+F; spec 03a 3). */
 export function MyCompany() {
@@ -103,7 +104,7 @@ export function MyCompany() {
           Отказ от промените
         </Button>
       </CommandBar>
-      <TabStrip<TabId> tabs={[['main', 'Основни данни'], ['addresses', `Адреси (${form.addresses.length})`], ['banks', `Банкови сметки (${form.bankAccounts.length})`]]} value={tab} onChange={setTab} />
+      <TabStrip<TabId> tabs={[['main', 'Основни данни'], ['addresses', `Адреси (${form.addresses.length})`], ['banks', `Банкови сметки (${form.bankAccounts.length})`], ['branches', 'Клонове']]} value={tab} onChange={setTab} />
       <div className="min-h-0 flex-1 overflow-auto p-3">
         <fieldset disabled={!editable} className="max-w-[920px]">
           {tab === 'main' && (
@@ -255,6 +256,7 @@ export function MyCompany() {
               </Button>
             </div>
           )}
+          {tab === 'branches' && <Branches />}
         </fieldset>
       </div>
     </div>

@@ -57,6 +57,10 @@ export class PgliteDriver implements DbDriver {
     this.dataRoot = dataRoot;
   }
 
+  get dataDir() {
+    return this.dataRoot;
+  }
+
   private dir(name: string) {
     return this.dataRoot ? path.join(this.dataRoot, 'companies', name) : undefined;
   }

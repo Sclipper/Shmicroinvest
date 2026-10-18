@@ -7,10 +7,12 @@ export interface Message {
 export class ApiError extends Error {
   status: number;
   messages?: Message[];
-  constructor(status: number, message: string, messages?: Message[]) {
+  code?: string;
+  constructor(status: number, message: string, messages?: Message[], code?: string) {
     super(message);
     this.status = status;
     this.messages = messages;
+    this.code = code;
   }
 }
 
@@ -23,7 +25,7 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
   });
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
-  if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText, data?.messages);
+  if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText, data?.messages, data?.code);
   return data as T;
 }
 

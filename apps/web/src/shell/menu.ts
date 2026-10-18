@@ -11,7 +11,7 @@ export type MenuItem =
       /** Screen id to open. */
       screen?: string;
       /** Shell command. */
-      command?: 'newCompany' | 'chooseCompany' | 'logout' | 'closeCurrent' | 'closeAllButCurrent' | 'closeAll' | 'about';
+      command?: 'newCompany' | 'chooseCompany' | 'logout' | 'closeCurrent' | 'closeAllButCurrent' | 'closeAll' | 'about' | 'changeUser' | 'updateCheck';
       children?: MenuItem[];
     };
 
@@ -104,7 +104,9 @@ export const MENU: TopMenu[] = [
         label: 'Администриране', permission: 'UI_Edit_Administration', children: [
           { label: 'Моята фирма', permission: 'UI_Edit_Administration_MyCompany', gesture: 'Ctrl+F', screen: 'myCompany' },
           { label: 'Потребители', permission: 'UI_Edit_Administration_Users', gesture: 'Ctrl+U', screen: 'users' },
+          { label: 'Смяна на активния потребител', permission: 'UI_Edit_Administration_ChangeActiveUser', gesture: 'Ctrl+0', command: 'changeUser' },
           { label: 'Основания и забележки', permission: 'UI_Edit_Administration_EditTermsAndReferences', screen: 'dictionary' },
+          { label: 'Редакция на отчети и баланс', permission: 'UI_Edit_Administration_StatementFormulas', gesture: 'Ctrl+B', screen: 'statementFormulas' },
         ],
       },
       { sep: true },
@@ -131,7 +133,7 @@ export const MENU: TopMenu[] = [
       },
       { sep: true },
       { label: 'ДДС дневници, декларация и VIES', permission: 'UI_Reporting_VATDiary', gesture: 'Alt+D' },
-      { label: 'Отчети и баланс', permission: 'UI_Reporting_FinancialReports', gesture: 'Alt+B' },
+      { label: 'Отчети и баланс', permission: 'UI_Reporting_FinancialReports', gesture: 'Alt+B', screen: 'financialStatements' },
       { sep: true },
       { label: 'Индивидуален сметкоплан', permission: 'UI_Reporting_ChartOfAccountsReport', screen: 'chartReport' },
       { label: 'Действия по потребители', permission: 'UI_Reporting_UsersActivitiesReport', screen: 'activity' },
@@ -143,12 +145,14 @@ export const MENU: TopMenu[] = [
           { label: 'Касов ордер', permission: 'UI_Reporting_CashReports_CashOrder', screen: 'cashOrder' },
         ],
       },
+      { label: 'Мениджър на потребителските справки', permission: 'UI_Reporting_UserReportsManager', screen: 'userReports' },
     ],
   },
   {
     label: 'Други', permission: 'UI_Other', items: [
       { label: 'Настройки', permission: 'UI_Other_Settings', gesture: 'Ctrl+T', screen: 'settings' },
       { label: 'Проверка на ДДС номер, ЕИК, ЕГН, IBAN', permission: 'UI_Other_Validator', gesture: 'Alt+V', screen: 'validator' },
+      { label: 'GDPR проверка', permission: 'UI_Other_GDPRValidator', screen: 'gdpr' },
     ],
   },
   {
@@ -160,6 +164,9 @@ export const MENU: TopMenu[] = [
   },
   {
     label: 'Помощ', permission: 'UI_Help', items: [
+      { label: 'Нови версии', permission: 'UI_Help_UpdateCheck', command: 'updateCheck' },
+      { label: 'Дневник на приложението', permission: 'UI_Help_ApplicationLog', screen: 'appLog' },
+      { sep: true },
       { label: 'За Шмелта Про', permission: 'UI_Help_About', command: 'about' },
     ],
   },

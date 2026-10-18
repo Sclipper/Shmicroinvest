@@ -19,6 +19,11 @@ import { paymentsRoutes } from './routes/payments.ts';
 import { paymentDocumentsRoutes } from './routes/paymentDocuments.ts';
 import { closingsRoutes } from './routes/closings.ts';
 import { partnerReportsRoutes } from './routes/partnerReports.ts';
+import { platformRoutes } from './routes/platform.ts';
+import { initialBalanceRoutes } from './routes/initialBalances.ts';
+import { logApp } from './services/appLog.ts';
+import { statementRoutes } from './routes/statements.ts';
+import { reportVariantRoutes } from './routes/reportVariants.ts';
 
 const WEB_DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../web/dist');
 
@@ -35,7 +40,11 @@ export function createApp(driver: DbDriver, opts: { serveWeb?: boolean } = {}) {
     .route('/', paymentsRoutes)
     .route('/', paymentDocumentsRoutes)
     .route('/', closingsRoutes)
-    .route('/', partnerReportsRoutes);
+    .route('/', partnerReportsRoutes)
+    .route('/', platformRoutes)
+    .route('/', initialBalanceRoutes)
+    .route('/', statementRoutes)
+    .route('/', reportVariantRoutes);
 
   const app = new Hono<AppEnv>();
   app.use('*', async (c, next) => {
@@ -45,6 +54,7 @@ export function createApp(driver: DbDriver, opts: { serveWeb?: boolean } = {}) {
   app.onError((err, c) => {
     if (err instanceof ApiError) return c.json({ error: err.message, messages: err.messages, code: err.code }, err.status);
     console.error(err);
+    void logApp({ level: 'error', message: `${c.req.method} ${c.req.path}: ${err.message}`, details: err.stack, company: c.get('session')?.companyDb ?? null, user: c.get('user')?.name ?? null });
     return c.json({ error: 'Възникна неочаквана грешка.' }, 500);
   });
   app.get('/api/health', (c) => c.json({ ok: true }));

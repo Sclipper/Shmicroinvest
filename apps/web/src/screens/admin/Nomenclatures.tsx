@@ -29,6 +29,8 @@ interface ListEditProps<R extends { id: number }, F> {
   entityLabel: string;
   canDelete?: (r: R) => boolean;
   deleteConfirm: (r: R) => string;
+  /** Confirmation before saving (null = none). */
+  confirmSave?: (f: F, row: R | null, all: R[]) => string | null;
   onDeleted?: (resp: Record<string, unknown>) => void | Promise<void>;
   toolbar?: ReactNode;
   emptyText: string;
@@ -64,12 +66,16 @@ function ListEdit<R extends { id: number }, F>(p: ListEditProps<R, F>) {
       await dialogs.messages(`${p.entityLabel} не може да бъде записан(а)`, errs.map((text, i) => ({ key: String(i), text, severity: 'critical' })));
       return;
     }
+    const ask = p.confirmSave?.(form, row, list.data ?? []);
+    if (ask && !(await dialogs.confirm(ask))) return;
     busy.current = true;
     try {
       const r = row ? await api.put<R>(`${p.basePath}/${row.id}`, p.toBody(form, row)) : await api.post<R>(p.basePath, p.toBody(form, null));
       await invalidate(...p.invalidateKeys);
       setSel(r);
       setForm(p.toForm(r));
+      const warnings = (r as { warnings?: { key: string; text: string; severity: 'critical' | 'warning' }[] }).warnings;
+      if (warnings?.length) await dialogs.messages(`${p.entityLabel} е записан(а) с предупреждения`, warnings);
     } catch (e) {
       await dialogs.error(e);
     } finally {
@@ -194,12 +200,10 @@ export function Currencies() {
       ]}
       empty={() => ({ isoCode: '', name: '', exchangeRate: '1', fixedRate: '', rateDate: '' })}
       toForm={(r) => ({ isoCode: r.isoCode, name: r.name, exchangeRate: String(Number(r.exchangeRate)), fixedRate: String(Number(r.fixedRate)), rateDate: r.rateDate ?? '' })}
-      canDelete={(r) => r.id > 2}
+      canDelete={(r) => !['BGN', 'EUR'].includes(r.isoCode)}
       deleteConfirm={(r) => `Желаете ли да изтриете валута ${r.isoCode} – ${r.name}?`}
       validate={(f, row) => {
         const e: string[] = [];
-        if (!row && !/^[A-Za-z]{3}$/.test(f.isoCode.trim())) e.push('Кодът на валутата трябва да е от 3 латински букви (ISO 4217).');
-        if (!f.name.trim()) e.push('Не е въведено наименование на валутата.');
         if (!(row && row.id <= 2)) {
           if (!isDecimal(f.exchangeRate) || Number(normDecimal(f.exchangeRate)) <= 0) e.push('Невалиден курс.');
           if (f.fixedRate.trim() && !isDecimal(f.fixedRate)) e.push('Невалиден фиксиран курс.');
@@ -208,7 +212,7 @@ export function Currencies() {
       }}
       toBody={(f, row) => {
         const rates = row && row.id <= 2 ? {} : { exchangeRate: normDecimal(f.exchangeRate), ...(f.fixedRate.trim() ? { fixedRate: normDecimal(f.fixedRate) } : {}) };
-        return row ? { name: f.name.trim(), ...rates, ...(f.rateDate ? { rateDate: f.rateDate } : {}) } : { isoCode: f.isoCode.trim().toUpperCase(), name: f.name.trim(), ...rates };
+        return row ? { name: f.name.trim(), ...rates, ...(f.rateDate ? { rateDate: f.rateDate } : {}) } : { isoCode: f.isoCode.trim(), name: f.name.trim(), ...rates };
       }}
       renderForm={(f, set, row) => (
         <>
@@ -266,14 +270,7 @@ export function Countries() {
       ]}
       empty={() => ({ code: '', name: '', nameInOtherLang: '' })}
       toForm={(r) => ({ code: r.code, name: r.name, nameInOtherLang: r.nameInOtherLang })}
-      deleteConfirm={(r) => `Желаете ли да изтриете държава „${r.name}“?`}
-      validate={(f, row, all) => {
-        const e: string[] = [];
-        if (!/^[A-Za-z]{2,3}$/.test(f.code.trim())) e.push('Кодът на държавата трябва да е от 2 или 3 латински букви.');
-        else if (all.some((c) => c.id !== row?.id && c.code === f.code.trim().toUpperCase())) e.push('Вече съществува държава с такъв код.');
-        if (!f.name.trim()) e.push('Не е въведено наименование на държавата.');
-        return e;
-      }}
+      deleteConfirm={() => 'Желаете ли изтриване на избраната държава?'}
       toBody={(f) => ({ code: f.code.trim().toUpperCase(), name: f.name.trim(), nameInOtherLang: f.nameInOtherLang.trim() })}
       renderForm={(f, set, row) => (
         <>
@@ -298,12 +295,21 @@ export function Countries() {
 interface DictRow { id: number; description: string; isHidden: boolean; usageFrequency: number }
 interface DictForm { description: string; isHidden: boolean }
 type DictType = 'terms' | 'references' | 'paragraphs';
+const DICT_DELETE: Record<DictType, string> = {
+  terms: 'Внимание! Избраното основание ще бъде изтрито от всички операции, в които участва. Желаете ли да продължите?',
+  references: 'Внимание! Избраната забележка ще бъде изтрита от всички операции, в които участва. Желаете ли да продължите?',
+  paragraphs: 'Внимание! Избраният параграф ще бъде изтрит от всички операции, в които участва. Желаете ли да продължите?',
+};
+const DICT_RENAME: Record<DictType, string> = {
+  terms: 'Промяната на основанието ще се отрази във всички контирания, в които е ползвано, включително и в заключени периоди. Желаете ли запис на промените?',
+  references: 'Промяната на забележката ще се отрази във всички контирания, в които е ползвана, включително и в заключени периоди. Желаете ли запис на промените?',
+  paragraphs: 'Промяната на параграфа ще се отрази във всички контирания, в които е ползван, включително и в заключени периоди. Желаете ли запис на промените?',
+};
 const DICT_LABEL: Record<DictType, [string, string]> = { terms: ['Основание', 'Основанието'], references: ['Забележка', 'Забележката'], paragraphs: ['Параграф', 'Параграфът'] };
 
 /** Основания и забележки (Редакция > Администриране): the autocomplete dictionaries of the entry screen. */
 export function Dictionary() {
   const can = useCan();
-  const dialogs = useDialogs();
   const [type, setType] = useState<DictType>('terms');
   const [showHidden, setShowHidden] = useState(false);
   const [label, labelDef] = DICT_LABEL[type];
@@ -331,13 +337,15 @@ export function Dictionary() {
         ]}
         empty={() => ({ description: '', isHidden: false })}
         toForm={(r) => ({ description: r.description, isHidden: r.isHidden })}
-        deleteConfirm={(r) => `Желаете ли да изтриете „${r.description}“?`}
-        onDeleted={async (r) => {
-          if (r.hidden) await dialogs.alert('Записът участва в операции и не може да бъде изтрит. Той е скрит и няма да се предлага при контиране.');
+        deleteConfirm={() => DICT_DELETE[type]}
+        validate={(f) => (!f.description.trim() ? ['Не е въведен текст.'] : [])}
+        confirmSave={(f, row, all) => {
+          if (!row) return null;
+          // 03a 8.1: an existing text is merged into; a rename reaches every posting, also in locked periods.
+          if (all.some((r) => r.id !== row.id && r.description === f.description.trim())) return 'Описанието съществува в списъка. При запис ще бъде прибавено към съществуващото описание. Желаете ли да продължите?';
+          if (f.description.trim() !== row.description) return DICT_RENAME[type];
+          return f.isHidden !== row.isHidden ? 'Желаете ли да запазите направените промени?' : null;
         }}
-        validate={(f, row, all) =>
-          !f.description.trim() ? ['Не е въведен текст.'] : all.some((r) => r.id !== row?.id && r.description.trim().toLowerCase() === f.description.trim().toLowerCase()) ? ['Вече съществува запис с този текст.'] : []
-        }
         toBody={(f, row) => (row ? { description: f.description.trim(), isHidden: f.isHidden } : { description: f.description.trim() })}
         renderForm={(f, set, row) => (
           <>

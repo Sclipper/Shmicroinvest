@@ -2,3 +2,4 @@ export * from './system.ts';
 export * from './nomenclatures.ts';
 export * from './journal.ts';
 export * from './payments.ts';
+export * from './statements.ts';

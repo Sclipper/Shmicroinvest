@@ -36,6 +36,45 @@ test.describe('shell and login', () => {
   });
 });
 
+test.describe('shell behaviour', () => {
+  test('unsaved pages are marked with * and closing them asks first', async ({ page }) => {
+    await openApp(page);
+    await page.keyboard.press('F2');
+    await activeTab(page).getByLabel('Основание').fill('Незаписано');
+    const tabTitle = page.getByRole('button', { name: /Контиране \*/ });
+    await expect(tabTitle).toBeVisible();
+    await page.keyboard.press('Shift+F4');
+    await expect(page.getByText('Има незаписани промени')).toBeVisible();
+    await page.getByRole('dialog').getByRole('button', { name: 'Не', exact: true }).click();
+    await expect(tabTitle).toBeVisible();
+    await page.keyboard.press('Shift+F4');
+    await page.getByRole('dialog').getByRole('button', { name: 'Да', exact: true }).click();
+    await expect(tabTitle).toHaveCount(0);
+  });
+
+  test('Ctrl+Shift+F8 shows the active database and the status bar clock runs', async ({ page }) => {
+    await openApp(page);
+    await page.keyboard.press('Control+Shift+F8');
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toContainText('Активна база данни');
+    await expect(dialog).toContainText(COMPANY.name);
+    await expect(dialog).toContainText('1.01.089');
+    await page.getByRole('button', { name: 'OK' }).click();
+    const clock = page.getByTestId('clock');
+    const first = await clock.textContent();
+    await expect(clock).not.toHaveText(first!, { timeout: 3000 });
+  });
+
+  test('status bar year cell opens the year chooser', async ({ page }) => {
+    await openApp(page);
+    await page.locator('footer').getByRole('button', { name: /Година/ }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByLabel('Активна година')).toHaveValue('2026');
+    await dialog.getByRole('button', { name: 'Отказ' }).click();
+    await expect(dialog).toHaveCount(0);
+  });
+});
+
 test.describe('partners', () => {
   test('creates a partner with validation of the name', async ({ page }) => {
     await openApp(page);
@@ -91,6 +130,21 @@ test.describe('journal', () => {
     await expect(page.getByText('Сумите въведени в дебит и кредит се различават!')).toBeVisible();
   });
 
+  test('dates are entered and shown as dd.mm.yyyy', async ({ page }) => {
+    await openApp(page);
+    await page.keyboard.press('F2');
+    const tab = activeTab(page);
+    const accDate = tab.getByLabel('Дата на контиране');
+    await expect(accDate).toHaveValue(/^\d{2}\.\d{2}\.2026$/);
+    await accDate.fill('5.4.26');
+    await accDate.blur();
+    await expect(accDate).toHaveValue('05.04.2026');
+    // The document date follows the accounting date while they were equal.
+    await expect(tab.getByLabel('Дата на документ')).toHaveValue('05.04.2026');
+    await accDate.fill('31.04.2026');
+    await expect(accDate).toHaveClass(/border-red-400/);
+  });
+
   test('trial balance reflects posted amounts', async ({ page }) => {
     await openApp(page);
     const date = '2026-03-01';
@@ -120,5 +174,54 @@ test.describe('financial year', () => {
     expect(res.status()).toBe(422);
     expect(await res.text()).toContain('заключен месец');
     await api(page, 'PUT', `/years/${years[0]!.id}/locks`, { months: [] });
+  });
+});
+
+test.describe('platform services', () => {
+  test('GDPR validator runs the checks per rule', async ({ page }) => {
+    await openApp(page);
+    await menu(page, 'Други', 'GDPR проверка');
+    const tab = activeTab(page);
+    await tab.getByRole('button', { name: 'Проверка' }).click();
+    await expect(tab.getByTestId('gdpr-overall')).toBeVisible();
+    await expect(tab.getByText('Потребители на програмата')).toBeVisible();
+    await expect(tab.getByText(/^Сложни пароли/)).toBeVisible();
+    await expect(tab.getByText('Криптирана връзка (HTTPS)')).toBeVisible();
+  });
+
+  test('application log lists logins; update check reports the version', async ({ page }) => {
+    await openApp(page);
+    await menu(page, 'Помощ', 'Дневник на приложението');
+    await expect(activeTab(page).getByRole('cell', { name: `Вписване на потребител ${ADMIN.name}` }).first()).toBeVisible();
+    await menu(page, 'Помощ', 'Нови версии');
+    await expect(page.getByRole('dialog')).toContainText('Използвате актуалната версия 1.01.089');
+  });
+});
+
+test.describe('opening balances', () => {
+  test('simple account balance, both-sides error and partner rows', async ({ page }) => {
+    await openApp(page);
+    await page.keyboard.press('Alt+u');
+    const tab = activeTab(page);
+    await tab.getByPlaceholder('Номер или име на сметка').fill('504');
+    await tab.getByRole('cell', { name: '504', exact: true }).click();
+    await tab.getByLabel('Дебит', { exact: true }).fill('1200');
+    await tab.getByLabel('Кредит', { exact: true }).fill('5');
+    await tab.getByRole('button', { name: 'Запис' }).click();
+    await expect(page.getByText('Началните салда в дебит и в кредит са различни от 0. Задайте едно от тях на 0.')).toBeVisible();
+    await page.getByRole('button', { name: 'OK' }).click();
+    await tab.getByLabel('Кредит', { exact: true }).fill('');
+    await tab.getByRole('button', { name: 'Запис' }).click();
+    await expect(tab.getByRole('row', { name: /504 .* 1 200,00/ })).toBeVisible();
+
+    await tab.getByPlaceholder('Номер или име на сметка').fill('401');
+    await tab.getByRole('cell', { name: '401', exact: true }).click();
+    await expect(tab.getByText('С партньори')).toBeVisible();
+    await tab.getByLabel('Кредит', { exact: true }).fill('300');
+    await tab.getByRole('button', { name: 'Запис' }).click();
+    await expect(page.getByText('Не е избран партньор за началното салдо!')).toBeVisible();
+    await page.getByRole('button', { name: 'OK' }).click();
+    // A one-sided opening balance would unbalance the balance sheet for later specs.
+    await api(page, 'DELETE', `/initial-balances/${await accountId(page, '504')}`);
   });
 });
