@@ -1,5 +1,12 @@
 import { expect, test, type Page } from '@playwright/test';
-import { BASE_URL, accountId, activeTab, api, menu, openApp } from './fixtures.ts';
+import { BASE_URL, STATEMENTS_COMPANY, accountId, activeTab, api, menu } from './fixtures.ts';
+
+const OWN = STATEMENTS_COMPANY;
+
+async function openApp(page: Page) {
+  await page.goto('/');
+  await expect(page.locator('footer')).toContainText(OWN.name);
+}
 
 /** Current-year amount of a statement cell in the two-sided balance sheet. */
 function cell(page: Page, key: string) {
@@ -13,8 +20,10 @@ async function runBalance(page: Page) {
 }
 
 test.describe('financial statements', () => {
+  test.use({ storageState: OWN.state });
+
   test.beforeAll(async ({ browser }) => {
-    const context = await browser.newContext({ baseURL: BASE_URL, storageState: '.auth/admin.json' });
+    const context = await browser.newContext({ baseURL: BASE_URL, storageState: OWN.state });
     const page = await context.newPage();
     await api(page, 'POST', '/entries', {
       accountingDate: '2026-01-01', documentTypeId: null, documentNumber: '9100', term: 'Начални салда', isInitialBalance: true,
@@ -26,20 +35,10 @@ test.describe('financial statements', () => {
     });
     // As in Delta, the balance sheet takes the current result from 123 (b62 = fcb(123)-fdb(123)),
     // so revenue accounts must be closed for it to balance.
-    // Earlier specs in the run post revenue and expenses too: close every class 6/7 leaf to 123.
-    const tb = await api(page, 'GET', '/reports/trial-balance?from=2026-01-01&to=2026-12-31&level=9');
-    const result = await accountId(page, '123');
-    for (const r of tb.rows as { accountId: number; number: string; hasChildren: boolean; closingDebit: string; closingCredit: string }[]) {
-      if (r.hasChildren || !/^[67]/.test(r.number)) continue;
-      const net = Number(r.closingDebit) - Number(r.closingCredit);
-      if (Math.abs(net) < 0.005) continue;
-      const amount = Math.abs(net).toFixed(2);
-      const [dr, cr] = net > 0 ? [result, r.accountId] : [r.accountId, result];
-      await api(page, 'POST', '/entries', {
-        accountingDate: '2026-12-31', documentTypeId: 1, documentNumber: '9102', term: 'Приключване на приходи и разходи',
-        debits: [{ accountId: dr, amount }], credits: [{ accountId: cr, amount }],
-      });
-    }
+    await api(page, 'POST', '/entries', {
+      accountingDate: '2026-12-31', documentTypeId: 1, documentNumber: '9102', term: 'Приключване на приходи',
+      debits: [{ accountId: await accountId(page, '702'), amount: '600' }], credits: [{ accountId: await accountId(page, '123'), amount: '600' }],
+    });
     await context.close();
   });
 

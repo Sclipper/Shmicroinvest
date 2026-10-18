@@ -14,3 +14,6 @@ export * from './formulas.ts';
 export * from './statements.ts';
 export * from './seeds/statements.ts';
 export * from './xlsx.ts';
+export * from './journalExtras.ts';
+export * from './schedules.ts';
+export * from './stock.ts';

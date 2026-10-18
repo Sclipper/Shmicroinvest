@@ -8,16 +8,30 @@ export function formatSequenceNumber(seq: { format: string; numericLength: numbe
   return seq.format.includes('[#]') ? seq.format.replace('[#]', digits) : seq.format + digits;
 }
 
-export async function findSequence(db: DbOrTx, channel: number, financialYearId: number) {
+/**
+ * The series used for a channel: the user's active series of the year
+ * (UserSequences, 06 3.7) when one is chosen, else the channel's series of the
+ * year (or the year-independent one).
+ */
+export async function findSequence(db: DbOrTx, channel: number, financialYearId: number, userId?: number | null) {
+  if (userId) {
+    const [mine] = await db.select({ seq: s.sequences }).from(s.userSequences)
+      .innerJoin(s.sequences, eq(s.sequences.id, s.userSequences.sequenceId))
+      .where(and(eq(s.userSequences.userId, userId), eq(s.sequences.channel, channel),
+        or(eq(s.userSequences.financialYearId, financialYearId), isNull(s.userSequences.financialYearId))))
+      .orderBy(desc(s.userSequences.financialYearId), desc(s.userSequences.id))
+      .limit(1);
+    if (mine) return mine.seq;
+  }
   const rows = await db.select().from(s.sequences)
     .where(and(eq(s.sequences.channel, channel), or(eq(s.sequences.financialYearId, financialYearId), isNull(s.sequences.financialYearId))))
-    .orderBy(desc(s.sequences.financialYearId));
+    .orderBy(desc(s.sequences.financialYearId), s.sequences.id);
   return rows[0] ?? null;
 }
 
 /** Next number without reserving it (shown in a new editor). */
-export async function peekNextNumber(db: DbOrTx, channel: number, financialYearId: number) {
-  const seq = await findSequence(db, channel, financialYearId);
+export async function peekNextNumber(db: DbOrTx, channel: number, financialYearId: number, userId?: number | null) {
+  const seq = await findSequence(db, channel, financialYearId, userId);
   if (!seq) return '';
   return formatSequenceNumber(seq, seq.lastNumber + 1);
 }
@@ -26,8 +40,8 @@ export async function peekNextNumber(db: DbOrTx, channel: number, financialYearI
  * Reserve the next number (spGetNextNumber): increments LastNumber, skipping
  * numbers already used by entries of the year so manual numbers never collide.
  */
-export async function reserveNumber(db: DbOrTx, channel: number, financialYearId: number, isUsed: (n: string) => Promise<boolean>) {
-  const seq = await findSequence(db, channel, financialYearId);
+export async function reserveNumber(db: DbOrTx, channel: number, financialYearId: number, isUsed: (n: string) => Promise<boolean>, userId?: number | null) {
+  const seq = await findSequence(db, channel, financialYearId, userId);
   if (!seq) throw new Error(`Няма номерация за канал ${channel}.`);
   let n = seq.lastNumber;
   let formatted: string;

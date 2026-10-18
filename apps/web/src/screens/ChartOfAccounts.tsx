@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, Copy, FolderPlus, Plus, Save, Trash2 } from 'lucide-react';
-import { AccountPicker } from '../components/pickers.tsx';
-import { ACCOUNT_CATEGORIES } from '@shmi/core';
+import { ACCOUNT_CATEGORIES, STOCK_MESSAGES } from '@shmi/core';
 import { api } from '../api.ts';
 import { compareAccountNumbers as cmp, money } from '../format.ts';
 import { useDialogs } from '../components/dialogs.tsx';
-import { Button, Checkbox, CommandBar, Empty, Field, Panel, Select, Spinner, TextInput, cx } from '../components/ui.tsx';
+import { AccountPicker } from '../components/pickers.tsx';
+import { Button, Checkbox, CommandBar, Dialog, Empty, Field, Panel, Select, Spinner, TextInput, cx } from '../components/ui.tsx';
 import { useAccounts, useCan, useInvalidate, useLookups, useSession } from '../session.tsx';
 import type { Account } from '../types.ts';
 
@@ -21,7 +21,17 @@ interface Form {
   isActive: boolean | null;
   isHidden: boolean;
   iban: string;
+  accountType: AccountType;
+  measure: string;
+  productCode: string;
 }
+
+type AccountType = 'standard' | 'currency' | 'material';
+/** Server account row: the web Account plus the product fields of a material account. */
+type ChartAccount = Account & { measure?: string | null; productCode?: string | null };
+interface Template { number: string; description: string; categoryId: number | null; isActive: boolean | null; parentNumber: string | null }
+
+const typeOf = (a: Account): AccountType => (a.isMaterial ? 'material' : a.isForeignCurrency ? 'currency' : 'standard');
 
 /** Индивидуален сметкоплан (Ctrl+H): tree + edit pane (spec 01a 4, 06 ChartOfAccountsView). */
 export function ChartOfAccounts() {
@@ -30,11 +40,18 @@ export function ChartOfAccounts() {
   const dialogs = useDialogs();
   const invalidate = useInvalidate();
   const lookups = useLookups();
-  const { data: accounts = [], isLoading } = useAccounts();
+  const { data: accountsRaw, isLoading } = useAccounts();
+  const accounts = useMemo(() => (accountsRaw ?? []) as ChartAccount[], [accountsRaw]);
   const [filter, setFilter] = useState('');
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const [selId, setSelId] = useState<number | null>(null);
   const [form, setForm] = useState<Form | null>(null);
+  /** Accounts ticked for "Копиране на подсметки". */
+  const [checked, setChecked] = useState<Set<number>>(new Set());
+  const [copying, setCopying] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const measures = useQuery({ queryKey: ['products', 'measures'], queryFn: () => api.get<string[]>('/products/measures'), enabled: form?.accountType === 'material', staleTime: 60_000 });
+  const templates = useQuery({ queryKey: ['accounts', 'templates'], queryFn: () => api.get<Template[]>('/accounts/templates'), enabled: !!form && !form.id, staleTime: 60_000 });
   const editable = can('UI_Operations_ChartOfAccounts_IndividualChartOfAccounts');
   const baseCurrencyId = s.baseCurrency === 'EUR' ? 2 : 1;
 
@@ -72,25 +89,38 @@ export function ChartOfAccounts() {
     enabled: !!selId,
   });
 
-  const select = (a: Account) => {
+  const select = (a: ChartAccount) => {
     setSelId(a.id);
-    setForm({ id: a.id, parentId: a.parentId!, number: a.number, description: a.description, englishDescription: a.englishDescription ?? '', accountCategoryId: a.categoryId, currencyId: a.currencyId, isActive: a.isActive, isHidden: a.isHidden, iban: a.iban ?? '' });
+    setForm({ id: a.id, parentId: a.parentId!, number: a.number, description: a.description, englishDescription: a.englishDescription ?? '', accountCategoryId: a.categoryId, currencyId: a.currencyId, isActive: a.isActive, isHidden: a.isHidden, iban: a.iban ?? '', accountType: typeOf(a), measure: a.measure ?? '', productCode: a.productCode ?? '' });
+  };
+  const parentOf = (f: Form) => accounts.find((a) => a.id === f.parentId);
+  // Material type only for a leaf below the group level (03a 1.5).
+  const materialAllowed = (f: Form) => (f.id ? !!selected && selected.level > 2 && selected.isLeaf : (parentOf(f)?.level ?? 0) + 1 > 2);
+  /** Template account picked (F4) or typed: fill the number and the template's name, nature and category (03a 1.6). */
+  const applyTemplate = (f: Form, t: Template) => {
+    const parent = t.parentNumber ? accounts.find((a) => a.number === t.parentNumber) : undefined;
+    setForm({ ...f, number: t.number, description: t.description, accountCategoryId: t.categoryId, isActive: t.isActive, parentId: parent && f.parentId === root?.id ? parent.id : f.parentId });
   };
 
   const newAccount = async (parent: Account | undefined) => {
     if (!parent) return;
     let number = '';
     if (parent.number !== '0') number = (await api.get<{ number: string }>(`/accounts/${parent.id}/next-number`)).number;
-    setForm({ parentId: parent.id, number, description: '', englishDescription: '', accountCategoryId: parent.categoryId, currencyId: parent.currencyId || baseCurrencyId, isActive: parent.isActive, isHidden: false, iban: '' });
+    const currencyId = parent.currencyId || baseCurrencyId;
+    setForm({ parentId: parent.id, number, description: '', englishDescription: '', accountCategoryId: parent.categoryId, currencyId, isActive: parent.isActive, isHidden: false, iban: '', accountType: currencyId !== baseCurrencyId ? 'currency' : 'standard', measure: '', productCode: '' });
     setSelId(null);
   };
 
   const save = async () => {
     if (!form) return;
-    const body = { ...form, iban: form.iban || null, id: undefined };
+    const body = {
+      ...form, iban: form.iban || null, id: undefined,
+      currencyId: form.accountType === 'currency' ? form.currencyId : baseCurrencyId,
+      measure: form.accountType === 'material' ? form.measure : null, productCode: form.accountType === 'material' ? form.productCode || null : null,
+    };
     try {
       const r = form.id ? await api.put<{ id: number }>(`/accounts/${form.id}`, body) : await api.post<{ id: number }>('/accounts', body);
-      await invalidate('accounts');
+      await invalidate('accounts', 'products');
       setSelId(r.id);
       if (!form.id) setForm({ ...form, id: r.id });
       if (form.parentId) setCollapsed((c) => new Set([...c].filter((x) => x !== form.parentId)));
@@ -119,16 +149,14 @@ export function ChartOfAccounts() {
     }
   };
 
-  // "Move" is copy (03a 1.7): the subtree is copied under the chosen account with new numbers.
-  const [copying, setCopying] = useState(false);
-  const copyTo = async (target: Account | null) => {
-    if (!selected || !target) return;
-    setCopying(false);
-    if (!(await dialogs.confirm('Желаете ли да копирате избраните сметки?'))) return;
+  const copy = async (targetId: number) => {
+    if (!(await dialogs.confirm(STOCK_MESSAGES.strCopyAccountsConfirm))) return;
     try {
-      const r = await api.post<{ copied: number }>(`/accounts/${selected.id}/copy`, { targetId: target.id });
+      const r = await api.post<{ copied: number }>('/accounts/copy', { ids: [...checked], targetId });
       await invalidate('accounts');
-      setCollapsed((c) => new Set([...c].filter((x) => x !== target.id)));
+      setCopying(false);
+      setChecked(new Set());
+      setCollapsed((c) => new Set([...c].filter((x) => x !== targetId)));
       await dialogs.alert(`Копирани сметки: ${r.copied}.`);
     } catch (e) {
       await dialogs.error(e);
@@ -156,14 +184,9 @@ export function ChartOfAccounts() {
         <Button variant="danger" icon={<Trash2 className="size-3.5" />} disabled={!editable || !selected} onClick={remove}>
           Изтриване
         </Button>
- <Button icon={<Copy className="size-3.5" />} disabled={!editable || !selected} onClick={() => setCopying(true)}>
-          Копиране в...
+        <Button icon={<Copy className="size-3.5" />} disabled={!editable || checked.size === 0} onClick={() => setCopying(true)} title="Копира отметнатите сметки с подсметките им под избрана сметка">
+          Копиране на подсметки{checked.size ? ` (${checked.size})` : ''}
         </Button>
-        {copying && (
-          <div className="w-64">
-            <AccountPicker value={null} leafOnly={false} autoFocus onChange={copyTo} />
-          </div>
-        )}
         <TextInput className="ml-3 w-64" placeholder="Търсене по номер или име" value={filter} onChange={(e) => setFilter(e.target.value)} />
         {!filter && (
           <>
@@ -180,6 +203,7 @@ export function ChartOfAccounts() {
             <table className="grid-table">
               <thead>
                 <tr>
+                  <th className="w-6" />
                   <th>Номер</th>
                   <th>Наименование</th>
                   <th>Характер</th>
@@ -192,6 +216,22 @@ export function ChartOfAccounts() {
                   const hasKids = children.has(a.id);
                   return (
                     <tr key={a.id} aria-selected={a.id === selId} onClick={() => select(a)} className={cx('cursor-default', a.isHidden && 'text-slate-400')}>
+                      <td className="text-center" onClick={(e) => e.stopPropagation()}>
+                        {a.level > 2 && (
+                          <input
+                            type="checkbox"
+                            aria-label={`Отметни ${a.number}`}
+                            className="size-3.5 accent-brand-500"
+                            checked={checked.has(a.id)}
+                            onChange={(e) => setChecked((c) => {
+                              const n = new Set(c);
+                              if (e.target.checked) n.add(a.id);
+                              else n.delete(a.id);
+                              return n;
+                            })}
+                          />
+                        )}
+                      </td>
                       <td style={{ paddingLeft: 8 + (filter ? 0 : (a.level - 2) * 16) }} className={cx(a.level <= 3 && 'font-semibold')}>
                         {hasKids && !filter ? (
                           <button className="mr-1 inline-flex align-middle text-slate-500" onClick={(e) => (e.stopPropagation(), toggle(a.id))}>
@@ -218,8 +258,23 @@ export function ChartOfAccounts() {
             <div className="flex flex-col gap-3">
               <Panel title={form.id ? `Сметка ${form.number}` : 'Нова сметка'}>
                 <div className="flex flex-col gap-2 p-3">
-                  <Field label="Номер">
-                    <TextInput value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })} disabled={!editable || (selected?.isUsed ?? false)} />
+                  <Field label="Номер" hint={!form.id ? 'F4 – избор от шаблонни сметки' : undefined}>
+                    <TextInput
+                      value={form.number}
+                      disabled={!editable || (selected?.isUsed ?? false)}
+                      onChange={(e) => {
+                        const number = e.target.value.trim();
+                        const t = !form.id && !form.description.trim() ? templates.data?.find((x) => x.number === number) : undefined;
+                        if (t) applyTemplate(form, t);
+                        else setForm({ ...form, number: e.target.value });
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'F4' && !form.id) {
+                          e.preventDefault();
+                          setTemplatesOpen(true);
+                        }
+                      }}
+                    />
                   </Field>
                   <Field label="Наименование">
                     <TextInput value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} disabled={!editable} autoFocus={!form.id} />
@@ -234,15 +289,48 @@ export function ChartOfAccounts() {
                       <option value="ap">Активно-пасивна</option>
                     </Select>
                   </Field>
-                  <Field label="Валута" hint={form.currencyId !== baseCurrencyId ? 'Валутна сметка: при контиране се въвеждат валутна сума и курс.' : undefined}>
-                    <Select value={form.currencyId} onChange={(e) => setForm({ ...form, currencyId: Number(e.target.value) })} disabled={!editable || (selected?.isUsed ?? false)}>
-                      {lookups.data?.currencies.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.isoCode} – {c.name}
-                        </option>
+                  <fieldset className="flex flex-col gap-1" disabled={!editable || (selected?.isUsed ?? false)}>
+                    <legend className="mb-0.5 text-[12px] text-slate-600">Тип на сметката</legend>
+                    <div className="flex gap-4">
+                      {([['standard', 'Стандартна'], ['currency', 'Валутна'], ['material', 'Материална']] as const).map(([t, label]) => (
+                        <label key={t} className={cx('inline-flex items-center gap-1.5', t === 'material' && !materialAllowed(form) && 'opacity-50')}>
+                          <input
+                            type="radio"
+                            name="account-type"
+                            className="accent-brand-500"
+                            checked={form.accountType === t}
+                            disabled={t === 'material' && !materialAllowed(form)}
+                            onChange={() => setForm({ ...form, accountType: t, currencyId: t === 'currency' ? (form.currencyId !== baseCurrencyId ? form.currencyId : (lookups.data?.currencies.find((c) => c.id !== baseCurrencyId)?.id ?? form.currencyId)) : baseCurrencyId })}
+                          />
+                          {label}
+                        </label>
                       ))}
-                    </Select>
-                  </Field>
+                    </div>
+                  </fieldset>
+                  {form.accountType === 'currency' && (
+                    <Field label="Валута" hint="Валутна сметка: при контиране се въвеждат валутна сума и курс.">
+                      <Select value={form.currencyId} onChange={(e) => setForm({ ...form, currencyId: Number(e.target.value) })} disabled={!editable || (selected?.isUsed ?? false)}>
+                        {lookups.data?.currencies.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.isoCode} – {c.name}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  )}
+                  {form.accountType === 'material' && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <Field label="Мярка">
+                        <TextInput value={form.measure} maxLength={50} list="chart-measures" onChange={(e) => setForm({ ...form, measure: e.target.value })} disabled={!editable} />
+                      </Field>
+                      <Field label="Код">
+                        <TextInput value={form.productCode} maxLength={50} onChange={(e) => setForm({ ...form, productCode: e.target.value })} disabled={!editable} />
+                      </Field>
+                      <datalist id="chart-measures">
+                        {(measures.data ?? []).map((m) => <option key={m} value={m} />)}
+                      </datalist>
+                    </div>
+                  )}
                   <Field label="Категория">
                     <Select value={form.accountCategoryId ?? ''} onChange={(e) => setForm({ ...form, accountCategoryId: e.target.value ? Number(e.target.value) : null })} disabled={!editable}>
                       <option value="">—</option>
@@ -288,6 +376,82 @@ export function ChartOfAccounts() {
           )}
         </aside>
       </div>
+      {copying && <CopyDialog count={checked.size} onOk={copy} onClose={() => setCopying(false)} />}
+      {templatesOpen && form && (
+        <TemplateDialog
+          templates={templates.data ?? []}
+          initial={form.number}
+          onPick={(t) => (applyTemplate(form, t), setTemplatesOpen(false))}
+          onClose={() => setTemplatesOpen(false)}
+        />
+      )}
     </div>
+  );
+}
+
+/** Target of "Копиране на подсметки" (03a 1.7). */
+function CopyDialog({ count, onOk, onClose }: { count: number; onOk: (targetId: number) => void; onClose: () => void }) {
+  const [target, setTarget] = useState<number | null>(null);
+  return (
+    <Dialog
+      title="Копиране на подсметки"
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="primary" disabled={!target} onClick={() => target && onOk(target)}>
+            Копиране
+          </Button>
+          <Button onClick={onClose}>Отказ</Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-2">
+        <div>Избрани сметки: {count}. Те се копират с подсметките си под:</div>
+        <Field label="Сметка, под която се копира">
+          <AccountPicker value={target} leafOnly={false} onChange={(a) => setTarget(a?.id ?? null)} filter={(a) => a.level >= 2 && !a.isMaterial} />
+        </Field>
+      </div>
+    </Dialog>
+  );
+}
+
+/** F4 on the account number: template accounts of the chart type not yet in the chart (03a 1.6). */
+function TemplateDialog({ templates, initial, onPick, onClose }: { templates: Template[]; initial: string; onPick: (t: Template) => void; onClose: () => void }) {
+  const [q, setQ] = useState(initial);
+  const [hi, setHi] = useState(0);
+  const needle = q.trim().toLowerCase();
+  const rows = templates.filter((t) => !needle || t.number.startsWith(needle) || t.description.toLowerCase().includes(needle)).slice(0, 300);
+  return (
+    <Dialog title="Шаблонни сметки" width={620} onClose={onClose} footer={<Button onClick={onClose}>Отказ</Button>}>
+      <TextInput
+        aria-label="Търсене в шаблонните сметки"
+        placeholder="Номер или наименование"
+        className="mb-2 w-72"
+        value={q}
+        onChange={(e) => (setQ(e.target.value), setHi(0))}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown') (e.preventDefault(), setHi((h) => Math.min(h + 1, rows.length - 1)));
+          else if (e.key === 'ArrowUp') (e.preventDefault(), setHi((h) => Math.max(h - 1, 0)));
+          else if (e.key === 'Enter' && rows[hi]) (e.preventDefault(), onPick(rows[hi]!));
+        }}
+      />
+      {rows.length === 0 ? (
+        <Empty>Няма шаблонни сметки, които липсват в сметкоплана.</Empty>
+      ) : (
+        <table className="grid-table">
+          <thead>
+            <tr><th className="w-24">Номер</th><th>Наименование</th></tr>
+          </thead>
+          <tbody>
+            {rows.map((t, i) => (
+              <tr key={t.number} aria-selected={i === hi} className="cursor-default" onMouseEnter={() => setHi(i)} onClick={() => onPick(t)}>
+                <td>{t.number}</td>
+                <td>{t.description}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Dialog>
   );
 }

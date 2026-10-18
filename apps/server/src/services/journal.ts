@@ -2,13 +2,13 @@ import { asc, eq, inArray, or, sql } from 'drizzle-orm';
 import {
   buildLegs, dec, hasCritical, isCompanyCategory, isLeaf, isMonthLocked, JOURNAL_MESSAGES, linesFromLegs,
   reverseLines, round2, validateEntry, type AccountInfo, type EntryLine, type ValidationMessage, CHANNEL,
-  exchangeRateOf, priceOf,
+  exchangeRateOf, priceOf, INVOICE_LIKE_TYPES, documentNumberWarnings,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import type { DbOrTx } from '../db/provider.ts';
 import type { ActiveYear } from '../context.ts';
 import { ApiError, badRequest, notFound } from '../lib/errors.ts';
-import { accountingNumberUsed, reserveNumber } from './sequences.ts';
+import { accountingNumberUsed, findSequence, reserveNumber } from './sequences.ts';
 import { logActivity } from './audit.ts';
 
 export interface LineInput {
@@ -123,7 +123,8 @@ export async function saveEntry(db: DbOrTx, input: EntryInput, ctx: SaveContext,
     if (existing.financialYearId !== fy.id) throw badRequest(JOURNAL_MESSAGES.strWrongAccountingDate);
     if (fy.isLocked) throw badRequest(JOURNAL_MESSAGES.strVoidAccountingLockedYearWarning);
     const oldMonth = Number(existing.accountingDate.slice(5, 7));
-    if (isMonthLocked(fy.lockedMonths, oldMonth)) throw badRequest(JOURNAL_MESSAGES.strLockedMonthOperation);
+    // Opening balances and correspondences are not month-lock checked (01b 7).
+    if (!existing.isInitialBalance && isMonthLocked(fy.lockedMonths, oldMonth)) throw badRequest(JOURNAL_MESSAGES.strLockedMonthOperation);
   }
 
   const baseCur = await baseCurrencyId(db, fy.year);
@@ -149,6 +150,10 @@ export async function saveEntry(db: DbOrTx, input: EntryInput, ctx: SaveContext,
     if (!c) messages.push({ key: 'strMissingCompany', text: JOURNAL_MESSAGES.strMissingCompany, severity: 'critical' });
   }
   if (hasCritical(messages)) throw new ApiError(422, JOURNAL_MESSAGES.strCannotCompleteOperation, messages);
+  if (input.documentTypeId && INVOICE_LIKE_TYPES.includes(input.documentTypeId) && !input.isInitialBalance) {
+    const docSeq = await findSequence(db, CHANNEL.Invoice, fy.id, ctx.userId);
+    messages.push(...documentNumberWarnings(input.documentTypeId, input.documentNumber ?? '', docSeq?.numericLength ?? 10));
+  }
 
   const termId = await resolveDictionary(db, s.terms, input.term);
   const referenceId = await resolveDictionary(db, s.referenceTexts, input.reference);
@@ -178,7 +183,7 @@ export async function saveEntry(db: DbOrTx, input: EntryInput, ctx: SaveContext,
   let sequenceId = existing?.sequenceId ?? null;
   const warnings = messages.filter((m) => m.severity === 'warning');
   if (!number && !isOpening) {
-    const r = await reserveNumber(db, CHANNEL.Accounting, fy.id, (n) => accountingNumberUsed(db, fy.id, n));
+    const r = await reserveNumber(db, CHANNEL.Accounting, fy.id, (n) => accountingNumberUsed(db, fy.id, n), ctx.userId);
     number = r.number;
     sequenceId = r.sequenceId;
   }
@@ -259,9 +264,12 @@ export async function deleteEntry(db: DbOrTx, id: number, year: ActiveYear, user
   if (!e) throw notFound('Контирането');
   const [fy] = await db.select().from(s.financialYears).where(eq(s.financialYears.id, e.financialYearId));
   if (fy?.isLocked) throw badRequest(JOURNAL_MESSAGES.strVoidAccountingLockedYearWarning);
-  if (fy && isMonthLocked(fy.lockedMonths, Number(e.accountingDate.slice(5, 7)))) throw badRequest(JOURNAL_MESSAGES.strLockedMonthOperation);
+  if (fy && !e.isInitialBalance && isMonthLocked(fy.lockedMonths, Number(e.accountingDate.slice(5, 7)))) throw badRequest(JOURNAL_MESSAGES.strLockedMonthOperation);
   void year;
   await db.delete(s.accountingPaymentDetails).where(or(eq(s.accountingPaymentDetails.paymentAccountingId, id), eq(s.accountingPaymentDetails.refAccountingId, id)));
+  // 01a 8.6: generated schedule rows and reschedule periods become unprocessed again.
+  await db.update(s.accountingTemplateSchedules).set({ accountingId: null, isProcessed: false }).where(eq(s.accountingTemplateSchedules.accountingId, id));
+  await db.update(s.accountingRescheduleDetails).set({ accountingId: null, isProcessed: false }).where(eq(s.accountingRescheduleDetails.accountingId, id));
   await db.delete(s.accountings).where(eq(s.accountings.id, id));
   if (e.documentId) await deleteOrphanDocument(db, e.documentId);
   await logActivity(db, userId, 'delete', 'accounting', id, `Контиране ${e.number}`);

@@ -3,6 +3,8 @@ import { expect, type Page } from '@playwright/test';
 export const BASE_URL = `http://localhost:${process.env.E2E_PORT ?? 4310}`;
 export const ADMIN = { name: 'Администратор', password: 'e2e-secret' };
 export const COMPANY = { name: 'Е2Е Тест ООД', bulstat: '831641791' };
+/** Company of the statements spec: balances left by other specs would unbalance its balance sheet. */
+export const STATEMENTS_COMPANY = { name: 'Отчети Е2Е ООД', state: '.auth/statements.json' };
 
 /** Opens the app and waits for the shell. */
 export async function openApp(page: Page) {

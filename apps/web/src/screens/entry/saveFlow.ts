@@ -1,0 +1,78 @@
+import { formatMessage, JOURNAL_EXTRA_MESSAGES as X, preSaveConfirmations } from '@shmi/core';
+import { api, qs } from '../../api.ts';
+import type { DraftLike } from './commands.ts';
+import { lineTotal } from './commands.ts';
+
+interface Confirmer {
+  confirm: (text: string, title?: string) => Promise<boolean>;
+}
+
+/**
+ * Pre-save confirmation chain (02a 4.4): duplicate document, credit note with a
+ * positive sign, VIES month before the document / after the tax-credit term,
+ * editing an entry with payment links. Each is a Yes/No question; No returns
+ * to the editor.
+ */
+export async function confirmBeforeSave(dialogs: Confirmer, d: DraftLike): Promise<boolean> {
+  if (d.isInitialBalance) return true;
+  let duplicateExists = false;
+  if (d.documentTypeId && d.documentNumber.trim()) {
+    const partner = d.companyId ?? [...d.debits, ...d.credits].find((l) => l.companyId)?.companyId ?? null;
+    const r = await api.get<{ rows: unknown[] }>(`/journal/duplicate-document${qs({
+      documentTypeId: d.documentTypeId, documentNumber: d.documentNumber, companyId: partner, transactionTypeId: d.transactionTypeId, excludeId: d.id,
+    })}`);
+    duplicateExists = r.rows.length > 0;
+  }
+  let hasPaymentLinks = false;
+  if (d.id) {
+    const r = await api.post<{ rows: { paymentNumbers: string[]; liabilityNumbers: string[] }[] }>('/journal/void-check', { ids: [d.id] });
+    hasPaymentLinks = !!r.rows[0] && (r.rows[0].paymentNumbers.length > 0 || r.rows[0].liabilityNumbers.length > 0);
+  }
+  const questions = preSaveConfirmations({
+    documentTypeId: d.documentTypeId, totalDebit: lineTotal(d.debits), documentDate: d.documentDate || d.accountingDate,
+    viesMonth: d.viesMonth || null, duplicateExists, hasPaymentLinks,
+  });
+  for (const q of questions) if (!(await dialogs.confirm(q.text))) return false;
+  return true;
+}
+
+/** strDifferentAccountingNumberWarning when the saved number differs from the one shown (02a 3). */
+export function differentNumberMessage(shown: string | undefined, saved: string, enabled: boolean): string | null {
+  if (!enabled || !shown || shown === saved) return null;
+  return formatMessage(X.strDifferentAccountingNumberWarning, saved);
+}
+
+interface VoidCheck {
+  id: number;
+  number: string;
+  lockedYear: boolean;
+  lockedMonth: boolean;
+  liabilityNumbers: string[];
+  paymentNumbers: string[];
+  depreciation: boolean;
+}
+
+/**
+ * Void flow of the list (02a 5.1): locked year / month stop it; one or many
+ * confirmation; then each linked liability / payment / depreciation warning.
+ */
+export async function confirmVoid(dialogs: Confirmer & { alert: (text: string, title?: string) => Promise<void> }, ids: number[]): Promise<boolean> {
+  if (!ids.length) return false;
+  const { rows } = await api.post<{ rows: VoidCheck[] }>('/journal/void-check', { ids });
+  if (rows.some((r) => r.lockedYear)) {
+    await dialogs.alert('Има избрано контиране от заключена счетоводна година!', 'Редакция на контиране');
+    return false;
+  }
+  if (rows.some((r) => r.lockedMonth)) {
+    await dialogs.alert(X.strLockedMonthOperation, 'Редакция на контиране');
+    return false;
+  }
+  const ok = ids.length === 1 ? await dialogs.confirm(X.strConfirmVoid) : await dialogs.confirm(formatMessage(X.strConfirmMultiVoid, ids.length));
+  if (!ok) return false;
+  for (const r of rows) {
+    for (const n of r.liabilityNumbers) if (!(await dialogs.confirm(formatMessage(X.strLiabilityAccountingAttachedWarning, n)))) return false;
+    for (const n of r.paymentNumbers) if (!(await dialogs.confirm(formatMessage(X.strPaymentAccountingAttachedWarning, n)))) return false;
+    if (r.depreciation && !(await dialogs.confirm(X.strDepreciationScheduleAttachedWarning))) return false;
+  }
+  return true;
+}

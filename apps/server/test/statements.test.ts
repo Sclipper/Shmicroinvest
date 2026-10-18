@@ -261,8 +261,7 @@ describe('trial balance variants and euro changeover (3.4, 3.5, 12)', () => {
     await t.reloadAccounts();
     const usd = await t.call('POST', '/accounts', { parentId: t.acc('502'), description: 'Каса в USD', currencyId: 3 });
     expect(usd.status, usd.text).toBe(201);
-    const product = await t.call('POST', '/products', { name: 'Стока А', measure: 'бр.', price: '10' });
-    const goods = await t.call('POST', '/accounts', { parentId: t.acc('302'), description: 'Стока А', productId: product.body.id, accountCategoryId: 1 });
+    const goods = await t.call('POST', '/accounts', { parentId: t.acc('302'), description: 'Стока А', accountType: 'material', measure: 'бр.', accountCategoryId: 1 });
     expect(goods.status, goods.text).toBe(201);
     await t.reloadAccounts();
     const usdNumber = usd.body.number as string;

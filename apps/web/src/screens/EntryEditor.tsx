@@ -1,17 +1,24 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Plus, Save, Scale, Trash2, Undo2, X } from 'lucide-react';
-import { amountFromCurrency, amountFromQuantity, dec, formatMoney, isCompanyCategory, parseAmount } from '@shmi/core';
-import { api } from '../api.ts';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Copy, FileDown, FileUp, Package, Plus, Save, Scale, SplitSquareHorizontal, Trash2, Undo2, X } from 'lucide-react';
+import { dec, formatMoney, isCompanyCategory, JOURNAL_EXTRA_MESSAGES as XM, parseAmount } from '@shmi/core';
+import { api, qs } from '../api.ts';
 import { useDialogs } from '../components/dialogs.tsx';
 import { DictionaryInput } from '../components/DictionaryInput.tsx';
 import { AccountPicker, PartnerPicker } from '../components/pickers.tsx';
-import { Button, CommandBar, Field, Select, Spinner, TextInput, cx } from '../components/ui.tsx';
+import { Button, Checkbox, CommandBar, Field, Select, Spinner, TextInput, cx } from '../components/ui.tsx';
 import { useAccounts, useCan, useInvalidate, useLookups, useSession } from '../session.tsx';
 import { useWorkspace, type ScreenProps } from '../shell/workspace.tsx';
 import type { Account } from '../types.ts';
+import { balanced, headerOf, toAmountInput, lineToApi, materialLinesOf, recalcLine, rescheduleFromEntry, rowFormats, templatePayload, toInput, withMaterialLines } from './entry/commands.ts';
+import { AttachmentsPanel, BalancePanel, ExpensesDialog, type ExpensesChoice } from './entry/EntryPanels.tsx';
+import { memorizer } from './entry/memorizer.ts';
+import { confirmBeforeSave, confirmVoid, differentNumberMessage } from './entry/saveFlow.ts';
+import { useShortcuts } from './entry/shortcuts.ts';
+import { MaterialDetailsDialog, type MaterialLine } from './stock/MaterialDetailsDialog.tsx';
+import { LoadTemplateDialog, SaveTemplateDialog } from './templates/TemplateDialogs.tsx';
 
-interface Line {
+export interface Line {
   accountId: number | null;
   amount: string;
   companyId: number | null;
@@ -24,7 +31,7 @@ interface Line {
   vatTermId: number | null;
 }
 
-interface Draft {
+export interface Draft {
   id?: number;
   number: string;
   accountingDate: string;
@@ -47,15 +54,9 @@ interface Draft {
   credits: Line[];
 }
 
-const emptyLine = (): Line => ({ accountId: null, amount: '', companyId: null, currencyAmount: '', exchangeRate: '', quantity: '', price: '', description: '', vatTermId: null });
+export const emptyLine = (): Line => ({ accountId: null, amount: '', companyId: null, currencyAmount: '', exchangeRate: '', quantity: '', price: '', description: '', vatTermId: null });
 
-const toInput = (v: string | null | undefined) => (v === null || v === undefined || v === '' ? '' : String(Number(v)).replace('.', ','));
-const toApi = (v: string) => {
-  const d = parseAmount(v);
-  return d ? d.toString() : null;
-};
-
-function newDraft(date: string, isInitialBalance = false): Draft {
+export function newDraft(date: string, isInitialBalance = false): Draft {
   return {
     number: '', accountingDate: date, documentDate: date, documentTypeId: isInitialBalance ? null : 1, documentNumber: '', companyId: null,
     term: '', reference: '', optionalReference: '', paragraph: '', transactionTypeId: 1, viesId: null, viesMonth: date.slice(0, 8) + '01',
@@ -63,27 +64,49 @@ function newDraft(date: string, isInitialBalance = false): Draft {
   };
 }
 
+type EditorMode = 'delivery' | 'sale';
+type Dlg = null | 'saveTemplate' | 'loadTemplate' | 'expenses' | EditorMode;
+
+/** Window commands handled by the editor (06 2.6 ids); keys come from the user's shortcut table. */
+const EDITOR_COMMANDS = [
+  'Save', 'Balancing', 'BalancingAndSave', 'BalancingSaveAndCopy', 'SaveAndExpensesDistribution', 'ExpensesDistribution', 'SaveTemplate', 'LoadTemplates',
+  'CopyAccountingData', 'PasteAccountingData', 'CalculatePrice', 'DeliveryMaterialDetails', 'SaleMaterialDetails', 'PrevAccounting', 'NextAccounting',
+] as const;
+
+/** A new entry for a delivery (Ctrl+Shift+D) or sale (Ctrl+Shift+S) of materials (03a 4.5). */
+function modeDraft(date: string, mode: EditorMode | undefined): Draft {
+  const d = newDraft(date);
+  if (mode === 'delivery') return { ...d, transactionTypeId: 2, term: 'Доставка на стоки/материали' };
+  if (mode === 'sale') return { ...d, transactionTypeId: 3, term: 'Продажба на стоки/материали' };
+  return d;
+}
+
 /** Контиране (F2) / Редакция на контиране: header + debit/credit grids (spec 02a section 4). */
-export function EntryEditor({ tab }: ScreenProps) {
+export function EntryEditor({ tab, mode }: ScreenProps & { mode?: EditorMode }) {
   const session = useSession();
   const ws = useWorkspace();
   const dialogs = useDialogs();
   const invalidate = useInvalidate();
+  const qc = useQueryClient();
   const can = useCan();
   const lookups = useLookups();
   const accounts = useAccounts();
+  const shortcuts = useShortcuts();
   const id = tab.params?.id as number | undefined;
   const fromDraft = tab.params?.draft as Draft | undefined;
   const loaded = useQuery({ queryKey: ['entry', id], queryFn: () => api.get<Record<string, unknown>>(`/entries/${id}`), enabled: !!id, staleTime: 0 });
   const nextNumber = useQuery({ queryKey: ['entries', 'next-number'], queryFn: () => api.get<{ number: string }>('/entries/next-number'), enabled: !id });
-  const [d, setD] = useState<Draft | null>(id ? null : (fromDraft ?? newDraft(session.workingDate, !!tab.params?.initial)));
+  const userSettings = useQuery({ queryKey: ['settings', 'user'], queryFn: () => api.get<Record<string, string>>('/settings/user'), staleTime: 60_000 });
+  const [d, setD] = useState<Draft | null>(id ? null : (fromDraft ?? (tab.params?.initial ? newDraft(session.workingDate, true) : modeDraft(session.workingDate, mode))));
   const [saving, setSaving] = useState(false);
+  const [dlg, setDlg] = useState<Dlg>(mode && !id && !fromDraft ? mode : null);
 
   useEffect(() => {
     if (loaded.data && !d) setD(fromServer(loaded.data));
   }, [loaded.data, d]);
 
   const byId = useMemo(() => new Map((accounts.data ?? []).map((a) => [a.id, a])), [accounts.data]);
+  const formats = rowFormats(session.settings);
   const setDirty = (dirty: boolean) => tab.dirty !== dirty && ws.update(tab.key, { dirty });
   const patch = (p: Partial<Draft>) => {
     setD((x) => (x ? { ...x, ...p } : x));
@@ -104,73 +127,95 @@ export function EntryEditor({ tab }: ScreenProps) {
   const diff = td.minus(tc);
   const docTypes = lookups.data.documentTypes.filter((t) => t.isVisible || t.id === d.documentTypeId);
   const readOnly = !!d.id && !can('UI_Edit_Accountings');
+  const keepOpen = userSettings.data?.KeepAccountingOpen === 'True';
+  const settingOn = (k: string, def = false) => (session.settings[k] === undefined ? def : session.settings[k] === 'True');
 
   const setLine = (side: 'debits' | 'credits', i: number, p: Partial<Line>) => {
-    const lines = d[side].map((l, j) => (j === i ? recalc({ ...l, ...p }, p, byId.get((p.accountId ?? l.accountId) as number)) : l));
+    const lines = d[side].map((l, j) => (j === i ? recalcLine({ ...l, ...p }, p, byId.get((p.accountId ?? l.accountId) as number), formats) : l));
     patch({ [side]: lines } as Partial<Draft>);
   };
   const addLine = (side: 'debits' | 'credits') => patch({ [side]: [...d[side], emptyLine()] } as Partial<Draft>);
   const removeLine = (side: 'debits' | 'credits', i: number) => patch({ [side]: d[side].length > 1 ? d[side].filter((_, j) => j !== i) : [emptyLine()] } as Partial<Draft>);
 
-  /** Изравняване: put the difference on the shorter side's last (or a new) line. */
-  const balance = () => {
-    if (diff.isZero()) return;
-    const side = diff.gt(0) ? 'credits' : 'debits';
-    const lines = [...d[side]];
-    const idx = lines.findIndex((l) => !parseAmount(l.amount));
-    const target = idx >= 0 ? idx : lines.length - 1;
-    const cur = parseAmount(lines[target]!.amount) ?? dec(0);
-    lines[target] = { ...lines[target]!, amount: toInput(cur.plus(diff.abs()).toFixed(2)) };
-    patch({ [side]: lines } as Partial<Draft>);
-  };
+  /** Изравняване (Ctrl+F9). */
+  const balance = () => !diff.isZero() && patch(balanced(d));
 
-  const payload = () => ({
-    number: d.number || null,
-    accountingDate: d.accountingDate,
-    documentDate: d.documentDate || null,
-    documentTypeId: d.documentTypeId,
-    documentNumber: d.documentNumber,
-    companyId: d.companyId,
-    term: d.term,
-    reference: d.reference || null,
-    optionalReference: d.optionalReference || null,
-    paragraph: d.paragraph || null,
-    transactionTypeId: d.transactionTypeId,
-    viesId: d.viesId,
-    viesMonth: d.viesMonth || null,
-    dueDate: d.dueDate || null,
-    isInitialBalance: d.isInitialBalance,
-    source: d.source,
-    debits: d.debits.filter((l) => l.accountId).map(lineToApi),
-    credits: d.credits.filter((l) => l.accountId).map(lineToApi),
+  const payload = (x: Draft) => ({
+    number: x.number || null,
+    accountingDate: x.accountingDate,
+    documentDate: x.documentDate || null,
+    documentTypeId: x.documentTypeId,
+    documentNumber: x.documentNumber,
+    companyId: x.companyId,
+    term: x.term,
+    reference: x.reference || null,
+    optionalReference: x.optionalReference || null,
+    paragraph: x.paragraph || null,
+    transactionTypeId: x.transactionTypeId,
+    viesId: x.viesId,
+    viesMonth: x.viesMonth || null,
+    dueDate: x.dueDate || null,
+    isInitialBalance: x.isInitialBalance,
+    source: x.source,
+    debits: x.debits.filter((l) => l.accountId).map(lineToApi),
+    credits: x.credits.filter((l) => l.accountId).map(lineToApi),
   });
 
-  const save = async (andNew = false) => {
-    if (saving) return;
+  /** After save: different number, group-60 closing drafts (4.7); returns the saved id. */
+  const afterSave = async (r: { id: number; number: string; warnings: { key: string; text: string; severity: 'warning' }[] }, wasNew: boolean) => {
+    await invalidate('entries', 'reports', 'accounts', 'dictionary');
+    if (r.warnings?.length) await dialogs.messages(`Контиране ${r.number} е записано с предупреждения`, r.warnings);
+    const msg = wasNew ? differentNumberMessage(d.number || nextNumber.data?.number, r.number, settingOn('DifferentAccountingNumberWarning')) : null;
+    if (msg) await dialogs.alert(msg);
+    if (wasNew && settingOn('IsAllowAccountingAutomaticEnd')) {
+      const g = await api.get<{ drafts: Record<string, unknown>[] }>(`/journal/entries/${r.id}/group60-drafts`);
+      for (const draft of g.drafts) ws.open('entry', { title: 'Приключване на група 60', params: { draft: fromServer(draft) } });
+    }
+  };
+
+  type After = 'close' | 'new' | 'copy' | 'stay' | 'expenses';
+  /** Save with the confirmation chain; `after` = what the window does next (4.2 step 6). */
+  const save = async (after: After = 'close', source: Draft = d) => {
+    if (saving) return null;
     setSaving(true);
     try {
-      const r = d.id ? await api.put<{ id: number; number: string; warnings: { key: string; text: string; severity: 'warning' }[] }>(`/entries/${d.id}`, payload()) : await api.post<{ id: number; number: string; warnings: { key: string; text: string; severity: 'warning' }[] }>('/entries', payload());
-      await invalidate('entries', 'reports', 'accounts', 'dictionary');
-      if (r.warnings?.length) await dialogs.messages(`Контиране ${r.number} е записано с предупреждения`, r.warnings);
+      if (!(await confirmBeforeSave(dialogs, source))) return null;
+      const body = payload(source);
+      const r = source.id
+        ? await api.put<{ id: number; number: string; warnings: { key: string; text: string; severity: 'warning' }[] }>(`/entries/${source.id}`, body)
+        : await api.post<{ id: number; number: string; warnings: { key: string; text: string; severity: 'warning' }[] }>('/entries', body);
+      await afterSave(r, !source.id);
       setDirty(false);
-      if (andNew) {
-        setD(newDraft(d.accountingDate, d.isInitialBalance));
-        ws.update(tab.key, { title: d.isInitialBalance ? 'Начални салда' : 'Контиране', params: {} });
+      const next = after === 'close' && keepOpen ? 'new' : after;
+      if (next === 'new') {
+        setD(source.isInitialBalance ? newDraft(source.accountingDate, true) : modeDraft(source.accountingDate, mode));
+        ws.update(tab.key, { title: source.isInitialBalance ? 'Начални салда' : 'Контиране', params: {} });
         void nextNumber.refetch();
+      } else if (next === 'copy') {
+        setD({ ...source, id: undefined, number: '' });
+        ws.update(tab.key, { title: 'Контиране', params: {} });
+        void nextNumber.refetch();
+      } else if (next === 'stay' || next === 'expenses') {
+        setD({ ...source, id: r.id, number: r.number });
+        ws.update(tab.key, { title: `Контиране ${r.number}`, params: { id: r.id } });
+        if (next === 'expenses') setDlg('expenses');
       } else {
         ws.close(tab.key);
       }
+      return r;
     } catch (e) {
       await dialogs.error(e, 'Операцията не може да бъде записана');
+      return null;
     } finally {
       setSaving(false);
     }
   };
 
   const remove = async () => {
-    if (!d.id || !(await dialogs.confirm(`Желаете ли да изтриете контиране ${d.number}?`))) return;
+    if (!d.id) return;
     try {
-      await api.del(`/entries/${d.id}`);
+      if (!(await confirmVoid(dialogs, [d.id]))) return;
+      await api.post('/journal/void', { ids: [d.id] });
       await invalidate('entries', 'reports', 'accounts');
       setDirty(false);
       ws.close(tab.key);
@@ -189,43 +234,152 @@ export function EntryEditor({ tab }: ScreenProps) {
     }
   };
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if ((e.ctrlKey && e.key === 's') || (e.shiftKey && e.key === 'F9')) {
-      e.preventDefault();
-      void save();
-    } else if (e.ctrlKey && e.key === 'F9') {
-      e.preventDefault();
-      balance();
-    } else if (e.altKey && e.key === 'F9') {
-      e.preventDefault();
-      void save(true);
+  /** Ново контиране от избраното (5.3). */
+  const copyEntry = async () => {
+    if (!d.id) return;
+    try {
+      const draft = await api.get<Record<string, unknown>>(`/journal/entries/${d.id}/copy`);
+      ws.open('entry', { title: XM.strNewAccountingFromSelected, params: { draft: fromServer(draft) } });
+    } catch (e) {
+      await dialogs.error(e);
     }
   };
+
+  /** << / >> (Alt+Left / Alt+Right): previous / next entry in list order (02a 7). */
+  const navigate = async (dir: 'prev' | 'next') => {
+    if (!d.id) return;
+    if (tab.dirty && !(await dialogs.confirm(XM.strStateChangedWarning))) return;
+    const r = await api.get<{ entry: { id: number; number: string } | null }>(`/journal/entries/${d.id}/neighbor?dir=${dir}`);
+    if (!r.entry) return;
+    setDirty(false);
+    setD(null);
+    ws.update(tab.key, { title: `Контиране ${r.entry.number}`, params: { id: r.entry.id } });
+  };
+
+  /** Разпределяне на допълнителни разходи (F11) over the saved entry's lines (4.7). */
+  const distribute = async (c: ExpensesChoice, entryId: number) => {
+    setDlg(null);
+    try {
+      const draft = await api.post<Record<string, unknown>>(`/journal/entries/${entryId}/expenses-draft`, c);
+      ws.open('entry', { title: 'Разпределяне на разходи', params: { draft: fromServer(draft) } });
+    } catch (e) {
+      await dialogs.error(e);
+    }
+  };
+
+  /** Средно претеглени цени (Ctrl+F5) for every material line (03a 4.4). */
+  const loadAveragePrices = async () => {
+    const material = (['debits', 'credits'] as const).some((s) => d[s].some((l) => l.accountId && byId.get(l.accountId)?.isMaterial));
+    if (!material || !(await dialogs.confirm(XM.strLoadPriceConfirmationPrompt))) return;
+    const priced = async (lines: Line[]) => Promise.all(lines.map(async (l) => {
+      const a = l.accountId ? byId.get(l.accountId) : undefined;
+      if (!a?.isMaterial || !a.productId) return l;
+      const r = await api.get<{ price: string }>(`/stock/average-price${qs({ productId: a.productId, date: d.accountingDate })}`);
+      return recalcLine({ ...l, price: toInput(r.price) }, { price: r.price }, a, formats);
+    }));
+    try {
+      patch({ debits: await priced(d.debits), credits: await priced(d.credits) });
+    } catch (e) {
+      await dialogs.error(e);
+    }
+  };
+
+  const applyMaterial = (m: EditorMode, lines: MaterialLine[]) => {
+    setDlg(null);
+    const side = m === 'delivery' ? 'debits' : 'credits';
+    patch({ [side]: withMaterialLines(d[side], lines, byId, emptyLine) } as Partial<Draft>);
+  };
+
+  const pasteHeader = () => {
+    const h = memorizer.paste();
+    if (h) patch(h);
+  };
+
+  const run = async (cmd: (typeof EDITOR_COMMANDS)[number]) => {
+    switch (cmd) {
+      case 'Save': return void save();
+      case 'Balancing': return balance();
+      case 'BalancingAndSave': return void save('close', balanced(d));
+      case 'BalancingSaveAndCopy': return void save('copy', balanced(d));
+      case 'SaveAndExpensesDistribution': return void save('expenses', balanced(d));
+      case 'ExpensesDistribution': return d.id ? setDlg('expenses') : void save('expenses');
+      case 'SaveTemplate': return setDlg('saveTemplate');
+      case 'LoadTemplates': return setDlg('loadTemplate');
+      case 'CopyAccountingData': return memorizer.copy(headerOf(d));
+      case 'PasteAccountingData': return pasteHeader();
+      case 'CalculatePrice': return void loadAveragePrices();
+      case 'DeliveryMaterialDetails': return setDlg('delivery');
+      case 'SaleMaterialDetails': return setDlg('sale');
+      case 'PrevAccounting': return void navigate('prev');
+      case 'NextAccounting': return void navigate('next');
+    }
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (dlg) return;
+    const cmd = shortcuts.match(e, EDITOR_COMMANDS);
+    if (!cmd) return;
+    e.preventDefault();
+    e.stopPropagation();
+    void run(cmd as (typeof EDITOR_COMMANDS)[number]);
+  };
+  const hint = (cmd: string) => shortcuts.gesture(cmd) || undefined;
+  const usedAccounts = [...d.debits, ...d.credits].map((l) => l.accountId).filter((x): x is number => !!x);
 
   return (
     <div className="flex h-full flex-col" onKeyDown={onKeyDown}>
       <CommandBar
         right={
           <>
-            {d.id && <Button icon={<Undo2 className="size-3.5" />} onClick={reversal} disabled={!can('UI_Operations_Accounting')}>Сторно</Button>}
-            {d.id && <Button variant="danger" icon={<Trash2 className="size-3.5" />} onClick={remove} disabled={!can('UI_Edit_Accountings_DeleteAccounting')}>Изтриване</Button>}
+            {d.id && (
+              <>
+                <Button onClick={() => navigate('prev')} title={hint('PrevAccounting')} aria-label="Предишно контиране">
+                  {'<<'}
+                </Button>
+                <Button onClick={() => navigate('next')} title={hint('NextAccounting')} aria-label="Следващо контиране">
+                  {'>>'}
+                </Button>
+                <Button icon={<Copy className="size-3.5" />} onClick={copyEntry} disabled={!can('UI_Operations_Accounting')}>{XM.strNewAccountingFromSelected}</Button>
+                <Button icon={<Undo2 className="size-3.5" />} onClick={reversal} disabled={!can('UI_Operations_Accounting')}>Сторно</Button>
+                <Button variant="danger" icon={<Trash2 className="size-3.5" />} onClick={remove} disabled={!can('UI_Edit_Accountings_DeleteAccounting')}>Изтриване</Button>
+              </>
+            )}
           </>
         }
       >
-        <Button variant="primary" icon={<Save className="size-3.5" />} onClick={() => save()} disabled={saving || readOnly} title="Ctrl+S">
+        <Button variant="primary" icon={<Save className="size-3.5" />} onClick={() => save()} disabled={saving || readOnly} title={hint('Save')}>
           Запис
         </Button>
         {!d.id && (
-          <Button onClick={() => save(true)} disabled={saving} title="Alt+F9">
+          <Button onClick={() => save('new')} disabled={saving}>
             Запис и ново
           </Button>
         )}
-        <Button icon={<Scale className="size-3.5" />} onClick={balance} disabled={diff.isZero()} title="Ctrl+F9">
+        <Button icon={<Scale className="size-3.5" />} onClick={balance} disabled={diff.isZero()} title={hint('Balancing')}>
           Изравняване
         </Button>
-        <Button icon={<X className="size-3.5" />} onClick={async () => (!tab.dirty || (await dialogs.confirm('Желаете ли изход без запис на данните?'))) && ws.close(tab.key)}>
+        {!d.isInitialBalance && (
+          <>
+            <Button icon={<FileDown className="size-3.5" />} onClick={() => setDlg('saveTemplate')} title={hint('SaveTemplate')}>Запис като шаблон</Button>
+            <Button icon={<FileUp className="size-3.5" />} onClick={() => setDlg('loadTemplate')} title={hint('LoadTemplates')}>Шаблон</Button>
+            <Button icon={<Package className="size-3.5" />} onClick={() => setDlg(mode === 'sale' ? 'sale' : 'delivery')} title={`${hint('DeliveryMaterialDetails')} / ${hint('SaleMaterialDetails')}`}>СМЗ</Button>
+            <Button icon={<SplitSquareHorizontal className="size-3.5" />} onClick={() => ws.open('reschedules', { params: { fromEntry: rescheduleFromEntry(d) } })} disabled={!can('UI_Operations_AccountingReschedules') || td.isZero()}>
+              Разсрочване на приход/разход
+            </Button>
+          </>
+        )}
+        <Button icon={<X className="size-3.5" />} onClick={async () => (!tab.dirty || (await dialogs.confirm(XM.strStateChangedWarning))) && ws.close(tab.key)}>
           Отказ
         </Button>
+        <Checkbox
+          className="ml-2 text-[12px]"
+          label="Без затваряне след запис"
+          checked={keepOpen}
+          onChange={async (v) => {
+            await api.put('/settings/user', { KeepAccountingOpen: v ? 'True' : 'False' });
+            await qc.invalidateQueries({ queryKey: ['settings', 'user'] });
+          }}
+        />
         {d.isInitialBalance && <span className="ml-2 rounded-sm bg-amber-100 px-2 py-0.5 text-[12px] text-amber-900">Начално салдо</span>}
       </CommandBar>
 
@@ -311,7 +465,32 @@ export function EntryEditor({ tab }: ScreenProps) {
           <span>Общо кредит: {formatMoney(tc)}</span>
           <span>Разлика: {formatMoney(diff)}</span>
         </div>
+        {settingOn('IsAccountingBalanceEnabled', true) && !d.isInitialBalance && <BalancePanel accountIds={usedAccounts} date={d.accountingDate} excludeId={d.id} byId={byId} />}
+        {d.id && settingOn('IsAllowAccountingAttachments') && <AttachmentsPanel entryId={d.id} readOnly={readOnly} />}
       </div>
+
+      {(dlg === 'delivery' || dlg === 'sale') && (
+        <MaterialDetailsDialog
+          mode={dlg}
+          date={d.accountingDate}
+          initial={materialLinesOf(dlg === 'delivery' ? d.debits : d.credits, byId)}
+          onOk={(lines) => applyMaterial(dlg, lines)}
+          onClose={() => setDlg(null)}
+        />
+      )}
+      {dlg === 'saveTemplate' && <SaveTemplateDialog payload={templatePayload(d)} onClose={() => setDlg(null)} onSaved={() => setDlg(null)} />}
+      {dlg === 'loadTemplate' && (
+        <LoadTemplateDialog
+          date={d.accountingDate}
+          onClose={() => setDlg(null)}
+          onPick={(server) => {
+            setDlg(null);
+            const t = fromServer(server);
+            patch({ ...t, id: d.id, number: d.number, accountingDate: d.accountingDate, isInitialBalance: d.isInitialBalance });
+          }}
+        />
+      )}
+      {dlg === 'expenses' && d.id && <ExpensesDialog onClose={() => setDlg(null)} onOk={(c) => distribute(c, d.id!)} />}
     </div>
   );
 }
@@ -356,7 +535,7 @@ function LinesGrid({ title, lines, byId, headerCompanyId, vatTerms, total, onCha
                   <AccountPicker value={l.accountId} onChange={(acc) => onChange(i, { accountId: acc?.id ?? null })} />
                 </td>
                 <td className="p-0.5">
-                  <TextInput className={cx('num', amountBad && 'border-amber-400')} value={l.amount} inputMode="decimal" onChange={(e) => onChange(i, { amount: e.target.value })} onBlur={() => l.amount && parseAmount(l.amount) && onChange(i, { amount: toInput(parseAmount(l.amount)!.toFixed(2)) })} />
+                  <TextInput className={cx('num', amountBad && 'border-amber-400')} value={l.amount} inputMode="decimal" onChange={(e) => onChange(i, { amount: e.target.value })} onBlur={() => l.amount && parseAmount(l.amount) && onChange(i, { amount: toAmountInput(parseAmount(l.amount)!.toFixed(2)) })} />
                 </td>
                 {showPartner && (
                   <td className="p-0.5">
@@ -404,42 +583,13 @@ function LinesGrid({ title, lines, byId, headerCompanyId, vatTerms, total, onCha
   );
 }
 
-/** Row calculations (spec 02a 2): currency amount × rate, quantity × price. */
-function recalc(l: Line, changed: Partial<Line>, acc: Account | undefined): Line {
-  if (!acc) return l;
-  if (acc.isForeignCurrency && ('currencyAmount' in changed || 'exchangeRate' in changed)) {
-    const ca = parseAmount(l.currencyAmount);
-    const r = parseAmount(l.exchangeRate);
-    if (ca && r) return { ...l, amount: toInput(amountFromCurrency(ca, r).toFixed(2)) };
-  }
-  if (acc.isMaterial && ('quantity' in changed || 'price' in changed)) {
-    const q = parseAmount(l.quantity);
-    const p = parseAmount(l.price);
-    if (q && p) return { ...l, amount: toInput(amountFromQuantity(q, p).toFixed(2)) };
-  }
-  return l;
-}
-
-function lineToApi(l: Line) {
-  return {
-    accountId: l.accountId!,
-    amount: toApi(l.amount) ?? '0',
-    companyId: l.companyId,
-    description: l.description || null,
-    vatTermId: l.vatTermId,
-    currencyAmount: toApi(l.currencyAmount),
-    exchangeRate: toApi(l.exchangeRate),
-    quantity: toApi(l.quantity),
-    price: toApi(l.price),
-  };
-}
-
-function fromServer(e: Record<string, unknown>): Draft {
+export function fromServer(e: Record<string, unknown>): Draft {
   const lines = (arr: unknown) =>
     ((arr as Record<string, string | number | null>[]) ?? []).map((l) => ({
-      accountId: l.accountId as number,
-      amount: toInput(l.amount as string),
+      accountId: (l.accountId as number) ?? null,
+      amount: toAmountInput(l.amount as string),
       companyId: (l.companyId as number) ?? null,
+      companyName: (l.companyName as string) ?? null,
       currencyAmount: toInput(l.currencyAmount as string),
       exchangeRate: toInput(l.exchangeRate as string),
       quantity: toInput(l.quantity as string),
@@ -456,6 +606,7 @@ function fromServer(e: Record<string, unknown>): Draft {
     documentTypeId: (e.documentTypeId as number) ?? null,
     documentNumber: s('documentNumber'),
     companyId: (e.companyId as number) ?? null,
+    companyName: (e.companyName as string) ?? null,
     term: s('term'),
     reference: s('reference'),
     optionalReference: s('optionalReference'),
@@ -476,3 +627,4 @@ function addDays(date: string, days: number) {
   dt.setUTCDate(dt.getUTCDate() + days);
   return dt.toISOString().slice(0, 10);
 }
+

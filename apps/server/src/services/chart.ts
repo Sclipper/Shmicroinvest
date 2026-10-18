@@ -1,12 +1,14 @@
 import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import {
-  ACCOUNT_CATEGORIES, COMMERCIAL_CHART, MULTI_CATEGORIES, PRODUCT_CATEGORIES, isValidAccountNumber, nextAccountNumber, normalizeAccountNumber,
-  parseChartTemplate, rebuildNestedSet, type ChartTemplateType, type ValidationMessage,
+  ACCOUNT_CATEGORIES, COMMERCIAL_CHART, MULTI_CATEGORIES, isValidAccountNumber, nextAccountNumber, normalizeAccountNumber,
+  parseChartTemplate, rebuildNestedSet, isProductCategory, isProductReleaseCategory, productAccountTypeFor, stockMessage,
+  type ChartTemplateType, type ValidationMessage,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
-import type { DbOrTx } from '../db/provider.ts';
+import { exec, type DbOrTx } from '../db/provider.ts';
 import { ApiError, badRequest } from '../lib/errors.ts';
 import { getConfig, setConfig } from './config.ts';
+import { baseCurrencyId } from './journal.ts';
 
 /** Full rebuild of Left/Right/Level for every chart (spRebuildAccountsTree). */
 export async function rebuildAccountsTree(db: DbOrTx) {
@@ -88,6 +90,11 @@ export interface AccountInput {
   concludeAccountId?: number | null;
   isHidden?: boolean;
   iban?: string | null;
+  /** Editor type radios (03a 1.5): omitted = keep legacy behaviour (currency/product as given). */
+  accountType?: 'standard' | 'currency' | 'material';
+  /** Material account: product measure and code. */
+  measure?: string | null;
+  productCode?: string | null;
 }
 
 export async function accountSeparator(db: DbOrTx) {
@@ -115,56 +122,100 @@ export const CHART_MESSAGES = {
 } as const;
 const crit = (key: keyof typeof CHART_MESSAGES, extra = ''): ValidationMessage => ({ key, text: CHART_MESSAGES[key] + extra, severity: 'critical' });
 
+const chartBaseCurrency = (db: DbOrTx, isEuro: boolean) => baseCurrencyId(db, isEuro ? 2026 : 2025);
+
 type AccountRow = typeof s.accounts.$inferSelect;
 
-async function validateAccount(db: DbOrTx, o: { parent: AccountRow; self?: AccountRow; number: string; description: string; categoryId: number | null; productId: number | null }) {
-  const out: ValidationMessage[] = [];
-  const sep = await accountSeparator(db);
-  if (!isValidAccountNumber(o.parent.number, o.number, sep)) out.push(crit('strInvalidAccountNumber'));
-  const [dup] = await db.select().from(s.accounts).where(and(eq(s.accounts.number, o.number), eq(s.accounts.isEuro, o.parent.isEuro)));
-  if (dup && dup.id !== o.self?.id) out.push(crit(dup.isHidden ? 'strAccountAlreadyExistsAndIsHidden' : 'strAccountAlreadyExists'));
-  if (!o.description.trim()) out.push(crit('strInvalidAccountDescription'));
-  if (o.productId != null && !(PRODUCT_CATEGORIES as readonly number[]).includes(o.categoryId ?? -1)) out.push(crit('strNoMaterialAccount'));
-  if (o.categoryId != null && o.parent.accountCategoryId != null && o.parent.number !== '0' && o.categoryId !== o.parent.accountCategoryId) {
-    out.push(crit('strAccountCategoryDifferentFromParent'));
+/** Validation of the account editor (03a 1.6); all Critical, reported together. */
+async function validateAccount(db: DbOrTx, parent: AccountRow, input: Partial<AccountInput>, number: string, existing?: AccountRow) {
+  const msgs: ValidationMessage[] = [];
+  if (!existing || number !== existing.number) {
+    if (!isValidAccountNumber(parent.number, number, await accountSeparator(db))) msgs.push(crit('strInvalidAccountNumber'));
+    const same = await db.select({ id: s.accounts.id, isHidden: s.accounts.isHidden }).from(s.accounts).where(and(eq(s.accounts.number, number), eq(s.accounts.isEuro, parent.isEuro)));
+    const clash = same.find((r) => r.id !== existing?.id);
+    if (clash) msgs.push(crit(clash.isHidden ? 'strAccountAlreadyExistsAndIsHidden' : 'strAccountAlreadyExists'));
   }
-  const inherited = o.categoryId != null && o.categoryId === o.parent.accountCategoryId;
-  const changed = o.categoryId !== (o.self?.accountCategoryId ?? null);
-  if (o.categoryId != null && !inherited && changed && !(MULTI_CATEGORIES as readonly number[]).includes(o.categoryId)) {
-    // Another account outside this account's own branch already has the category.
-    const holders = await db.select().from(s.accounts).where(and(eq(s.accounts.accountCategoryId, o.categoryId), eq(s.accounts.isEuro, o.parent.isEuro)));
-    const sameBranch = (h: AccountRow) => o.number.startsWith(h.number) || h.number.startsWith(o.number);
-    if (holders.some((h) => h.id !== o.self?.id && !sameBranch(h))) out.push(crit('strAccountCategoryAlreadyTakenError'));
+  const description = input.description ?? existing?.description ?? '';
+  if (!description.trim()) msgs.push(crit('strInvalidAccountDescription'));
+  const category = input.accountCategoryId === undefined ? (existing?.accountCategoryId ?? parent.accountCategoryId) : input.accountCategoryId;
+  const differs = parent.number !== '0' && parent.accountCategoryId != null && category != null && category !== parent.accountCategoryId;
+  if (differs) msgs.push(crit('strAccountCategoryDifferentFromParent'));
+  const productId = input.productId === undefined ? existing?.productId : input.productId;
+  const material = input.accountType === 'material' || (input.accountType === undefined && productId != null);
+  if (material && !isProductCategory(category) && !isProductReleaseCategory(category)) msgs.push(crit('strNoMaterialAccount'));
+  if (input.accountType === 'material' && !input.measure?.trim()) msgs.push(stockMessage('strProductMeasureError'));
+  if (input.accountType === 'currency') {
+    const base = await chartBaseCurrency(db, parent.isEuro);
+    if (!input.currencyId || input.currencyId === base) msgs.push(stockMessage('strAccountCurrencyNotSelected'));
   }
-  if (out.length) throw new ApiError(422, 'Сметката не може да бъде записана.', out);
+  // Single-account categories: another account outside this account's own branch already has it.
+  const inherited = category != null && category === parent.accountCategoryId;
+  const changed = category !== (existing?.accountCategoryId ?? null);
+  if (category != null && !differs && !inherited && changed && !(MULTI_CATEGORIES as readonly number[]).includes(category)) {
+    const holders = await db.select().from(s.accounts).where(and(eq(s.accounts.accountCategoryId, category), eq(s.accounts.isEuro, parent.isEuro)));
+    const sameBranch = (h: AccountRow) => number.startsWith(h.number) || h.number.startsWith(number);
+    if (holders.some((h) => h.id !== existing?.id && !sameBranch(h))) msgs.push(crit('strAccountCategoryAlreadyTakenError'));
+  }
+  if (msgs.length) throw new ApiError(422, 'Сметката не може да бъде записана.', msgs);
+  return category ?? null;
 }
 
-/** Add-sub rule (CanAddSub): the parent is neither material nor in foreign currency. */
-async function assertCanAddSub(db: DbOrTx, parent: AccountRow) {
-  const [root] = await db.select().from(s.accounts).where(and(eq(s.accounts.number, '0'), eq(s.accounts.isEuro, parent.isEuro)));
-  if (parent.productId != null || (parent.number !== '0' && root && parent.currencyId !== root.currencyId)) {
-    throw new ApiError(422, CHART_MESSAGES.strCanNotAddSubAccount, [crit('strCanNotAddSubAccount')]);
+/** Material account: create or update its product and the ProductAccounts link (03a 1.6 ApplyChanges). */
+async function upsertAccountProduct(db: DbOrTx, account: AccountRow, input: Partial<AccountInput>) {
+  const name = account.description;
+  if (account.productId) {
+    await db.update(s.products).set({ name, code: input.productCode ?? null, measure: input.measure!.trim() }).where(eq(s.products.id, account.productId));
+    // The other accounts of the product follow the new name.
+    const others = await db.select({ accountId: s.productAccounts.accountId }).from(s.productAccounts).where(eq(s.productAccounts.productId, account.productId));
+    const ids = others.map((o) => o.accountId).filter((id) => id !== account.id);
+    if (ids.length) await db.update(s.accounts).set({ description: name }).where(inArray(s.accounts.id, ids));
+    const [link] = await db.select().from(s.productAccounts).where(and(eq(s.productAccounts.productId, account.productId), eq(s.productAccounts.accountId, account.id)));
+    if (!link) await db.insert(s.productAccounts).values({ productId: account.productId, accountId: account.id, accountType: productAccountTypeFor(account.accountCategoryId) });
+    return account.productId;
   }
+  const [p] = await db.insert(s.products).values({ name, code: input.productCode ?? null, measure: input.measure!.trim() }).returning({ id: s.products.id });
+  await db.insert(s.productAccounts).values({ productId: p!.id, accountId: account.id, accountType: productAccountTypeFor(account.accountCategoryId) });
+  await db.update(s.accounts).set({ productId: p!.id }).where(eq(s.accounts.id, account.id));
+  return p!.id;
 }
 
+/** Drop the product link of an account that stops being material; the product is soft-deleted when it has no accounts left. */
+async function dropAccountProduct(db: DbOrTx, account: AccountRow) {
+  if (!account.productId) return;
+  await db.delete(s.productAccounts).where(and(eq(s.productAccounts.productId, account.productId), eq(s.productAccounts.accountId, account.id)));
+  await db.update(s.accounts).set({ productId: null }).where(eq(s.accounts.id, account.id));
+  const [left] = await db.select({ n: sql<number>`count(*)::int` }).from(s.productAccounts).where(eq(s.productAccounts.productId, account.productId));
+  if ((left?.n ?? 0) === 0) await db.update(s.products).set({ isDeleted: true }).where(eq(s.products.id, account.productId));
+}
+
+/** CanAddSub (03a 1.6, partial): parent not material and not a foreign-currency account. */
+export async function canAddSubAccount(db: DbOrTx, parent: AccountRow) {
+  if (parent.productId != null) return false;
+  if (parent.number !== '0' && parent.currencyId !== (await chartBaseCurrency(db, parent.isEuro))) return false;
+  return true;
+}
+
+const cannotAddSub = () => new ApiError(422, CHART_MESSAGES.strCanNotAddSubAccount, [crit('strCanNotAddSubAccount')]);
 
 export async function addAccount(db: DbOrTx, input: AccountInput) {
   const [parent] = await db.select().from(s.accounts).where(eq(s.accounts.id, input.parentId));
   if (!parent) throw badRequest('Невалидна сметка.');
   const sep = await accountSeparator(db);
   const number = input.number?.trim() ? normalizeAccountNumber(input.number, sep) : await suggestSubAccountNumber(db, parent.id);
-  await assertCanAddSub(db, parent);
-  await validateAccount(db, { parent, number, description: input.description, categoryId: input.accountCategoryId === undefined ? parent.accountCategoryId : input.accountCategoryId, productId: input.productId ?? null });
+  if (parent.number !== '0' && !(await canAddSubAccount(db, parent))) throw cannotAddSub();
+  const category = await validateAccount(db, parent, input, number);
   if (await isAccountUsed(db, parent.id)) {
     throw badRequest(`Сметка ${parent.number} има осчетоводени операции и не може да има подсметки.`);
   }
+  const base = await chartBaseCurrency(db, parent.isEuro);
+  const currencyId = input.accountType === 'currency' ? input.currencyId! : input.accountType ? base : (input.currencyId ?? parent.currencyId);
   const [row] = await db.insert(s.accounts).values({
     parentId: parent.id,
     number,
     description: input.description.trim(),
     englishDescription: input.englishDescription ?? '',
-    accountCategoryId: input.accountCategoryId ?? parent.accountCategoryId,
-    currencyId: input.currencyId ?? parent.currencyId,
+    accountCategoryId: category,
+    currencyId,
     productId: input.productId ?? null,
     isActive: input.isActive === undefined ? parent.isActive : input.isActive,
     concludeAccountId: input.concludeAccountId ?? null,
@@ -172,6 +223,7 @@ export async function addAccount(db: DbOrTx, input: AccountInput) {
     isEuro: parent.isEuro,
     iban: input.iban ?? null,
   }).returning();
+  if (input.accountType === 'material') row!.productId = await upsertAccountProduct(db, row!, input);
   await rebuildAccountsTree(db);
   return row!;
 }
@@ -186,37 +238,53 @@ export async function editAccount(db: DbOrTx, id: number, input: Partial<Account
   const [acc] = await db.select().from(s.accounts).where(eq(s.accounts.id, id));
   if (!acc) throw badRequest('Невалидна сметка.');
   if (acc.number === '0') throw badRequest('Коренът на сметкоплана не може да се редактира.');
+  const [parent] = acc.parentId ? await db.select().from(s.accounts).where(eq(s.accounts.id, acc.parentId)) : [];
   const used = await isAccountUsed(db, id);
-  if (input.number) input.number = normalizeAccountNumber(input.number, await accountSeparator(db));
-  const [parent] = acc.parentId != null ? await db.select().from(s.accounts).where(eq(s.accounts.id, acc.parentId)) : [];
-  if (parent) {
-    await validateAccount(db, {
-      parent, self: acc, number: input.number ?? acc.number, description: input.description ?? acc.description,
-      categoryId: input.accountCategoryId === undefined ? acc.accountCategoryId : input.accountCategoryId,
-      productId: input.productId === undefined ? acc.productId : input.productId,
-    });
-  }
-  if (input.number && input.number !== acc.number) {
+  const number = input.number?.trim() ? normalizeAccountNumber(input.number, await accountSeparator(db)) : acc.number;
+  if (number !== acc.number) {
     if (used) throw badRequest('Номерът на сметка с осчетоводени операции не може да бъде променян.');
     const children = await db.select({ id: s.accounts.id }).from(s.accounts).where(eq(s.accounts.parentId, id));
     if (children.length) throw badRequest('Номерът на сметка с подсметки не може да бъде променян.');
   }
+  if (parent) await validateAccount(db, parent, input, number, acc);
+  const base = await chartBaseCurrency(db, acc.isEuro);
+  let currencyId = input.currencyId ?? acc.currencyId;
+  if (input.accountType === 'standard' || input.accountType === 'material') currencyId = base;
+  const becomesMaterial = input.accountType === 'material';
+  const stopsMaterial = input.accountType !== undefined && input.accountType !== 'material' && acc.productId != null;
   // Type, currency and measure lock once postings exist (CanModifyLockableProperties).
-  if (used && ((input.currencyId !== undefined && input.currencyId !== acc.currencyId) || (input.productId !== undefined && input.productId !== acc.productId))) {
+  if (used && (currencyId !== acc.currencyId || (becomesMaterial && !acc.productId) || stopsMaterial
+    || (input.productId !== undefined && input.productId !== acc.productId))) {
     throw badRequest('Валутата и материалността на сметка с осчетоводени операции не могат да бъдат променяни.');
   }
+  if (becomesMaterial || input.accountType === 'currency') {
+    const kids = await db.select({ id: s.accounts.id }).from(s.accounts).where(eq(s.accounts.parentId, id));
+    if (kids.length || acc.level <= 2) throw badRequest('Типът може да се променя само на аналитична сметка без подсметки.');
+  }
   const [row] = await db.update(s.accounts).set({
-    number: input.number?.trim() ?? acc.number,
+    number,
     description: input.description?.trim() ?? acc.description,
     englishDescription: input.englishDescription ?? acc.englishDescription,
     accountCategoryId: input.accountCategoryId === undefined ? acc.accountCategoryId : input.accountCategoryId,
-    currencyId: input.currencyId ?? acc.currencyId,
+    currencyId,
     productId: input.productId === undefined ? acc.productId : input.productId,
     isActive: input.isActive === undefined ? acc.isActive : input.isActive,
     concludeAccountId: input.concludeAccountId === undefined ? acc.concludeAccountId : input.concludeAccountId,
     isHidden: input.isHidden ?? acc.isHidden,
     iban: input.iban === undefined ? acc.iban : input.iban,
   }).where(eq(s.accounts.id, id)).returning();
+  if (becomesMaterial) row!.productId = await upsertAccountProduct(db, row!, input);
+  else if (stopsMaterial) {
+    await dropAccountProduct(db, acc);
+    row!.productId = null;
+  } else if (row!.productId && row!.description !== acc.description) {
+    // Renaming a product account renames the product and its other accounts.
+    await db.update(s.products).set({ name: row!.description }).where(eq(s.products.id, row!.productId));
+    const others = await db.select({ accountId: s.productAccounts.accountId }).from(s.productAccounts).where(eq(s.productAccounts.productId, row!.productId));
+    const ids = others.map((o) => o.accountId).filter((x) => x !== id);
+    if (ids.length) await db.update(s.accounts).set({ description: row!.description }).where(inArray(s.accounts.id, ids));
+  }
+  if (number !== acc.number) await rebuildAccountsTree(db);
   return row!;
 }
 
@@ -228,7 +296,7 @@ export async function deleteBlockers(db: DbOrTx, id: number) {
   if (await isAccountUsed(db, id)) out.push('Сметката участва в операции.');
   // Tables added by other modules (templates, fixed assets, reschedules) are checked when present.
   for (const [table, cols, text] of [
-    ['accounting_templates_details', ['account_id', 'ref_account_id'], 'Сметката участва в шаблони за контиране.'],
+    ['accounting_template_details', ['account_id'], 'Сметката участва в шаблони за контиране.'],
     ['fixed_assets', ['debit_account_id', 'credit_account_id', 'inventory_account_id'], 'Сметката участва в дълготрайни активи.'],
     ['accounting_reschedules', ['debit_account_id', 'credit_account_id'], 'Сметката участва в разсрочвания.'],
   ] as const) {
@@ -248,33 +316,17 @@ export async function deleteInfo(db: DbOrTx, id: number) {
   return { hasPartners: (p?.n ?? 0) > 0, hasBankAccount: (b?.n ?? 0) > 0, blockers: await deleteBlockers(db, id) };
 }
 
-/**
- * "Move" is copy (03a 1.7): copies the subtree of an account under a target
- * with newly generated numbers (description, currency, nature and category).
- */
-export async function copyAccounts(db: DbOrTx, sourceId: number, targetId: number) {
-  const [src] = await db.select().from(s.accounts).where(eq(s.accounts.id, sourceId));
-  const [target] = await db.select().from(s.accounts).where(eq(s.accounts.id, targetId));
-  if (!src || !target || src.number === '0') throw badRequest('Невалидна сметка.');
-  if (target.number.startsWith(src.number) && src.isEuro === target.isEuro) throw new ApiError(422, CHART_MESSAGES.strCanNotAddSubAccount, [crit('strCanNotAddSubAccount')]);
-  await assertCanAddSub(db, target);
-  if (await isAccountUsed(db, target.id)) throw new ApiError(422, CHART_MESSAGES.strCanNotAddSubAccount, [crit('strCanNotAddSubAccount')]);
-  const all = await db.select().from(s.accounts).where(eq(s.accounts.isEuro, src.isEuro));
-  const sep = await accountSeparator(db);
-  let copied = 0;
-  const copyNode = async (node: AccountRow, parent: AccountRow) => {
-    const siblings = await db.select({ number: s.accounts.number }).from(s.accounts).where(eq(s.accounts.parentId, parent.id));
-    const number = nextAccountNumber(parent.number, siblings.map((x) => x.number), sep);
-    const [row] = await db.insert(s.accounts).values({
-      parentId: parent.id, number, description: node.description, englishDescription: node.englishDescription,
-      accountCategoryId: node.accountCategoryId ?? parent.accountCategoryId, currencyId: node.currencyId, isActive: node.isActive, isEuro: parent.isEuro,
-    }).returning();
-    copied++;
-    for (const child of all.filter((a) => a.parentId === node.id).sort((a, b) => a.number.localeCompare(b.number))) await copyNode(child, row!);
-  };
-  await copyNode(src, target);
-  await rebuildAccountsTree(db);
-  return { copied };
+/** Why an account cannot be deleted (01a 4.4): sub-accounts, journal lines, templates, reschedules. */
+export async function accountDeleteBlockers(db: DbOrTx, id: number) {
+  const reasons: string[] = [];
+  const children = await db.select({ id: s.accounts.id }).from(s.accounts).where(eq(s.accounts.parentId, id));
+  if (children.length) reasons.push('Сметката не може да бъде изтрита, защото има подсметки.');
+  if (await isAccountUsed(db, id)) reasons.push('Сметката не може да бъде изтрита, защото участва в операции.');
+  const [t] = (await exec(db, sql`SELECT count(*)::int AS n FROM accounting_template_details WHERE account_id = ${id}`)).rows as { n: number }[];
+  if ((t?.n ?? 0) > 0) reasons.push('Сметката не може да бъде изтрита, защото участва в шаблон за контиране.');
+  const [r] = (await exec(db, sql`SELECT count(*)::int AS n FROM accounting_reschedules WHERE debit_account_id = ${id} OR credit_account_id = ${id}`)).rows as { n: number }[];
+  if ((r?.n ?? 0) > 0) reasons.push('Сметката не може да бъде изтрита, защото участва в картон за разсрочване.');
+  return reasons;
 }
 
 /** Delete rules (spec 01a 4.4): refused when it has sub-accounts or is used. */
@@ -288,8 +340,81 @@ export async function deleteAccount(db: DbOrTx, id: number) {
   await db.update(s.accounts).set({ concludeAccountId: null }).where(eq(s.accounts.concludeAccountId, id));
   await db.delete(s.companyAccounts).where(eq(s.companyAccounts.accountId, id));
   await db.update(s.bankAccounts).set({ bankStatementAccountId: null }).where(eq(s.bankAccounts.bankStatementAccountId, id));
+  await db.delete(s.productAccounts).where(eq(s.productAccounts.accountId, id));
   await db.delete(s.accounts).where(eq(s.accounts.id, id));
+  if (acc.productId) {
+    const [left] = await db.select({ n: sql<number>`count(*)::int` }).from(s.productAccounts).where(eq(s.productAccounts.productId, acc.productId));
+    if ((left?.n ?? 0) === 0) await db.update(s.products).set({ isDeleted: true }).where(eq(s.products.id, acc.productId));
+  }
   await rebuildAccountsTree(db);
+}
+
+/**
+ * Account templates (F4, ChooseAccountTemplateCommand, 03a 1.6): accounts of
+ * the commercial template that are not in the chart yet.
+ */
+export async function accountTemplates(db: DbOrTx, isEuro: boolean, q?: string) {
+  const existing = await db.select({ number: s.accounts.number }).from(s.accounts).where(eq(s.accounts.isEuro, isEuro));
+  const have = new Set(existing.map((e) => e.number));
+  const needle = q?.trim().toLowerCase() ?? '';
+  return parseChartTemplate(COMMERCIAL_CHART)
+    .filter((a) => !have.has(a.number))
+    .filter((a) => !needle || a.number.startsWith(needle) || a.description.toLowerCase().includes(needle))
+    .map((a) => ({ number: a.number, description: a.description, categoryId: a.categoryId, isActive: a.isActive, parentNumber: a.parentNumber }));
+}
+
+/**
+ * Copy sub-accounts (03a 1.7 "Move is copy"): each selected subtree is copied
+ * under the target with newly generated numbers; description, currency
+ * (matched by ISO code in the target chart), nature and category are copied.
+ */
+export async function copyAccounts(db: DbOrTx, ids: number[], targetId: number) {
+  const [target] = await db.select().from(s.accounts).where(eq(s.accounts.id, targetId));
+  if (!target) throw badRequest('Невалидна сметка.');
+  if (target.number === '0') throw cannotAddSub();
+  if (!(await canAddSubAccount(db, target)) || (target.number !== '0' && (await isAccountUsed(db, target.id)))) throw cannotAddSub();
+  const all = await db.select().from(s.accounts).where(eq(s.accounts.isEuro, target.isEuro));
+  const kids = new Map<number, AccountRow[]>();
+  for (const a of all) if (a.parentId != null) kids.set(a.parentId, [...(kids.get(a.parentId) ?? []), a]);
+  const currencies = await db.select({ id: s.currencies.id, iso: s.currencies.isoCode }).from(s.currencies);
+  const isoById = new Map(currencies.map((c) => [c.id, c.iso]));
+  const idByIso = new Map(currencies.map((c) => [c.iso, c.id]));
+  const sep = await accountSeparator(db);
+  // A selected account inside another selected subtree is copied with its ancestor only.
+  const selected = new Set(ids);
+  const ancestorSelected = (a: AccountRow) => {
+    let p = a.parentId;
+    while (p != null) {
+      if (selected.has(p)) return true;
+      p = all.find((x) => x.id === p)?.parentId ?? null;
+    }
+    return false;
+  };
+  const sources = all.filter((a) => selected.has(a.id) && !ancestorSelected(a));
+  if (!sources.length) throw badRequest('Няма избрани сметки за копиране.');
+  for (const src of sources) {
+    // Copying a subtree into itself would loop forever.
+    let p: number | null = target.id;
+    while (p != null) {
+      if (p === src.id) throw cannotAddSub();
+      p = all.find((x) => x.id === p)?.parentId ?? null;
+    }
+  }
+  let copied = 0;
+  const copyNode = async (src: AccountRow, parent: { id: number; number: string }) => {
+    const siblings = await db.select({ number: s.accounts.number }).from(s.accounts).where(eq(s.accounts.parentId, parent.id));
+    const number = nextAccountNumber(parent.number, siblings.map((x) => x.number), sep);
+    const currencyId = idByIso.get(isoById.get(src.currencyId) ?? '') ?? src.currencyId;
+    const [row] = await db.insert(s.accounts).values({
+      parentId: parent.id, number, description: src.description, englishDescription: src.englishDescription,
+      accountCategoryId: src.accountCategoryId ?? target.accountCategoryId, currencyId, isActive: src.isActive, isEuro: target.isEuro,
+    }).returning({ id: s.accounts.id, number: s.accounts.number });
+    copied++;
+    for (const k of (kids.get(src.id) ?? []).sort((a, b) => (a.number < b.number ? -1 : 1))) await copyNode(k, row!);
+  };
+  for (const src of sources) await copyNode(src, target);
+  await rebuildAccountsTree(db);
+  return { copied };
 }
 
 /** Accounts of the chart used by a given year, with derived flags. */

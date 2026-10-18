@@ -12,6 +12,7 @@ import { requirePermission, updateSessionState, workingDate, todayInSofia, daysB
 import { getConfig, setConfig, BASIC_SETTINGS } from '../services/config.ts';
 import { applyChartTemplate } from '../services/chart.ts';
 import { PRODUCT_VERSION } from '../services/companySetup.ts';
+import { SETTING_CHILDREN } from './settingsExtras.ts';
 
 export const sessionRoutes = new Hono<AppEnv>()
   /** Everything the shell needs: status bar cells, permissions, settings. */
@@ -174,6 +175,10 @@ export const sessionRoutes = new Hono<AppEnv>()
     for (const [k, v] of Object.entries(body)) {
       if (!(k in BASIC_SETTINGS)) throw new ApiError(400, `Непозната настройка ${k}.`);
       await setConfig(c.var.db, k, v);
+    }
+    // 06 3.5: a parent option turned off clears its dependent options.
+    for (const [parent, children] of Object.entries(SETTING_CHILDREN)) {
+      if (body[parent] === 'False') for (const child of children) if (child in BASIC_SETTINGS) await setConfig(c.var.db, child, 'False');
     }
     return c.json({ ok: true });
   });

@@ -5,6 +5,7 @@ import { api } from '../../api.ts';
 import { useDialogs } from '../../components/dialogs.tsx';
 import { Button, Checkbox, CommandBar, Empty, Panel, Spinner, TextInput, cx } from '../../components/ui.tsx';
 import { useCan, useInvalidate } from '../../session.tsx';
+import { DatabasePage, DocumentTypesPage, SequencesPage, useSettingsPages } from '../settings/SettingsPages.tsx';
 
 interface Setting { key: string; label: string; value: string; default: string }
 
@@ -14,11 +15,12 @@ const isTrue = (v: string | undefined) => (v ?? '').toLowerCase() === 'true';
 const PARENT: Record<string, string> = {
   IsAutomaticOpenBindingDocumentsEnabled: 'IsBindingDocumentsEnabled',
   IsShowSeperateAccountingsForeachAccountGroup60: 'IsAllowAccountingAutomaticEnd',
+  IsShowAccountingAttachmentsInList: 'IsAllowAccountingAttachments',
 };
 const NUMERIC = new Set(['QuantityFormat', 'PriceFormat', 'ExchangeRateFormat']);
 
-/** Настройки (Ctrl+T; spec 06 3.4). */
-export function Settings() {
+/** Настройки > Основни (spec 06 3.4). */
+function BasicSettings() {
   const can = useCan();
   const dialogs = useDialogs();
   const invalidate = useInvalidate();
@@ -97,6 +99,29 @@ export function Settings() {
             </table>
           </Panel>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** Настройки (spec 06 3.5): pages Основни / База данни / Номерация / Документи. */
+export function Settings() {
+  const pages = useSettingsPages();
+  const [page, setPage] = useState(pages[0]?.id ?? 'database');
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex gap-0.5 border-b border-slate-300 bg-slate-100 px-2 pt-1" role="tablist">
+        {pages.map((p) => (
+          <button key={p.id} role="tab" aria-selected={page === p.id} onClick={() => setPage(p.id)} className={cx('rounded-t-sm border border-b-0 px-3 py-1 text-[13px]', page === p.id ? 'border-slate-300 bg-white font-medium' : 'border-transparent text-slate-600 hover:bg-slate-200')}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+      <div className="min-h-0 flex-1">
+        {page === 'basic' && <BasicSettings />}
+        {page === 'database' && <DatabasePage />}
+        {page === 'sequences' && <SequencesPage />}
+        {page === 'documents' && <DocumentTypesPage />}
       </div>
     </div>
   );

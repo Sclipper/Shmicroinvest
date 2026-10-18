@@ -20,6 +20,10 @@ import { initialBalanceRoutes } from './routes/initialBalances.ts';
 import { logApp } from './services/appLog.ts';
 import { statementRoutes } from './routes/statements.ts';
 import { reportVariantRoutes } from './routes/reportVariants.ts';
+import { journalExtraRoutes } from './routes/journalExtras.ts';
+import { templateRoutes } from './routes/templates.ts';
+import { stockRoutes } from './routes/stock.ts';
+import { settingsExtraRoutes } from './routes/settingsExtras.ts';
 
 const WEB_DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../web/dist');
 
@@ -36,7 +40,11 @@ export function createApp(driver: DbDriver, opts: { serveWeb?: boolean } = {}) {
     .route('/', platformRoutes)
     .route('/', initialBalanceRoutes)
     .route('/', statementRoutes)
-    .route('/', reportVariantRoutes);
+    .route('/', reportVariantRoutes)
+    .route('/', journalExtraRoutes)
+    .route('/', templateRoutes)
+    .route('/', stockRoutes)
+    .route('/', settingsExtraRoutes);
 
   const app = new Hono<AppEnv>();
   app.use('*', async (c, next) => {
