@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Segoe UI", "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+  --color-brand-50: #eef5fc;
+  --color-brand-100: #d6e7f7;
+  --color-brand-200: #aecfee;
+  --color-brand-500: #2f74c0;
+  --color-brand-600: #225fa3;
+  --color-brand-700: #1b4c84;
+  --color-brand-900: #0f2c4f;
+}
+
+html, body, #root { height: 100%; }
+body { font-size: 13px; @apply bg-slate-100 text-slate-900 antialiased; }
+
+.num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+
+/* Dense desktop grid */
+.grid-table { @apply w-full border-collapse text-[12.5px]; }
+.grid-table thead th { @apply sticky top-0 z-10 bg-slate-200/95 px-2 py-1 text-left font-semibold text-slate-700 border-b border-r border-slate-300 whitespace-nowrap select-none; }
+.grid-table tbody td { @apply px-2 py-[3px] border-b border-r border-slate-200 whitespace-nowrap; }
+.grid-table tbody tr { @apply bg-white; }
+.grid-table tbody tr:nth-child(even) { @apply bg-slate-50; }
+.grid-table tbody tr:hover { @apply bg-brand-50; }
+.grid-table tbody tr[aria-selected="true"] { @apply bg-brand-100; }
+.grid-table tfoot td { @apply sticky bottom-0 bg-slate-200 px-2 py-1 font-semibold border-t border-r border-slate-300 whitespace-nowrap; }
+
+.field-input { @apply h-7 w-full rounded-sm border border-slate-300 bg-white px-2 text-[13px] outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200 disabled:bg-slate-100 disabled:text-slate-500; }
