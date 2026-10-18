@@ -6,3 +6,4 @@ export * from './statements.ts';
 export * from './journalExtras.ts';
 export * from './vat.ts';
 export * from './assets.ts';
+export * from './exchange.ts';

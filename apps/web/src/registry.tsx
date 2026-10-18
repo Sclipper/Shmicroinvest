@@ -11,6 +11,7 @@ import { STATEMENT_SCREENS } from './registry.statements.tsx';
 import { JOURNAL_SCREENS } from './registry.journal.tsx';
 import { VAT_SCREENS } from './registry.vat.tsx';
 import { ASSET_SCREENS } from './registry.assets.tsx';
+import { EXCHANGE_SCREENS } from './registry.exchange.tsx';
 
 const defs: ScreenDef[] = [
   { id: 'entry', title: 'Контиране', component: EntryEditor, permission: 'UI_Operations_Accounting', multi: true },
@@ -26,6 +27,7 @@ const defs: ScreenDef[] = [
   ...JOURNAL_SCREENS,
   ...VAT_SCREENS,
   ...ASSET_SCREENS,
+  ...EXCHANGE_SCREENS,
 ];
 
 export const SCREENS: Record<string, ScreenDef> = Object.fromEntries(defs.map((d) => [d.id, d]));

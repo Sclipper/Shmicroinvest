@@ -25,12 +25,12 @@ export const MENU: TopMenu[] = [
   {
     label: 'Файл', permission: 'UI_File', items: [
       { label: 'Нова фирма...', permission: 'UI_File_NewCompany', command: 'newCompany' },
-      { label: 'Избор на фирма...', permission: 'UI_File_ChooseCompany', command: 'chooseCompany' },
+      { label: 'Избор на фирма...', permission: 'UI_File_ChooseCompany', gesture: 'Ctrl+O', screen: 'chooseCompany' },
       { sep: true },
       { label: 'Активна фирма', permission: 'UI_File_ActiveCompany', gesture: 'Ctrl+A', screen: 'activeCompany' },
       { sep: true },
-      { label: 'Архивиране на фирма', permission: 'UI_File_BackupDatabase' },
-      { label: 'Възстановяване на фирма', permission: 'UI_File_RestoreDatabaseBackup' },
+      { label: 'Архивиране на фирма', permission: 'UI_File_BackupDatabase', screen: 'backup' },
+      { label: 'Възстановяване на фирма', permission: 'UI_File_RestoreDatabaseBackup', screen: 'restore' },
       { label: 'Изход', permission: 'UI_File_Exit', command: 'logout' },
     ],
   },
@@ -65,10 +65,22 @@ export const MENU: TopMenu[] = [
       },
       {
         label: 'Импорт на операции', permission: 'UI_Operations_Import', children: [
-          { label: 'Импорт от текстов файл', permission: 'UI_Operations_Import_TXTImport' },
+          { label: 'Импорт от текстов файл', permission: 'UI_Operations_Import_TXTImport', screen: 'textImport' },
           { label: 'Импорт от ДДС Дневници', permission: 'UI_Operations_Import_VATDiaryImport', screen: 'vatImport' },
-          { label: 'Импорт от Excel', permission: 'UI_Operations_Import_ExcelImport' },
-          { label: 'Импорт от XML', permission: 'UI_Operations_Import_XMLImport' },
+          { label: 'Импорт от Excel', permission: 'UI_Operations_Import_ExcelImport', screen: 'excelImport' },
+          { label: 'Импорт от XML', permission: 'UI_Operations_Import_XMLImport', screen: 'xmlImport' },
+          { label: 'Импорт от ТРЗ Pro', permission: 'UI_Operations_Import_TRZProImport', screen: 'trzImport' },
+        ],
+      },
+      {
+        label: 'Експорт на операции', permission: 'UI_Operations_Export', children: [
+          { label: 'Експорт към XML', permission: 'UI_Operations_Export_XMLExport', screen: 'xmlExport' },
+        ],
+      },
+      {
+        label: 'Банкови извлечения', permission: 'UI_Operations_BankStatements', children: [
+          { label: 'Импорт на банкови извлечения', permission: 'UI_Operations_BankStatements_BankStatementsImport', screen: 'bankImport' },
+          { label: 'Шаблони за банков импорт', permission: 'UI_Operations_BankStatements_BankTemplatesImport', screen: 'bankTemplates' },
         ],
       },
       { sep: true },
@@ -113,6 +125,8 @@ export const MENU: TopMenu[] = [
           { label: 'Редакция на отчети и баланс', permission: 'UI_Edit_Administration_StatementFormulas', gesture: 'Ctrl+B', screen: 'statementFormulas' },
           { label: 'Преподреждане на документи', permission: 'UI_Edit_Administration_ReorderDocuments', screen: 'reorder' },
           { label: 'Редакция на контировки', permission: 'UI_Edit_Administration_EditAccountings', screen: 'massEdit' },
+          { label: 'Импорт от Microinvest Делта', permission: 'UI_Edit_Administration_DeltaConversion', screen: 'deltaConversion' },
+          { label: 'Конвертиране към евро', permission: 'UI_Edit_Administration', screen: 'euroConversion' },
         ],
       },
       { sep: true },
@@ -180,6 +194,7 @@ export const MENU: TopMenu[] = [
           { label: 'Касов ордер', permission: 'UI_Reporting_CashReports_CashOrder', screen: 'cashOrder' },
         ],
       },
+      { label: 'Експорт към външни системи', permission: 'UI_Reporting', screen: 'reportExports' },
       { label: 'Мениджър на потребителските справки', permission: 'UI_Reporting_UserReportsManager', screen: 'userReports' },
     ],
   },

@@ -14,6 +14,7 @@ export const MODULE_COMPANIES = {
   journal: 'Журнал Е2Е ООД',
   payments: 'Разплащания Е2Е ООД',
   assets: 'Активи Е2Е ООД',
+  exchange: 'Обмен Е2Е ООД',
 } as const;
 export type ModuleKey = keyof typeof MODULE_COMPANIES;
 export const moduleState = (m: ModuleKey) => `.auth/${m}.json`;
