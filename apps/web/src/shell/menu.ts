@@ -11,7 +11,7 @@ export type MenuItem =
       /** Screen id to open. */
       screen?: string;
       /** Shell command. */
-      command?: 'newCompany' | 'chooseCompany' | 'logout' | 'closeCurrent' | 'closeAllButCurrent' | 'closeAll' | 'about';
+      command?: 'newCompany' | 'chooseCompany' | 'logout' | 'closeCurrent' | 'closeAllButCurrent' | 'closeAll' | 'about' | 'changeUser';
       children?: MenuItem[];
     };
 
@@ -93,6 +93,7 @@ export const MENU: TopMenu[] = [
         label: 'Администриране', permission: 'UI_Edit_Administration', children: [
           { label: 'Моята фирма', permission: 'UI_Edit_Administration_MyCompany', gesture: 'Ctrl+F', screen: 'myCompany' },
           { label: 'Потребители', permission: 'UI_Edit_Administration_Users', gesture: 'Ctrl+U', screen: 'users' },
+          { label: 'Смяна на активния потребител', permission: 'UI_Edit_Administration_ChangeActiveUser', gesture: 'Ctrl+0', command: 'changeUser' },
           { label: 'Основания и забележки', permission: 'UI_Edit_Administration_EditTermsAndReferences', screen: 'dictionary' },
         ],
       },

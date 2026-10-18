@@ -18,7 +18,7 @@ const addressBody = z.object({
   id: z.number().int().optional(),
   addressTypeId: z.number().int().nullable().optional(),
   countryId: z.number().int().nullable().optional(),
-  city: z.string().max(50).nullable().optional(),
+  city: z.string().max(255).nullable().optional(),
   city1: z.string().max(50).nullable().optional(),
   postalCode: z.string().max(10).nullable().optional(),
   address: z.string().max(255).nullable().optional(),
@@ -68,6 +68,7 @@ async function validatePartner(db: DbOrTx, b: PartnerBody, selfId?: number): Pro
   for (const a of b.addresses) {
     if (a.postalCode && !/^\d{1,10}$/.test(a.postalCode)) crit('strInvalidAddressPostalCode', 'Невалиден пощенски код');
     if (!a.countryId) warn('strCountryNotSelected', 'Не е избрана държава.');
+    if (a.city && a.city.length > 50) crit('strCityNameTooLong', 'Името на населеното място е твърде дълго');
   }
   const types = b.addresses.map((a) => a.addressTypeId).filter(Boolean);
   if (new Set(types).size !== types.length) crit('strDuplicateAddressType', 'Може да има само по един адрес от тип.');
@@ -89,9 +90,18 @@ async function validatePartner(db: DbOrTx, b: PartnerBody, selfId?: number): Pro
     else crit('strCompanyCodeExists', 'Вече съществува партньор с такъв код');
   }
   if (b.accountIds.length) {
-    const accs = await db.select().from(s.accounts).where(inArray(s.accounts.id, b.accountIds));
-    for (const a of accs) if (!isCompanyCategory(a.accountCategoryId)) {
-      crit('strAccountDoesNotSupportCompanies', `Сметка ${a.number} не може да бъде добавена, тъй като не поддържа работа с партньори!`);
+    // The account or one of its ancestors must carry a partner category (03a 2.9).
+    const all = await db.select({ id: s.accounts.id, parentId: s.accounts.parentId, number: s.accounts.number, cat: s.accounts.accountCategoryId }).from(s.accounts);
+    const byId = new Map(all.map((a) => [a.id, a]));
+    for (const id of b.accountIds) {
+      let a = byId.get(id);
+      const number = a?.number;
+      let ok = false;
+      while (a) {
+        if (isCompanyCategory(a.cat)) { ok = true; break; }
+        a = a.parentId != null ? byId.get(a.parentId) : undefined;
+      }
+      if (!ok) crit('strAccountDoesNotSupportCompanies', `Сметка ${number ?? id}: Избраната сметка не може да бъде добавена, тъй като не поддържа работа с партньори!`);
     }
   }
   return msgs;
@@ -148,6 +158,20 @@ const myCompanyBody = z.object({
   addresses: z.array(addressBody).max(3).default([]),
   bankAccounts: z.array(bankAccountBody).default([]),
 });
+
+const branchBody = z.object({
+  code: z.string().max(50),
+  name: z.string().max(50),
+  contactName: z.string().max(50).nullable().optional(),
+  address: addressBody.nullable().optional(),
+});
+
+function checkBranch(b: z.infer<typeof branchBody>) {
+  const msgs: ValidationMessage[] = [];
+  if (!b.name.trim()) msgs.push({ key: 'strBranchNameIsEmpty', text: 'Не е попълнено име на клона!', severity: 'critical' });
+  if (!b.code.trim()) msgs.push({ key: 'strBranchCodeIsEmpty', text: 'Не е попълнен код на клона!', severity: 'critical' });
+  if (msgs.length) throw new ApiError(422, 'Клонът не може да бъде записан:', msgs);
+}
 
 const dictionaryTable = (type: string) => {
   if (type === 'terms') return s.terms;
@@ -257,10 +281,19 @@ export const nomenclatureRoutes = new Hono<AppEnv>()
   })
 
   // Partner groups (nested set kept by rebuild; the tree is small).
-  .post('/partner-groups', requirePermission('UI_Edit_Companies'), zValidator('json', z.object({ name: z.string().trim().min(1).max(50), parentId: z.number().int().default(1) })), async (c) => {
+  .post('/partner-groups', requirePermission('UI_Edit_Companies'), zValidator('json', z.object({ name: z.string().trim().max(50).optional(), parentId: z.number().int().default(1) })), async (c) => {
     const { db } = c.var;
     const b = c.req.valid('json');
-    const [row] = await db.insert(s.companyGroups).values({ name: b.name, parentId: b.parentId }).returning();
+    let name = b.name;
+    if (!name) {
+      // strNewGroup + smallest free integer among the parent's children.
+      const sibs = await db.select({ name: s.companyGroups.name }).from(s.companyGroups).where(and(eq(s.companyGroups.parentId, b.parentId), eq(s.companyGroups.isDeleted, false)));
+      const used = new Set(sibs.map((x) => x.name));
+      let n = 1;
+      while (used.has(`Нова група ${n}`)) n++;
+      name = `Нова група ${n}`;
+    }
+    const [row] = await db.insert(s.companyGroups).values({ name, parentId: b.parentId }).returning();
     await rebuildGroupTree(db);
     return c.json(row, 201);
   })
@@ -281,6 +314,45 @@ export const nomenclatureRoutes = new Hono<AppEnv>()
     if (members.length) throw badRequest('Избраната група не може да бъде изтрита, тъй като не е празна!');
     await db.delete(s.companyGroups).where(eq(s.companyGroups.id, id));
     await rebuildGroupTree(db);
+    return c.json({ ok: true });
+  })
+
+  // ---- Branches of the own company (Клонове, 03a 2.8) ----
+  .get('/branches', async (c) => {
+    const { db } = c.var;
+    const rows = await db.select().from(s.branches).where(eq(s.branches.isDeleted, false)).orderBy(asc(s.branches.id));
+    const addrs = rows.length ? await db.select().from(s.addresses).where(and(eq(s.addresses.ownerType, 'branch'), inArray(s.addresses.ownerId, rows.map((r) => r.id)))) : [];
+    return c.json(rows.map((r) => ({ ...r, address: addrs.find((a) => a.ownerId === r.id) ?? null })));
+  })
+  .post('/branches', requirePermission('UI_Edit_Administration_MyCompany'), zValidator('json', branchBody), async (c) => {
+    const b = c.req.valid('json');
+    checkBranch(b);
+    const id = await c.var.db.transaction(async (tx) => {
+      const [row] = await tx.insert(s.branches).values({ code: b.code.trim(), name: b.name.trim(), contactName: b.contactName ?? null }).returning();
+      if (b.address) await tx.insert(s.addresses).values({ ...b.address, id: undefined, ownerType: 'branch', ownerId: row!.id, isPrimary: true });
+      return row!.id;
+    });
+    return c.json({ id }, 201);
+  })
+  .put('/branches/:id', requirePermission('UI_Edit_Administration_MyCompany'), zValidator('json', branchBody), async (c) => {
+    const id = Number(c.req.param('id'));
+    const b = c.req.valid('json');
+    checkBranch(b);
+    await c.var.db.transaction(async (tx) => {
+      await tx.update(s.branches).set({ code: b.code.trim(), name: b.name.trim(), contactName: b.contactName ?? null }).where(eq(s.branches.id, id));
+      await tx.delete(s.addresses).where(and(eq(s.addresses.ownerType, 'branch'), eq(s.addresses.ownerId, id)));
+      if (b.address) await tx.insert(s.addresses).values({ ...b.address, id: undefined, ownerType: 'branch', ownerId: id, isPrimary: true });
+    });
+    return c.json({ ok: true });
+  })
+  .delete('/branches/:id', requirePermission('UI_Edit_Administration_MyCompany'), async (c) => {
+    const id = Number(c.req.param('id'));
+    const { db, session } = c.var;
+    if (id === 1) throw badRequest('Основният клон не може да бъде изтрит.');
+    if ((session.state.branchId ?? 1) === id) throw badRequest('Активният клон не може да бъде изтрит.');
+    const used = await db.select({ id: s.accountings.id }).from(s.accountings).where(eq(s.accountings.branchId, id)).limit(1);
+    if (used.length) throw badRequest('Избраният клон не може да бъде изтрит, тъй като участва в операции!');
+    await db.update(s.branches).set({ isDeleted: true }).where(eq(s.branches.id, id));
     return c.json({ ok: true });
   })
 

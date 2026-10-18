@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   BookOpen, Building2, CalendarDays, ChevronRight, FilePlus2, FileText, ListTree, LogOut, Scale, Settings, Users, X, Library, ScrollText,
 } from 'lucide-react';
@@ -17,6 +17,7 @@ export function Shell({ screens, onCommand }: { screens: Record<string, ScreenDe
   const ws = useWorkspace();
   const can = useCan();
   const dialogs = useDialogs();
+  const [changeUser, setChangeUser] = useState(false);
 
   const run = (item: Extract<MenuItem, { label: string }>) => {
     if (item.screen) ws.open(item.screen);
@@ -24,6 +25,7 @@ export function Shell({ screens, onCommand }: { screens: Record<string, ScreenDe
     else if (item.command === 'closeAll') ws.closeAll();
     else if (item.command === 'closeAllButCurrent') ws.closeAll(ws.active ?? undefined);
     else if (item.command === 'about') void dialogs.alert('Шмикроинвест Шмелта Про — уеб счетоводна система, съвместима с Microinvest Делта Про 1.01.089.', 'За програмата');
+    else if (item.command === 'changeUser') setChangeUser(true);
     else if (item.command) onCommand(item.command);
   };
 
@@ -76,7 +78,79 @@ export function Shell({ screens, onCommand }: { screens: Record<string, ScreenDe
         })}
       </main>
       <StatusBar />
+      {changeUser && <ChangeUserDialog onClose={() => setChangeUser(false)} />}
     </div>
+  );
+}
+
+/** Смяна на активния потребител (Ctrl+0, 01b 4): all windows close after the switch. */
+function ChangeUserDialog({ onClose }: { onClose: () => void }) {
+  const s = useSession();
+  const qc = useQueryClient();
+  const dialogs = useDialogs();
+  const users = useQuery({ queryKey: ['companyUsers', s.company.db], queryFn: () => api.get<{ id: number; name: string }[]>(`/companies/${s.company.db}/users`) });
+  const others = (users.data ?? []).filter((u) => u.id !== s.user.id);
+  const [userId, setUserId] = useState<number | null>(null);
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<unknown>(null);
+  useEffect(() => {
+    if (users.data && !others.length) {
+      void dialogs.alert('В системата няма дефинирани други потребители!').then(onClose);
+    } else if (others.length && userId === null) setUserId(others[0]!.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [users.data]);
+  if (!others.length) return null;
+  const submit = async () => {
+    if (!(await dialogs.confirm('Всички прозорци ще бъдат затворени! Желаете ли да продължите?'))) return;
+    try {
+      await api.post('/login', { companyDb: s.company.db, userId, password });
+      await qc.invalidateQueries();
+      onClose();
+    } catch (e) {
+      setError(e);
+      setPassword('');
+    }
+  };
+  return (
+    <Dialog title="Смяна на активния потребител" onClose={onClose} width={360} footer={<><Button variant="primary" onClick={submit}>OK</Button><Button onClick={onClose}>Отказ</Button></>}>
+      <div className="flex flex-col gap-2">
+        <Field label="Потребител">
+          <select className="field-input" value={userId ?? ''} onChange={(e) => setUserId(Number(e.target.value))}>
+            {others.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+          </select>
+        </Field>
+        <Field label="Парола">
+          <TextInput type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submit()} />
+        </Field>
+        {!!error && <div className="text-red-700">{error instanceof Error ? error.message : String(error)}</div>}
+      </div>
+    </Dialog>
+  );
+}
+
+function BranchDialog({ onClose }: { onClose: () => void }) {
+  const s = useSession();
+  const qc = useQueryClient();
+  const dialogs = useDialogs();
+  const branches = useQuery({ queryKey: ['branches'], queryFn: () => api.get<{ id: number; code: string; name: string }[]>('/branches') });
+  const [id, setId] = useState(s.branch?.id ?? 1);
+  const save = async () => {
+    try {
+      await api.put('/session/branch', { branchId: id });
+      await qc.invalidateQueries({ queryKey: ['session'] });
+      onClose();
+    } catch (e) {
+      await dialogs.error(e);
+    }
+  };
+  return (
+    <Dialog title="Активен клон" onClose={onClose} width={340} footer={<><Button variant="primary" onClick={save}>OK</Button><Button onClick={onClose}>Отказ</Button></>}>
+      <Field label="Клон">
+        <select className="field-input" value={id} onChange={(e) => setId(Number(e.target.value))}>
+          {branches.data?.map((b) => <option key={b.id} value={b.id}>{b.code} – {b.name}</option>)}
+        </select>
+      </Field>
+    </Dialog>
   );
 }
 
@@ -217,6 +291,7 @@ function StatusBar() {
   const s = useSession();
   const ws = useWorkspace();
   const [editDate, setEditDate] = useState(false);
+  const [editBranch, setEditBranch] = useState(false);
   return (
     <footer className="flex items-center gap-px border-t border-slate-300 bg-slate-200 text-[12px] text-slate-700">
       <Cell label="Година" onClick={() => ws.open('years')}>
@@ -224,13 +299,14 @@ function StatusBar() {
         {s.year.isLocked && ' 🔒'}
       </Cell>
       <Cell label="Фирма">{s.company.name}</Cell>
-      <Cell label="Клон">{s.branch?.name ?? '-'}</Cell>
+      <Cell label="Клон" onClick={() => setEditBranch(true)}>{s.branch?.name ?? '-'}</Cell>
       <Cell label="Потребител">{s.user.name}</Cell>
       <Cell label="Валута">{s.baseCurrency === 'EUR' ? 'EUR (евро)' : 'BGN (лева)'}</Cell>
       <Cell label="Дата" onClick={() => setEditDate(true)}>
         {bgDate(s.workingDate)}
       </Cell>
       {editDate && <WorkingDateDialog onClose={() => setEditDate(false)} />}
+      {editBranch && <BranchDialog onClose={() => setEditBranch(false)} />}
     </footer>
   );
 }
