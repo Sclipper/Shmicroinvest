@@ -133,14 +133,14 @@ export const journalRoutes = new Hono<AppEnv>()
   .post('/entries', requirePermission(ADD), zValidator('json', entryBody), async (c) => {
     const { force, ...input } = c.req.valid('json');
     const { db, year, user, session } = c.var;
-    const r = await db.transaction((tx) => saveEntry(tx, input, { year, userId: user.id, branchId: session.state.branchId ?? 1, force }));
+    const r = await db.transaction((tx) => saveEntry(tx, input, { year, userId: user.id, branchId: session.state.branchId ?? 1, force, confirm: true }));
     return c.json(r, 201);
   })
 
   .put('/entries/:id', requirePermission(EDIT), zValidator('json', entryBody), async (c) => {
     const { force, ...input } = c.req.valid('json');
     const { db, year, user, session } = c.var;
-    const r = await db.transaction((tx) => saveEntry(tx, input, { year, userId: user.id, branchId: session.state.branchId ?? 1, force }, Number(c.req.param('id'))));
+    const r = await db.transaction((tx) => saveEntry(tx, input, { year, userId: user.id, branchId: session.state.branchId ?? 1, force, confirm: true }, Number(c.req.param('id'))));
     return c.json(r);
   })
 

@@ -10,6 +10,7 @@ import { Button, CommandBar, Field, Select, Spinner, TextInput, cx } from '../co
 import { useAccounts, useCan, useInvalidate, useLookups, useSession } from '../session.tsx';
 import { useWorkspace, type ScreenProps } from '../shell/workspace.tsx';
 import type { Account } from '../types.ts';
+import { useEntryVat } from './vat/EntryVat.tsx';
 
 interface Line {
   accountId: number | null;
@@ -89,6 +90,7 @@ export function EntryEditor({ tab }: ScreenProps) {
     setD((x) => (x ? { ...x, ...p } : x));
     setDirty(true);
   };
+  const vat = useEntryVat(d, patch, byId);
 
   if (!d || !lookups.data) {
     return (
@@ -149,7 +151,8 @@ export function EntryEditor({ tab }: ScreenProps) {
     if (saving) return;
     setSaving(true);
     try {
-      const r = d.id ? await api.put<{ id: number; number: string; warnings: { key: string; text: string; severity: 'warning' }[] }>(`/entries/${d.id}`, payload()) : await api.post<{ id: number; number: string; warnings: { key: string; text: string; severity: 'warning' }[] }>('/entries', payload());
+      const r = await vat.confirmSave((force) => d.id ? api.put<{ id: number; number: string; warnings: { key: string; text: string; severity: 'warning' }[] }>(`/entries/${d.id}`, { ...payload(), force }) : api.post<{ id: number; number: string; warnings: { key: string; text: string; severity: 'warning' }[] }>('/entries', { ...payload(), force }));
+      if (!r) return;
       await invalidate('entries', 'reports', 'accounts', 'dictionary');
       if (r.warnings?.length) await dialogs.messages(`Контиране ${r.number} е записано с предупреждения`, r.warnings);
       setDirty(false);
@@ -190,6 +193,7 @@ export function EntryEditor({ tab }: ScreenProps) {
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    if (vat.onKeyDown(e)) return;
     if ((e.ctrlKey && e.key === 's') || (e.shiftKey && e.key === 'F9')) {
       e.preventDefault();
       void save();
@@ -223,6 +227,7 @@ export function EntryEditor({ tab }: ScreenProps) {
         <Button icon={<Scale className="size-3.5" />} onClick={balance} disabled={diff.isZero()} title="Ctrl+F9">
           Изравняване
         </Button>
+        {vat.toolbar}
         <Button icon={<X className="size-3.5" />} onClick={async () => (!tab.dirty || (await dialogs.confirm('Желаете ли изход без запис на данните?'))) && ws.close(tab.key)}>
           Отказ
         </Button>
@@ -283,6 +288,7 @@ export function EntryEditor({ tab }: ScreenProps) {
           <Field label="Падеж" className="col-span-1">
             <TextInput type="date" value={d.dueDate} onChange={(e) => patch({ dueDate: e.target.value })} className="px-1" />
           </Field>
+          {vat.header}
           {session.settings.IsParagraphEnabled === 'True' && (
             <Field label="Параграф" className="col-span-12">
               <DictionaryInput type="paragraphs" value={d.paragraph} onChange={(v) => patch({ paragraph: v })} />
@@ -312,6 +318,7 @@ export function EntryEditor({ tab }: ScreenProps) {
           <span>Разлика: {formatMoney(diff)}</span>
         </div>
       </div>
+      {vat.dialog}
     </div>
   );
 }

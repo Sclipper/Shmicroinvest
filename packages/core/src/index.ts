@@ -8,3 +8,4 @@ export * from './amountInWords.ts';
 export * from './seeds/lookups.ts';
 export * from './seeds/chartCommercial.ts';
 export * from './seeds/permissions.ts';
+export * from './vat/index.ts';

@@ -10,6 +10,7 @@ import type { ActiveYear } from '../context.ts';
 import { ApiError, badRequest, notFound } from '../lib/errors.ts';
 import { accountingNumberUsed, reserveNumber } from './sequences.ts';
 import { logActivity } from './audit.ts';
+import { vatEntryChecks } from './vat/entryChecks.ts';
 
 export interface LineInput {
   accountId: number;
@@ -53,6 +54,8 @@ export interface SaveContext {
   branchId?: number;
   /** Skip non-critical-only failure; critical messages always block. */
   force?: boolean;
+  /** Interactive save: VAT Yes/No questions (02b 12) are returned as 409 unless `force`. */
+  confirm?: boolean;
 }
 
 async function resolveDictionary(db: DbOrTx, table: typeof s.terms | typeof s.referenceTexts | typeof s.paragraphs, text: string | null | undefined) {
@@ -148,7 +151,10 @@ export async function saveEntry(db: DbOrTx, input: EntryInput, ctx: SaveContext,
     const [c] = await db.select({ id: s.companies.id }).from(s.companies).where(eq(s.companies.id, input.companyId));
     if (!c) messages.push({ key: 'strMissingCompany', text: JOURNAL_MESSAGES.strMissingCompany, severity: 'critical' });
   }
+  const vatChecks = await vatEntryChecks(db, input, debits, credits, fy, existingId);
+  messages.push(...vatChecks.messages);
   if (hasCritical(messages)) throw new ApiError(422, JOURNAL_MESSAGES.strCannotCompleteOperation, messages);
+  if (ctx.confirm && !ctx.force && vatChecks.confirm.length) throw new ApiError(409, 'Потвърждение', vatChecks.confirm, 'confirm');
 
   const termId = await resolveDictionary(db, s.terms, input.term);
   const referenceId = await resolveDictionary(db, s.referenceTexts, input.reference);
@@ -263,6 +269,7 @@ export async function deleteEntry(db: DbOrTx, id: number, year: ActiveYear, user
   void year;
   await db.delete(s.accountingPaymentDetails).where(or(eq(s.accountingPaymentDetails.paymentAccountingId, id), eq(s.accountingPaymentDetails.refAccountingId, id)));
   await db.delete(s.accountings).where(eq(s.accountings.id, id));
+  if (e.icaAccountingId) await db.delete(s.accountings).where(eq(s.accountings.id, e.icaAccountingId)); // its protocol (02b 7)
   if (e.documentId) await deleteOrphanDocument(db, e.documentId);
   await logActivity(db, userId, 'delete', 'accounting', id, `Контиране ${e.number}`);
 }
