@@ -152,8 +152,9 @@ export async function convertDatabaseToEuro(db: DbOrTx, o: EuroOptions, userId: 
       const no = bgn.find((b) => b.id === unmapped[0]!.account_id)?.number ?? String(unmapped[0]!.account_id);
       throw new DataImportError(critical('strEuroConversionInvalidMapping', no, '-'));
     }
-    // Replace earlier conversion openings and 2026 initial balances that still sit on BGN accounts.
-    const old = await db.select({ id: s.accountings.id }).from(s.accountings).where(and(eq(s.accountings.financialYearId, y.to.id), eq(s.accountings.isInitialBalance, true), eq(s.accountings.source, 'euro-conversion')));
+    // The conversion is the 2025 conclusion: it replaces earlier conversion openings and those of a
+    // year-end transfer (02c "Прехвърляне на салда"), which would otherwise be counted twice.
+    const old = await db.select({ id: s.accountings.id }).from(s.accountings).where(and(eq(s.accountings.financialYearId, y.to.id), eq(s.accountings.isInitialBalance, true), inArray(s.accountings.source, ['euro-conversion', 'year-close'])));
     if (old.length) await db.delete(s.accountings).where(inArray(s.accountings.id, old.map((x) => x.id)));
     const [eurCur] = await db.select().from(s.currencies).where(eq(s.currencies.isoCode, 'EUR'));
     const [head] = await db.insert(s.accountings).values({

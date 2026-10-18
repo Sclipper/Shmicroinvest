@@ -570,6 +570,25 @@ describe('euro conversion (04b 4)', { timeout: 60_000 }, () => {
     const partner = (await e.call('GET', `/partners/${p}`)).body;
     expect(partner.accounts.map((a: { number: string }) => a.number).filter((n: string) => n === '411')).toHaveLength(2);
   });
+
+  it('replaces the openings of an earlier year-end transfer instead of adding to them', async () => {
+    const y = await sibling('Евро Прехвърляне ООД', 2025);
+    try {
+      await y.post({ date: '2025-03-01', dr: [['503', '1000']], cr: [['101', '1000']] });
+      expect((await y.call('POST', '/years', { year: 2026 })).status).toBe(201);
+      const y2025 = ((await y.call('GET', '/years')).body as { id: number; year: number }[]).find((x) => x.year === 2025)!.id;
+      const diff = (await y.call('GET', '/euro-conversion')).body.euroAccounts.find((x: { number: string }) => x.number === '123').id;
+      const closed = await y.call('POST', `/years/${y2025}/conclude`, { differencesAccountId: diff });
+      expect(closed.status, closed.text).toBe(200);
+      const converted = await y.call('POST', '/euro-conversion', { differencesAccountId: diff });
+      expect(converted.status, converted.text).toBe(200);
+      expect((await y.call('PUT', '/years/active', { year: 2026 })).status).toBe(200);
+      const tb = await balances(y, '2026-01-01', '2026-12-31');
+      expect([tb['503']!.od, tb['101']!.oc]).toEqual(['511.29', '511.29']); // 1000 / 1.95583, once
+    } finally {
+      await y.drop();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
