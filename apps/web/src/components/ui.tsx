@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from 'react';
 
-const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(' ');
+import { cx } from './cx.ts';
+import { DateInput } from './DateInput.tsx';
 export { cx };
 
 type BtnVariant = 'default' | 'primary' | 'danger' | 'ghost';
@@ -24,7 +25,13 @@ export function Button({ variant = 'default', className, icon, children, ...p }:
   );
 }
 
+/** Text field; type="date" renders the Bulgarian dd.mm.yyyy date field (value stays ISO). */
 export const TextInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function TextInput({ className, ...p }, ref) {
+  if (p.type === 'date') {
+    const { type: _type, onChange, ...rest } = p;
+    void _type;
+    return <DateInput ref={ref} {...rest} className={className} onChange={onChange ? (e) => onChange({ target: { value: e.target.value } } as React.ChangeEvent<HTMLInputElement>) : undefined} />;
+  }
   return <input ref={ref} {...p} className={cx('field-input', className)} />;
 });
 

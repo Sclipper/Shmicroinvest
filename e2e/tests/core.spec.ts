@@ -91,6 +91,21 @@ test.describe('journal', () => {
     await expect(page.getByText('Сумите въведени в дебит и кредит се различават!')).toBeVisible();
   });
 
+  test('dates are entered and shown as dd.mm.yyyy', async ({ page }) => {
+    await openApp(page);
+    await page.keyboard.press('F2');
+    const tab = activeTab(page);
+    const accDate = tab.getByLabel('Дата на контиране');
+    await expect(accDate).toHaveValue(/^\d{2}\.\d{2}\.2026$/);
+    await accDate.fill('5.4.26');
+    await accDate.blur();
+    await expect(accDate).toHaveValue('05.04.2026');
+    // The document date follows the accounting date while they were equal.
+    await expect(tab.getByLabel('Дата на документ')).toHaveValue('05.04.2026');
+    await accDate.fill('31.04.2026');
+    await expect(accDate).toHaveClass(/border-red-400/);
+  });
+
   test('trial balance reflects posted amounts', async ({ page }) => {
     await openApp(page);
     const date = '2026-03-01';
