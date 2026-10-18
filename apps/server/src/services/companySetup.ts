@@ -8,6 +8,7 @@ import * as s from '../db/company/schema/index.ts';
 import type { DbOrTx } from '../db/provider.ts';
 import { hashPassword } from '../lib/password.ts';
 import { applyChartTemplate } from './chart.ts';
+import { seedStatements } from './statements.ts';
 
 export const PRODUCT_VERSION = '1.01.089';
 
@@ -102,4 +103,7 @@ export async function seedCompany(db: DbOrTx, o: NewCompanyOptions) {
   await fixIdentity(db, 'accounts');
 
   if (o.chartTemplate) await applyChartTemplate(db, o.chartTemplate, o.year >= 2026);
+
+  // Financial statements: rows, columns and the 898 default formulas (spec 05 Appendix A).
+  await seedStatements(db);
 }

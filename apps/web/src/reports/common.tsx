@@ -1,7 +1,8 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
-import { FileDown, Play, Printer } from 'lucide-react';
+import { FileDown, FileSpreadsheet, Play, Printer } from 'lucide-react';
+import { buildXlsx, type XlsxCell, type XlsxSheet } from '@shmi/core';
 import { bgDate, moneyOrBlank } from '../format.ts';
 import { AccountPicker } from '../components/pickers.tsx';
 import { useDialogs } from '../components/dialogs.tsx';
@@ -168,6 +169,30 @@ export function downloadCsv(fileName: string, rows: Cell[][]) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Excel export (spec 05 11.1)                                         */
+/* ------------------------------------------------------------------ */
+
+/** .xlsx workbook built in the browser (one sheet per entry). */
+export function downloadXlsx(fileName: string, sheets: XlsxSheet[]) {
+  const data = buildXlsx(sheets);
+  const url = URL.createObjectURL(new Blob([data as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (fileName.endsWith('.xlsx') ? fileName : `${fileName}.xlsx`).replace(/[\\/:*?"<>|]/g, '_');
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** CSV-style rows as one sheet: the title rows in bold, amounts as numbers. */
+export function rowsToSheet(name: string, rows: Cell[][], titleRows = 0): XlsxSheet {
+  const widths: number[] = [];
+  for (const r of rows.slice(titleRows)) r.forEach((c, i) => { widths[i] = Math.min(60, Math.max(widths[i] ?? 8, typeof c === 'number' ? 14 : String(c ?? '').length + 2)); });
+  return { name, rows: rows as XlsxCell[][], widths, boldRows: Array.from({ length: titleRows + 1 }, (_, i) => i) };
+}
+
+/* ------------------------------------------------------------------ */
 /* Report screen frame                                                 */
 /* ------------------------------------------------------------------ */
 
@@ -215,12 +240,16 @@ export interface ReportFrameProps<T> {
   /** CSV rows (title rows are added automatically). */
   csv?: (data: T) => Cell[][];
   csvName: string;
+  /** Excel workbook; defaults to the CSV rows as one sheet. */
+  xlsx?: (data: T) => XlsxSheet[];
+  /** Extra command-bar buttons (data is set once a result is shown). */
+  actions?: (data: T | undefined) => ReactNode;
   /** Result table. */
   children: (data: T) => ReactNode;
 }
 
 /** Common report screen: command bar (Справка / Печат / Експорт CSV), filter form, result grid, print portal. */
-export function ReportFrame<T>({ title, subtitle, filters, options, report, isEmpty, status, csv, csvName, children }: ReportFrameProps<T>) {
+export function ReportFrame<T>({ title, subtitle, filters, options, report, isEmpty, status, csv, csvName, xlsx, actions, children }: ReportFrameProps<T>) {
   const s = useSession();
   const formId = useId();
   const [printing, setPrinting] = useState(false);
@@ -248,6 +277,12 @@ export function ReportFrame<T>({ title, subtitle, filters, options, report, isEm
     downloadCsv(`${csvName}.csv`, [[`${title} на ${s.company.name}`], typeof subtitle === 'string' ? [subtitle] : [], [], ...csv(data)]);
   };
 
+  const exportXlsx = () => {
+    if (!data) return;
+    const titleRows: Cell[][] = [[`${title} на ${s.company.name}`], typeof subtitle === 'string' ? [subtitle] : [], []];
+    downloadXlsx(csvName, xlsx ? xlsx(data) : [rowsToSheet(title, [...titleRows, ...(csv?.(data) ?? [])], titleRows.length)]);
+  };
+
   const header = (
     <div className="mb-2">
       <div className="text-[11px] text-slate-600">{s.company.name}{s.company.bulstat ? `, ЕИК ${s.company.bulstat}` : ''}</div>
@@ -273,6 +308,12 @@ export function ReportFrame<T>({ title, subtitle, filters, options, report, isEm
             Експорт CSV
           </Button>
         )}
+        {(csv || xlsx) && (
+          <Button icon={<FileSpreadsheet className="size-3.5" />} disabled={!ready} onClick={exportXlsx}>
+            Експорт Excel
+          </Button>
+        )}
+        {actions?.(ready ? data : undefined)}
       </CommandBar>
       <form
         id={formId}

@@ -15,6 +15,8 @@ import { nomenclatureRoutes } from './routes/nomenclatures.ts';
 import { journalRoutes } from './routes/journal.ts';
 import { reportRoutes } from './routes/reports.ts';
 import { userRoutes } from './routes/users.ts';
+import { statementRoutes } from './routes/statements.ts';
+import { reportVariantRoutes } from './routes/reportVariants.ts';
 
 const WEB_DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../web/dist');
 
@@ -27,7 +29,9 @@ export function createApp(driver: DbDriver, opts: { serveWeb?: boolean } = {}) {
     .route('/', nomenclatureRoutes)
     .route('/', journalRoutes)
     .route('/', reportRoutes)
-    .route('/', userRoutes);
+    .route('/', userRoutes)
+    .route('/', statementRoutes)
+    .route('/', reportVariantRoutes);
 
   const app = new Hono<AppEnv>();
   app.use('*', async (c, next) => {

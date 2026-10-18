@@ -24,9 +24,9 @@ interface Group {
 /** Главна книга (spec 05 4.1): turnovers of every account against each corresponding account. */
 export function GeneralLedger() {
   const period = useYearPeriod();
-  const [f, setF] = useState({ ...period, account: '', level: 2, balances: false, byExportMonth: false, companyId: null as number | null, companyName: '' as string | null });
+  const [f, setF] = useState({ ...period, account: '', level: 2, balances: false, zero: false, byExportMonth: false, companyId: null as number | null, companyName: '' as string | null });
   const report = useReport('generalLedger', f, (x) =>
-    api.get<Group[]>(`/reports/general-ledger${qs({ from: x.from, to: x.to, account: x.account, level: x.level, balances: x.balances ? undefined : '0', byExportMonth: x.byExportMonth, companyId: x.companyId })}`),
+    api.get<Group[]>(`/reports/general-ledger${qs({ from: x.from, to: x.to, account: x.account, level: x.level, balances: x.balances ? undefined : '0', zero: x.balances && x.zero, byExportMonth: x.byExportMonth, companyId: x.companyId })}`),
   );
   const a = report.applied ?? f;
   const withBal = a.balances;
@@ -74,7 +74,12 @@ export function GeneralLedger() {
           </Field>
         </>
       }
-      options={<Checkbox label="С отчитане на месец за експорт" checked={f.byExportMonth} onChange={(byExportMonth) => setF({ ...f, byExportMonth })} />}
+      options={
+        <>
+          <Checkbox label="С отчитане на месец за експорт" checked={f.byExportMonth} onChange={(byExportMonth) => setF({ ...f, byExportMonth })} />
+          {f.balances && <Checkbox label="Включване на сметки със салда и с нулеви обороти" checked={f.zero} onChange={(zero) => setF({ ...f, zero })} />}
+        </>
+      }
     >
       {(d) => (
         <table className="grid-table max-w-[72rem]">

@@ -32,23 +32,32 @@ export function accountSortKey(number: string): string {
 }
 export const compareAccountNumbers = (a: string, b: string) => (accountSortKey(a) < accountSortKey(b) ? -1 : accountSortKey(a) > accountSortKey(b) ? 1 : 0);
 
-const netDebit = (d: Dec, c: Dec) => (d.minus(c).greaterThan(0) ? d.minus(c) : ZERO);
+export const netDebit = (d: Dec, c: Dec) => (d.minus(c).greaterThan(0) ? d.minus(c) : ZERO);
 
 /** EUR report: legacy (pre-2026) amounts are divided by 1.95583. */
-function conversionSql(endDate: string, dateCol: SQL) {
+export function conversionSql(endDate: string, dateCol: SQL) {
   const convert = endDate >= EURO_CHANGEOVER_DATE;
   return convert ? sql`CASE WHEN ${dateCol} < ${EURO_CHANGEOVER_DATE} THEN ${sql.raw(BGN_PER_EUR.toString())} ELSE 1 END` : sql`1`;
 }
 
-async function yearOf(db: DbOrTx, date: string) {
+export async function yearOf(db: DbOrTx, date: string) {
   const y = Number(date.slice(0, 4));
   const [fy] = await db.select().from(s.financialYears).where(eq(s.financialYears.year, y));
   return fy;
 }
 
-interface TreeAccount { id: number; parentId: number | null; number: string; description: string; englishDescription: string | null; level: number; isEuro: boolean; categoryId: number | null; currencyId: number; productId: number | null }
+/**
+ * Posting window of the trial-balance family (05 2.3): from the start of the
+ * financial year of S (by date, so a mixed period also reads the postings of
+ * the next year), excluding initial-balance accountings of other years.
+ */
+export function fyWindowSql(fy: { id: number; startDate: string } | undefined, dateCol: SQL, startDate: string): SQL {
+  return fy ? sql`(${dateCol} >= ${fy.startDate} AND NOT (a.is_initial_balance AND a.financial_year_id <> ${fy.id}))` : sql`${dateCol} >= ${startDate}`;
+}
 
-async function loadTree(db: DbOrTx) {
+export interface TreeAccount { id: number; parentId: number | null; number: string; description: string; englishDescription: string | null; level: number; isEuro: boolean; categoryId: number | null; currencyId: number; productId: number | null }
+
+export async function loadTree(db: DbOrTx) {
   const rows = await db.select({
     id: s.accounts.id, parentId: s.accounts.parentId, number: s.accounts.number, description: s.accounts.description,
     englishDescription: s.accounts.englishDescription, level: s.accounts.level, isEuro: s.accounts.isEuro,
@@ -58,7 +67,7 @@ async function loadTree(db: DbOrTx) {
 }
 
 /** Map every account to the account of the report chart (same chart, else same number, else mapped). */
-function chartMapper(all: TreeAccount[], isEuro: boolean) {
+export function chartMapper(all: TreeAccount[], isEuro: boolean) {
   const byId = new Map(all.map((a) => [a.id, a]));
   const reportByNumber = new Map(all.filter((a) => a.isEuro === isEuro).map((a) => [a.number, a]));
   return (id: number): TreeAccount | undefined => {
@@ -69,7 +78,7 @@ function chartMapper(all: TreeAccount[], isEuro: boolean) {
   };
 }
 
-function ancestorsOf(a: TreeAccount, byId: Map<number, TreeAccount>) {
+export function ancestorsOf(a: TreeAccount, byId: Map<number, TreeAccount>) {
   const out: TreeAccount[] = [];
   let p = a.parentId != null ? byId.get(a.parentId) : undefined;
   while (p && p.number !== '0') { out.push(p); p = p.parentId != null ? byId.get(p.parentId) : undefined; }
@@ -103,7 +112,7 @@ export async function trialBalance(db: DbOrTx, o: TrialBalanceOptions) {
   const factor = conversionSql(o.endDate, sql`a.accounting_date`);
   const opening = sql`(a.is_initial_balance OR ${dateCol} < ${o.startDate})`;
   const companyFilter = o.companyIds?.length ? sql`AND d.company_id IN (${sql.join(o.companyIds.map((c) => sql`${c}`), sql`, `)})` : sql``;
-  const yearFilter = fy ? sql`a.financial_year_id = ${fy.id}` : sql`${dateCol} >= ${o.startDate}`;
+  const yearFilter = fyWindowSql(fy, dateCol, o.startDate);
   const res = await exec(db, sql`
     SELECT d.account_id,
       SUM(CASE WHEN ${opening} THEN d.amount / ${factor} ELSE 0 END) AS od,
@@ -181,7 +190,7 @@ export async function accountBalances(db: DbOrTx, accountNumber: string, o: Peri
   const companyFilter = partnerSelected ? sql`AND d.company_id IN (${sql.join(o.companyIds!.map((c) => sql`${c}`), sql`, `)})` : sql``;
   // Initial correspondences count only when specific partners are selected (fnGetBalances).
   const corrFilter = partnerSelected ? sql`` : sql`AND NOT (a.is_initial_balance AND a.is_initial_correspondence)`;
-  const yearFilter = fy ? sql`a.financial_year_id = ${fy.id}` : sql`${dateCol} >= ${o.startDate}`;
+  const yearFilter = fyWindowSql(fy, dateCol, o.startDate);
   const accFilter = accountRuleSql(sql`ac.number`, accountNumber, withSub);
   const res = await exec(db, sql`
     SELECT
@@ -380,7 +389,7 @@ export async function partnerTurnover(db: DbOrTx, o: PeriodFilter & { accountNum
   const dateCol = o.byExportMonth ? sql`a.vies_month` : sql`a.accounting_date`;
   const factor = conversionSql(o.endDate, sql`a.accounting_date`);
   const opening = sql`(a.is_initial_balance OR ${dateCol} < ${o.startDate})`;
-  const yearFilter = fy ? sql`a.financial_year_id = ${fy.id}` : sql`${dateCol} >= ${o.startDate}`;
+  const yearFilter = fyWindowSql(fy, dateCol, o.startDate);
   const companyFilter = o.companyIds?.length ? sql`AND d.company_id IN (${sql.join(o.companyIds.map((c) => sql`${c}`), sql`, `)})` : sql``;
   const res = await exec(db, sql`
     SELECT co.id, co.name, coalesce(nullif(co.vat_number, ''), co.bulstat) AS vat,
