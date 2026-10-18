@@ -409,36 +409,6 @@ export const nomenclatureRoutes = new Hono<AppEnv>()
     return c.json({ ok: true });
   })
 
-  // ---- Products (Дефиниране на СМЗ) ----
-  .get('/products', async (c) => {
-    const q = c.req.query('q')?.trim();
-    const rows = await c.var.db.select().from(s.products)
-      .where(and(eq(s.products.isDeleted, false), q ? or(ilike(s.products.name, `%${q}%`), ilike(s.products.code, `%${q}%`)) : undefined))
-      .orderBy(asc(s.products.name));
-    return c.json(rows);
-  })
-  .post('/products', requirePermission('UI_Operations_Products_DefineProducts'), zValidator('json', z.object({
-    name: z.string().trim().min(1).max(255), code: z.string().max(50).nullable().optional(), measure: z.string().trim().min(1).max(50),
-    price: z.string().default('0'),
-  })), async (c) => {
-    const [row] = await c.var.db.insert(s.products).values(c.req.valid('json')).returning();
-    return c.json(row, 201);
-  })
-  .put('/products/:id', requirePermission('UI_Operations_Products_DefineProducts'), zValidator('json', z.object({
-    name: z.string().trim().min(1).max(255), code: z.string().max(50).nullable().optional(), measure: z.string().trim().min(1).max(50),
-    price: z.string().default('0'),
-  })), async (c) => {
-    const [row] = await c.var.db.update(s.products).set(c.req.valid('json')).where(eq(s.products.id, Number(c.req.param('id')))).returning();
-    return c.json(row);
-  })
-  .delete('/products/:id', requirePermission('UI_Operations_Products_DefineProducts'), async (c) => {
-    const id = Number(c.req.param('id'));
-    const used = await c.var.db.select({ id: s.accountingDetails.id }).from(s.accountingDetails).where(eq(s.accountingDetails.productId, id)).limit(1);
-    if (used.length) throw badRequest('Стоката участва в операции и не може да бъде изтрита.');
-    await c.var.db.update(s.products).set({ isDeleted: true }).where(eq(s.products.id, id));
-    return c.json({ ok: true });
-  })
-
   // ---- Validator (Проверка на ДДС номер, ЕИК, ЕГН, IBAN) ----
   .get('/validator/:code', (c) => c.json(detectIdentifier(c.req.param('code'))));
 

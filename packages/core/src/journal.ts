@@ -2,6 +2,7 @@ import { dec, round2, sum, ZERO, type Dec, type DecInput } from './money.ts';
 import { isMonthLocked } from './financialYear.ts';
 import { isCompanyCategory } from './categories.ts';
 import { DOCUMENT_TYPE, TRANSACTION_TYPE } from './seeds/lookups.ts';
+import { currencyShares } from './journalExtras.ts';
 
 /**
  * Journal entry model (spec 01a section 8 and 02a section 1).
@@ -85,13 +86,10 @@ export function buildLegs(debits: EntryLine[], credits: EntryLine[]): Leg[] {
 function distributeAnalytics(line: EntryLine, legs: Leg[]) {
   const total = sum(legs.map((l) => l.amount.plus(l.refAmount)));
   if (line.currency) {
-    const ca = dec(line.currency.currencyAmount);
-    let remaining = ca;
+    // 02a 2: each share = round2(share amount / rate), the last takes the remainder.
+    const shares = currencyShares(line.currency.currencyAmount, legs.map((l) => l.amount.plus(l.refAmount)), line.currency.exchangeRate);
     legs.forEach((leg, i) => {
-      const legAmt = leg.amount.plus(leg.refAmount);
-      const share = i === legs.length - 1 ? remaining : total.isZero() ? ZERO : round2(ca.times(legAmt).div(total));
-      remaining = remaining.minus(share);
-      leg.currency = { ...line.currency!, currencyAmount: share.toFixed(2) };
+      leg.currency = { ...line.currency!, currencyAmount: shares[i]!.toFixed(2) };
     });
   }
   if (line.material) {

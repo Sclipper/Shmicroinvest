@@ -7,14 +7,14 @@ import * as s from '../db/company/schema/index.ts';
 import { exec } from '../db/provider.ts';
 import type { AppEnv } from '../context.ts';
 import { requirePermission } from '../session.ts';
-import { addAccount, applyChartTemplate, deleteAccount, editAccount, suggestSubAccountNumber } from '../services/chart.ts';
+import { accountTemplates, addAccount, applyChartTemplate, copyAccounts, deleteAccount, editAccount, suggestSubAccountNumber } from '../services/chart.ts';
 import { baseCurrencyId } from '../services/journal.ts';
 import { accountBalances } from '../services/reports.ts';
 
 const accountBody = z.object({
   number: z.string().trim().max(50).optional(),
   parentId: z.number().int(),
-  description: z.string().trim().min(1, 'Не е въведено описание на сметката.').max(255),
+  description: z.string().trim().max(255),
   englishDescription: z.string().max(255).nullable().optional(),
   accountCategoryId: z.number().int().nullable().optional(),
   currencyId: z.number().int().optional(),
@@ -23,6 +23,9 @@ const accountBody = z.object({
   concludeAccountId: z.number().int().nullable().optional(),
   isHidden: z.boolean().optional(),
   iban: z.string().max(50).nullable().optional(),
+  accountType: z.enum(['standard', 'currency', 'material']).optional(),
+  measure: z.string().trim().max(50).nullable().optional(),
+  productCode: z.string().trim().max(50).nullable().optional(),
 });
 
 export const chartRoutes = new Hono<AppEnv>()
@@ -34,16 +37,33 @@ export const chartRoutes = new Hono<AppEnv>()
     const rows = await db.select().from(s.accounts).where(eq(s.accounts.isEuro, isEuro)).orderBy(asc(s.accounts.leftIndex));
     const used = await exec(db, sql`SELECT DISTINCT account_id FROM accounting_details`);
     const usedSet = new Set((used.rows as { account_id: number }[]).map((r) => r.account_id));
+    const productRows = await db.select({ id: s.products.id, measure: s.products.measure, code: s.products.code }).from(s.products);
+    const productById = new Map(productRows.map((p) => [p.id, p]));
+    const links = await db.select({ accountId: s.productAccounts.accountId, accountType: s.productAccounts.accountType }).from(s.productAccounts);
+    const typeByAccount = new Map(links.map((l) => [l.accountId, l.accountType]));
     return c.json(rows.map((r) => ({
       id: r.id, parentId: r.parentId, number: r.number, description: r.description, englishDescription: r.englishDescription,
       level: r.level, categoryId: r.accountCategoryId, currencyId: r.currencyId, productId: r.productId, isActive: r.isActive,
       concludeAccountId: r.concludeAccountId, isHidden: r.isHidden, iban: r.iban,
       isLeaf: isLeaf({ left: r.leftIndex, right: r.rightIndex }) && r.number !== '0',
       isForeignCurrency: r.currencyId !== base, isMaterial: r.productId != null, isUsed: usedSet.has(r.id),
+      measure: r.productId ? (productById.get(r.productId)?.measure ?? null) : null,
+      productCode: r.productId ? (productById.get(r.productId)?.code ?? null) : null,
+      productAccountType: typeByAccount.get(r.id) ?? null,
     })));
   })
 
   .get('/accounts/categories', (c) => c.json(ACCOUNT_CATEGORIES))
+
+  /** Account templates of the chart type (F4 in the account editor, 03a 1.6). */
+  .get('/accounts/templates', async (c) => c.json(await accountTemplates(c.var.db, c.var.year.year >= 2026, c.req.query('q'))))
+
+  /** Copy sub-accounts under a target account (03a 1.7). */
+  .post('/accounts/copy', requirePermission('UI_Operations_ChartOfAccounts_IndividualChartOfAccounts'),
+    zValidator('json', z.object({ ids: z.array(z.number().int()).min(1), targetId: z.number().int() })), async (c) => {
+      const { ids, targetId } = c.req.valid('json');
+      return c.json(await c.var.db.transaction((tx) => copyAccounts(tx, ids, targetId)));
+    })
 
   .get('/accounts/:id/next-number', async (c) => c.json({ number: await suggestSubAccountNumber(c.var.db, Number(c.req.param('id'))) }))
 

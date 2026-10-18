@@ -37,27 +37,28 @@ export const MENU: TopMenu[] = [
   {
     label: 'Операции', permission: 'UI_Operations', items: [
       { label: 'Контиране', permission: 'UI_Operations_Accounting', gesture: 'F2', screen: 'entry' },
-      { label: 'Бързо контиране', permission: 'UI_Operations_FastAccounting', gesture: 'F12' },
-      { label: 'Шаблони', permission: 'UI_Operations_Templates', gesture: 'Shift+F2' },
+      { label: 'Бързо контиране', permission: 'UI_Operations_FastAccounting', gesture: 'F12', screen: 'fastEntry' },
+      { label: 'Шаблони', permission: 'UI_Operations_Templates', gesture: 'Shift+F2', screen: 'templates' },
+      { label: 'График с шаблони за осчетоводяване', permission: 'UI_Operations_TemplateSchedules', screen: 'templateSchedules' },
       { label: 'Разплащания', permission: 'UI_Operations_Payments', gesture: 'F3' },
       { sep: true },
       {
         label: 'Стоково-материални запаси', permission: 'UI_Operations_Products', children: [
           { label: 'Дефиниране на СМЗ', permission: 'UI_Operations_Products_DefineProducts', screen: 'products' },
-          { label: 'Доставка на СМЗ', permission: 'UI_Operations_Products_Delivery' },
-          { label: 'Продажба на СМЗ', permission: 'UI_Operations_Products_Sale' },
-          { label: 'Изписване на СМЗ', permission: 'UI_Operations_Products_WriteOffs' },
+          { label: 'Доставка на СМЗ', permission: 'UI_Operations_Products_Delivery', gesture: 'Ctrl+Shift+D', screen: 'productDelivery' },
+          { label: 'Продажба на СМЗ', permission: 'UI_Operations_Products_Sale', gesture: 'Ctrl+Shift+S', screen: 'productSale' },
+          { label: 'Изписване на СМЗ', permission: 'UI_Operations_Products_WriteOffs', gesture: 'Ctrl+I', screen: 'writeOffs' },
         ],
       },
       { sep: true },
       { label: 'Дълготрайни активи', permission: 'UI_Operations_Depreciations' },
-      { label: 'Разсрочване на приходи/разходи', permission: 'UI_Operations_AccountingReschedules' },
+      { label: 'Разсрочване на приходи/разходи', permission: 'UI_Operations_AccountingReschedules', gesture: 'Ctrl+R', screen: 'reschedules' },
       { sep: true },
       {
         label: 'Сметкоплан и начални салда', permission: 'UI_Operations_ChartOfAccounts', children: [
           { label: 'Индивидуален сметкоплан', permission: 'UI_Operations_ChartOfAccounts_IndividualChartOfAccounts', gesture: 'Ctrl+H', screen: 'chart' },
           { label: 'Начални салда', permission: 'UI_Operations_ChartOfAccounts_ChartOfAccountsBalance', gesture: 'Alt+U', screen: 'initialBalances' },
-          { label: 'Начални кореспонденции', permission: 'UI_Operations_ChartOfAccounts_InitialCorrespondence' },
+          { label: 'Начални кореспонденции', permission: 'UI_Operations_ChartOfAccounts_InitialCorrespondence', gesture: 'Alt+Y', screen: 'initialCorrespondences' },
           { label: 'Избор на сметкоплан', permission: 'UI_Operations_ChartOfAccounts_ChartOfAccountsSelection', gesture: 'Alt+K', screen: 'chartSelection' },
         ],
       },
@@ -94,6 +95,8 @@ export const MENU: TopMenu[] = [
           { label: 'Моята фирма', permission: 'UI_Edit_Administration_MyCompany', gesture: 'Ctrl+F', screen: 'myCompany' },
           { label: 'Потребители', permission: 'UI_Edit_Administration_Users', gesture: 'Ctrl+U', screen: 'users' },
           { label: 'Основания и забележки', permission: 'UI_Edit_Administration_EditTermsAndReferences', screen: 'dictionary' },
+          { label: 'Преподреждане на документи', permission: 'UI_Edit_Administration_ReorderDocuments', screen: 'reorder' },
+          { label: 'Редакция на контировки', permission: 'UI_Edit_Administration_EditAccountings', screen: 'massEdit' },
         ],
       },
       { sep: true },
@@ -116,6 +119,18 @@ export const MENU: TopMenu[] = [
       { label: 'ДДС дневници, декларация и VIES', permission: 'UI_Reporting_VATDiary', gesture: 'Alt+D' },
       { label: 'Отчети и баланс', permission: 'UI_Reporting_FinancialReports', gesture: 'Alt+B' },
       { sep: true },
+      {
+        label: 'Стоково-материални запаси', permission: 'UI_Reporting_MaterialReports', children: [
+          { label: 'Доставки', permission: 'UI_Reporting_MaterialReports_PurchaseReport', screen: 'purchaseReport' },
+          { label: 'Продажби', permission: 'UI_Reporting_MaterialReports_SaleReport', screen: 'saleReport' },
+          { label: 'Движение на стоки', permission: 'UI_Reporting_MaterialReports_GoodsMovementReport', screen: 'goodsMovementReport' },
+          { label: 'Стойност за изписване при продажба', permission: 'UI_Reporting_MaterialReports_WriteOutReport', gesture: 'Alt+W', screen: 'writeOutReport' },
+          { label: 'Средно претеглена стойност и изписване', permission: 'UI_Reporting_MaterialReports_AveragePriceReport', gesture: 'Alt+S', screen: 'averagePriceReport' },
+          { label: 'Инвентаризационен опис', permission: 'UI_Reporting_MaterialReports', screen: 'inventoryListReport' },
+        ],
+      },
+      { label: 'Разсрочване на приходи и разходи', permission: 'UI_Reporting_AccountingReschedules', screen: 'reschedulesReport' },
+      { sep: true },
       { label: 'Индивидуален сметкоплан', permission: 'UI_Reporting_ChartOfAccountsReport', screen: 'chartReport' },
       { label: 'Действия по потребители', permission: 'UI_Reporting_UsersActivitiesReport', screen: 'activity' },
     ],
@@ -124,6 +139,7 @@ export const MENU: TopMenu[] = [
     label: 'Други', permission: 'UI_Other', items: [
       { label: 'Настройки', permission: 'UI_Other_Settings', gesture: 'Ctrl+T', screen: 'settings' },
       { label: 'Проверка на ДДС номер, ЕИК, ЕГН, IBAN', permission: 'UI_Other_Validator', gesture: 'Alt+V', screen: 'validator' },
+      { label: 'Клавишни комбинации', permission: 'UI_Other_Shortcuts', gesture: 'Ctrl+K', screen: 'shortcuts' },
     ],
   },
   {

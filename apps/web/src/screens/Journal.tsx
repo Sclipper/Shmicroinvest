@@ -1,105 +1,174 @@
 import { useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { FilePlus2, Pencil, RefreshCw, Search } from 'lucide-react';
+import { Copy, FilePlus2, Paperclip, Pencil, Printer, RefreshCw, SplitSquareHorizontal, Trash2, Undo2 } from 'lucide-react';
+import { formatMessage, JOURNAL_EXTRA_MESSAGES as XM } from '@shmi/core';
 import { api, qs } from '../api.ts';
 import { bgDate, money } from '../format.ts';
-import { Button, CommandBar, Empty, Field, Select, Spinner, TextInput, cx } from '../components/ui.tsx';
-import { useCan, useLookups, useSession } from '../session.tsx';
+import { useDialogs } from '../components/dialogs.tsx';
+import { Button, CommandBar, Dialog, Empty, Spinner, cx } from '../components/ui.tsx';
+import { useCan, useInvalidate, useSession } from '../session.tsx';
 import { useWorkspace } from '../shell/workspace.tsx';
+import { fromServer } from './EntryEditor.tsx';
+import { ExpensesDialog, type ExpensesChoice } from './entry/EntryPanels.tsx';
+import { confirmVoid } from './entry/saveFlow.ts';
+import { useShortcuts } from './entry/shortcuts.ts';
+import { EntryFilterForm, emptyFilter, filterParams, type EntryFilterValues } from './journal/EntryFilter.tsx';
 
 interface Row {
   id: number; number: string; accounting_date: string; document_number: string | null; document_date: string | null; document_type: string | null;
   term: string | null; reference: string | null; company: string | null; amount: string; debit_accounts: string | null; credit_accounts: string | null;
-  user_name: string | null; is_initial_balance: boolean; source: string;
+  user_name: string | null; is_initial_balance: boolean; source: string; attachments: number;
 }
 
 const PAGE = 200;
+const LIST_COMMANDS = ['NewAccountingFromSelected', 'Print', 'SelectAllItems'] as const;
 
-/** Редакция на контиране (Ctrl+F2): list with period/text filters (spec 02a 7). */
+/** Редакция на контиране (Ctrl+F2): list, AccountingFilter and the list commands (spec 02a 5 and 7). */
 export function Journal({ initial = false }: { initial?: boolean; tab?: unknown }) {
   const s = useSession();
   const ws = useWorkspace();
   const can = useCan();
-  const lookups = useLookups();
-  const [f, setF] = useState({ from: `${s.year.year}-01-01`, to: `${s.year.year}-12-31`, text: '', account: '', documentTypeId: '', initial: initial ? '1' : '' });
-  const [applied, setApplied] = useState(f);
+  const dialogs = useDialogs();
+  const invalidate = useInvalidate();
+  const shortcuts = useShortcuts();
+  const [applied, setApplied] = useState<EntryFilterValues>(emptyFilter(s.year.year, initial ? '1' : ''));
   const [page, setPage] = useState(0);
-  const [sel, setSel] = useState<number | null>(null);
+  const [sel, setSel] = useState<number[]>([]);
+  const [reversalOf, setReversalOf] = useState<Row | null>(null);
+  const [expensesFor, setExpensesFor] = useState<number | null>(null);
   const q = useQuery({
     queryKey: ['entries', 'list', applied, page, s.year.id],
-    queryFn: () => api.get<{ rows: Row[]; total: number }>(`/entries${qs({ ...applied, limit: PAGE, offset: page * PAGE })}`),
+    queryFn: () => api.get<{ rows: Row[]; total: number }>(`/entries${qs({ ...filterParams(applied), limit: PAGE, offset: page * PAGE })}`),
     placeholderData: keepPreviousData,
+    retry: false,
   });
-  const apply = () => {
-    setPage(0);
-    setApplied(f);
+  const rows = q.data?.rows ?? [];
+  const one = sel.length === 1 ? rows.find((r) => r.id === sel[0]) : undefined;
+  const showAttachments = s.settings.IsAllowAccountingAttachments === 'True' && s.settings.IsShowAccountingAttachmentsInList === 'True';
+
+  const edit = (id: number) => ws.open('entry', { key: `entry:${id}`, title: `Контиране ${rows.find((r) => r.id === id)?.number ?? ''}`.trim(), params: { id } });
+  const total = rows.reduce((a, r) => a + Number(r.amount ?? 0), 0);
+  const toggle = (id: number, multi: boolean) => setSel((cur) => (multi ? (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]) : [id]));
+
+  const voidSelected = async () => {
+    try {
+      if (!(await confirmVoid(dialogs, sel))) return;
+      await api.post('/journal/void', { ids: sel });
+      setSel([]);
+      await invalidate('entries', 'reports', 'accounts');
+    } catch (e) {
+      await dialogs.error(e);
+    }
   };
-  const edit = (id: number) => ws.open('entry', { key: `entry:${id}`, title: `Контиране ${q.data?.rows.find((r) => r.id === id)?.number ?? ''}`.trim(), params: { id } });
-  const total = q.data?.rows.reduce((a, r) => a + Number(r.amount ?? 0), 0) ?? 0;
+
+  /** ReversalMessageBox: Преглед = open for review, Директен запис = save now, Отказ (5.2). */
+  const reverse = async (how: 'preview' | 'direct') => {
+    const r = reversalOf!;
+    setReversalOf(null);
+    try {
+      if (how === 'preview') {
+        const draft = await api.get<Record<string, unknown>>(`/entries/${r.id}/reversal`);
+        ws.open('entry', { title: 'Сторно', params: { draft: fromServer(draft) } });
+      } else {
+        const saved = await api.post<{ id: number; number: string; warnings: { key: string; text: string; severity: 'warning' }[] }>(`/journal/entries/${r.id}/reversal`);
+        await invalidate('entries', 'reports', 'accounts');
+        if (saved.warnings?.length) await dialogs.messages(`Контиране ${saved.number} е записано с предупреждения`, saved.warnings);
+        else await dialogs.alert(`Сторно записът е записан с номер ${saved.number}.`);
+      }
+    } catch (e) {
+      await dialogs.error(e);
+    }
+  };
+
+  const copySelected = async () => {
+    if (!one) return;
+    try {
+      const draft = await api.get<Record<string, unknown>>(`/journal/entries/${one.id}/copy`);
+      ws.open('entry', { title: XM.strNewAccountingFromSelected, params: { draft: fromServer(draft) } });
+    } catch (e) {
+      await dialogs.error(e);
+    }
+  };
+
+  const distribute = async (c: ExpensesChoice) => {
+    const id = expensesFor!;
+    setExpensesFor(null);
+    try {
+      const draft = await api.post<Record<string, unknown>>(`/journal/entries/${id}/expenses-draft`, c);
+      ws.open('entry', { title: 'Разпределяне на разходи', params: { draft: fromServer(draft) } });
+    } catch (e) {
+      await dialogs.error(e);
+    }
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const cmd = shortcuts.match(e, LIST_COMMANDS);
+    if (!cmd || (e.target as HTMLElement).closest('input,select,textarea')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (cmd === 'NewAccountingFromSelected') void copySelected();
+    else if (cmd === 'Print') window.print();
+    else if (cmd === 'SelectAllItems') setSel(rows.map((r) => r.id));
+  };
+
+  const listError = q.error as Error | null;
   return (
-    <div className="flex h-full flex-col">
-      <CommandBar right={<span className="text-[12px] text-slate-500">{q.data ? `${q.data.total} контировки` : ''}</span>}>
+    <div className="flex h-full flex-col" onKeyDown={onKeyDown} tabIndex={-1}>
+      <CommandBar right={<span className="text-[12px] text-slate-500">{q.data ? `${q.data.total} контировки${sel.length > 1 ? `, избрани ${sel.length}` : ''}` : ''}</span>}>
         <Button variant="primary" icon={<FilePlus2 className="size-3.5" />} onClick={() => ws.open('entry', initial ? { title: 'Начално салдо', params: { initial: true } } : undefined)} disabled={!can(initial ? 'UI_Operations_ChartOfAccounts_ChartOfAccountsBalance' : 'UI_Operations_Accounting')}>
           {initial ? 'Ново начално салдо' : 'Ново (F2)'}
         </Button>
-        <Button icon={<Pencil className="size-3.5" />} disabled={!sel} onClick={() => sel && edit(sel)}>
+        <Button icon={<Pencil className="size-3.5" />} disabled={!one} onClick={() => one && edit(one.id)}>
           Редакция
+        </Button>
+        <Button variant="danger" icon={<Trash2 className="size-3.5" />} disabled={!sel.length || !can('UI_Edit_Accountings_DeleteAccounting')} onClick={voidSelected}>
+          Изтриване
+        </Button>
+        {!initial && (
+          <>
+            <Button icon={<Undo2 className="size-3.5" />} disabled={!one || !can('UI_Operations_Accounting')} onClick={() => one && setReversalOf(one)}>
+              Сторно
+            </Button>
+            <Button icon={<Copy className="size-3.5" />} disabled={!one || !can('UI_Operations_Accounting')} onClick={copySelected} title={shortcuts.gesture('NewAccountingFromSelected')}>
+              {XM.strNewAccountingFromSelected}
+            </Button>
+            <Button icon={<SplitSquareHorizontal className="size-3.5" />} disabled={!one || !can('UI_Operations_Accounting')} onClick={() => one && setExpensesFor(one.id)}>
+              Разпределяне на допълнителни разходи
+            </Button>
+          </>
+        )}
+        <Button icon={<Printer className="size-3.5" />} onClick={() => window.print()} title={shortcuts.gesture('Print')}>
+          Печат
         </Button>
         <Button icon={<RefreshCw className="size-3.5" />} onClick={() => q.refetch()}>
           Обнови
         </Button>
       </CommandBar>
-      <form
-        className="flex flex-wrap items-end gap-2 border-b border-slate-200 bg-white px-3 py-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          apply();
+      <EntryFilterForm
+        value={applied}
+        compact
+        onApply={(f) => {
+          setPage(0);
+          setSel([]);
+          setApplied(f);
         }}
-      >
-        <Field label="От дата">
-          <TextInput type="date" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} className="w-36" />
-        </Field>
-        <Field label="До дата">
-          <TextInput type="date" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })} className="w-36" />
-        </Field>
-        <Field label="Сметка">
-          <TextInput value={f.account} onChange={(e) => setF({ ...f, account: e.target.value })} className="w-24" />
-        </Field>
-        <Field label="Тип документ">
-          <Select value={f.documentTypeId} onChange={(e) => setF({ ...f, documentTypeId: e.target.value })} className="w-44">
-            <option value="">Всички</option>
-            {lookups.data?.documentTypes.filter((t) => t.isVisible).map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Вид">
-          <Select value={f.initial} onChange={(e) => setF({ ...f, initial: e.target.value })} className="w-36">
-            <option value="">Операции</option>
-            <option value="1">Начални салда</option>
-            <option value="all">Всички</option>
-          </Select>
-        </Field>
-        <Field label="Търсене" className="min-w-48 flex-1">
-          <TextInput value={f.text} onChange={(e) => setF({ ...f, text: e.target.value })} placeholder="номер, основание, документ, партньор" />
-        </Field>
-        <Button type="submit" icon={<Search className="size-3.5" />}>
-          Филтриране
-        </Button>
-      </form>
+      />
       <div className="min-h-0 flex-1 overflow-auto">
-        {q.isLoading ? (
+        {listError ? (
+          <Empty>{listError.message}</Empty>
+        ) : q.isLoading ? (
           <Empty>
             <Spinner />
           </Empty>
-        ) : !q.data?.rows.length ? (
+        ) : !rows.length ? (
           <Empty>Няма контировки за избрания период.</Empty>
         ) : (
           <table className="grid-table">
             <thead>
               <tr>
+                <th className="w-7">
+                  <input type="checkbox" aria-label="Избор на всички" className="size-3.5" checked={sel.length > 0 && sel.length === rows.length} onChange={(e) => setSel(e.target.checked ? rows.map((r) => r.id) : [])} />
+                </th>
                 <th>Номер</th>
                 <th>Дата</th>
                 <th>Документ</th>
@@ -107,36 +176,41 @@ export function Journal({ initial = false }: { initial?: boolean; tab?: unknown 
                 <th>Дата док.</th>
                 <th>Партньор</th>
                 <th>Основание</th>
+                <th>Забележка</th>
                 <th>Дебит</th>
                 <th>Кредит</th>
                 <th className="text-right">Сума</th>
+                {showAttachments && <th title="Прикачени файлове"><Paperclip className="size-3.5" /></th>}
                 <th>Потребител</th>
               </tr>
             </thead>
             <tbody>
-              {q.data.rows.map((r) => (
-                <tr key={r.id} aria-selected={sel === r.id} onClick={() => setSel(r.id)} onDoubleClick={() => edit(r.id)} className="cursor-default">
+              {rows.map((r) => (
+                <tr key={r.id} aria-selected={sel.includes(r.id)} onClick={(e) => toggle(r.id, e.ctrlKey || e.metaKey)} onDoubleClick={() => edit(r.id)} className="cursor-default">
+                  <td onClick={(e) => e.stopPropagation()}>
+                    <input type="checkbox" aria-label={`Избор ${r.number}`} className="size-3.5" checked={sel.includes(r.id)} onChange={() => toggle(r.id, true)} />
+                  </td>
                   <td className={cx('font-medium', r.is_initial_balance && 'text-amber-700')}>{r.number || (r.is_initial_balance ? 'Н.С.' : '')}</td>
                   <td>{bgDate(r.accounting_date)}</td>
                   <td>{r.document_type}</td>
                   <td>{r.document_number}</td>
                   <td>{bgDate(r.document_date)}</td>
                   <td className="max-w-56 truncate">{r.company}</td>
-                  <td className="max-w-72 truncate" title={r.reference ?? undefined}>
-                    {r.term}
-                  </td>
+                  <td className="max-w-72 truncate">{r.term}</td>
+                  <td className="max-w-56 truncate">{r.reference}</td>
                   <td>{r.debit_accounts}</td>
                   <td>{r.credit_accounts}</td>
                   <td className="num">{money(r.amount)}</td>
+                  {showAttachments && <td className="text-center">{r.attachments > 0 ? r.attachments : ''}</td>}
                   <td>{r.user_name}</td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
               <tr>
-                <td colSpan={9}>Общо на страницата</td>
+                <td colSpan={11}>Общо на страницата</td>
                 <td className="num">{money(total)}</td>
-                <td />
+                <td colSpan={showAttachments ? 2 : 1} />
               </tr>
             </tfoot>
           </table>
@@ -155,6 +229,24 @@ export function Journal({ initial = false }: { initial?: boolean; tab?: unknown 
           </Button>
         </div>
       )}
+      {reversalOf && (
+        <Dialog
+          title="Сторно"
+          onClose={() => setReversalOf(null)}
+          footer={
+            <>
+              <Button variant="primary" data-autofocus onClick={() => reverse('preview')}>
+                Преглед
+              </Button>
+              <Button onClick={() => reverse('direct')}>Директен запис</Button>
+              <Button onClick={() => setReversalOf(null)}>Отказ</Button>
+            </>
+          }
+        >
+          {formatMessage(XM.strReversalMessage, reversalOf.number)}
+        </Dialog>
+      )}
+      {expensesFor && <ExpensesDialog onClose={() => setExpensesFor(null)} onOk={distribute} />}
     </div>
   );
 }

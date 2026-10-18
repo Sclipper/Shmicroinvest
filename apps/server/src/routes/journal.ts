@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '../lib/validate.ts';
 import { z } from 'zod';
-import { sql, type SQL } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import { CHANNEL } from '@shmi/core';
 import type { AppEnv } from '../context.ts';
 import { exec } from '../db/provider.ts';
@@ -9,6 +9,7 @@ import { requirePermission, workingDate } from '../session.ts';
 import { deleteEntry, loadEntry, reversalDraft, saveEntry } from '../services/journal.ts';
 import { peekNextNumber } from '../services/sequences.ts';
 import { journalLines } from '../services/reports.ts';
+import { entryFilterConditions } from '../services/journalExtras.ts';
 
 const amount = z.string().regex(/^-?\d+(\.\d+)?$/, 'Невалидна сума.');
 const optAmount = amount.nullable().optional();
@@ -63,24 +64,9 @@ export const journalRoutes = new Hono<AppEnv>()
   .get('/entries', async (c) => {
     const { db, year } = c.var;
     const q = c.req.query();
-    const from = q.from ?? `${year.year}-01-01`;
-    const to = q.to ?? `${year.year}-12-31`;
     const limit = Math.min(Number(q.limit ?? 200), 2000);
     const offset = Number(q.offset ?? 0);
-    const conds: SQL[] = [sql`a.financial_year_id = ${year.id}`, sql`a.accounting_date >= ${from}`, sql`a.accounting_date <= ${to}`];
-    if (q.initial === '1') conds.push(sql`a.is_initial_balance`);
-    else if (q.initial !== 'all') conds.push(sql`NOT a.is_initial_balance`);
-    if (q.documentTypeId) conds.push(sql`doc.document_type_id = ${Number(q.documentTypeId)}`);
-    if (q.companyId) conds.push(sql`EXISTS (SELECT 1 FROM accounting_details x WHERE x.accounting_id = a.id AND x.company_id = ${Number(q.companyId)})`);
-    if (q.account) {
-      const like = `${q.account}%`;
-      conds.push(sql`EXISTS (SELECT 1 FROM accounting_details x JOIN accounts xa ON xa.id = x.account_id WHERE x.accounting_id = a.id AND (xa.number = ${q.account} OR xa.number LIKE ${like}))`);
-    }
-    if (q.text) {
-      const like = `%${q.text}%`;
-      conds.push(sql`(a.number ILIKE ${like} OR t.description ILIKE ${like} OR r.description ILIKE ${like} OR doc.number ILIKE ${like}
-        OR EXISTS (SELECT 1 FROM accounting_details x LEFT JOIN companies xc ON xc.id = x.company_id WHERE x.accounting_id = a.id AND xc.name ILIKE ${like}))`);
-    }
+    const conds = entryFilterConditions(q, year);
     const where = sql.join(conds, sql` AND `);
     const rows = await exec(db, sql`
       SELECT a.id, a.number, a.accounting_date, a.vies_month, a.is_initial_balance, a.source,
@@ -90,7 +76,8 @@ export const journalRoutes = new Hono<AppEnv>()
         (SELECT sum(x.amount) FROM accounting_details x WHERE x.accounting_id = a.id AND x.sign = 1) AS amount,
         (SELECT string_agg(DISTINCT da.number, ', ') FROM accounting_details x JOIN accounts da ON da.id = x.account_id WHERE x.accounting_id = a.id AND x.sign = 1) AS debit_accounts,
         (SELECT string_agg(DISTINCT ca.number, ', ') FROM accounting_details x JOIN accounts ca ON ca.id = x.account_id WHERE x.accounting_id = a.id AND x.sign = -1) AS credit_accounts,
-        u.name AS user_name
+        u.name AS user_name,
+        (SELECT count(*)::int FROM accounting_attachments x WHERE x.accounting_id = a.id) AS attachments
       FROM accountings a
       LEFT JOIN documents doc ON doc.id = a.document_id
       LEFT JOIN document_types dt ON dt.id = doc.document_type_id
@@ -123,7 +110,7 @@ export const journalRoutes = new Hono<AppEnv>()
     }));
   })
 
-  .get('/entries/next-number', async (c) => c.json({ number: await peekNextNumber(c.var.db, CHANNEL.Accounting, c.var.year.id) }))
+  .get('/entries/next-number', async (c) => c.json({ number: await peekNextNumber(c.var.db, CHANNEL.Accounting, c.var.year.id, c.var.user.id) }))
 
   .get('/entries/:id', async (c) => c.json(await loadEntry(c.var.db, Number(c.req.param('id')))))
 
