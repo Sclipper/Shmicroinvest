@@ -197,3 +197,29 @@ test.describe('platform services', () => {
     await expect(page.getByRole('dialog')).toContainText('Използвате актуалната версия 1.01.089');
   });
 });
+
+test.describe('opening balances', () => {
+  test('simple account balance, both-sides error and partner rows', async ({ page }) => {
+    await openApp(page);
+    await page.keyboard.press('Alt+u');
+    const tab = activeTab(page);
+    await tab.getByPlaceholder('Номер или име на сметка').fill('504');
+    await tab.getByRole('cell', { name: '504', exact: true }).click();
+    await tab.getByLabel('Дебит', { exact: true }).fill('1200');
+    await tab.getByLabel('Кредит', { exact: true }).fill('5');
+    await tab.getByRole('button', { name: 'Запис' }).click();
+    await expect(page.getByText('Началните салда в дебит и в кредит са различни от 0. Задайте едно от тях на 0.')).toBeVisible();
+    await page.getByRole('button', { name: 'OK' }).click();
+    await tab.getByLabel('Кредит', { exact: true }).fill('');
+    await tab.getByRole('button', { name: 'Запис' }).click();
+    await expect(tab.getByRole('row', { name: /504 .* 1 200,00/ })).toBeVisible();
+
+    await tab.getByPlaceholder('Номер или име на сметка').fill('401');
+    await tab.getByRole('cell', { name: '401', exact: true }).click();
+    await expect(tab.getByText('С партньори')).toBeVisible();
+    await tab.getByLabel('Кредит', { exact: true }).fill('300');
+    await tab.getByRole('button', { name: 'Запис' }).click();
+    await expect(page.getByText('Не е избран партньор за началното салдо!')).toBeVisible();
+    await page.getByRole('button', { name: 'OK' }).click();
+  });
+});
