@@ -36,6 +36,45 @@ test.describe('shell and login', () => {
   });
 });
 
+test.describe('shell behaviour', () => {
+  test('unsaved pages are marked with * and closing them asks first', async ({ page }) => {
+    await openApp(page);
+    await page.keyboard.press('F2');
+    await activeTab(page).getByLabel('Основание').fill('Незаписано');
+    const tabTitle = page.getByRole('button', { name: /Контиране \*/ });
+    await expect(tabTitle).toBeVisible();
+    await page.keyboard.press('Shift+F4');
+    await expect(page.getByText('Има незаписани промени')).toBeVisible();
+    await page.getByRole('dialog').getByRole('button', { name: 'Не', exact: true }).click();
+    await expect(tabTitle).toBeVisible();
+    await page.keyboard.press('Shift+F4');
+    await page.getByRole('dialog').getByRole('button', { name: 'Да', exact: true }).click();
+    await expect(tabTitle).toHaveCount(0);
+  });
+
+  test('Ctrl+Shift+F8 shows the active database and the status bar clock runs', async ({ page }) => {
+    await openApp(page);
+    await page.keyboard.press('Control+Shift+F8');
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toContainText('Активна база данни');
+    await expect(dialog).toContainText(COMPANY.name);
+    await expect(dialog).toContainText('1.01.089');
+    await page.getByRole('button', { name: 'OK' }).click();
+    const clock = page.getByTestId('clock');
+    const first = await clock.textContent();
+    await expect(clock).not.toHaveText(first!, { timeout: 3000 });
+  });
+
+  test('status bar year cell opens the year chooser', async ({ page }) => {
+    await openApp(page);
+    await page.locator('footer').getByRole('button', { name: /Година/ }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByLabel('Активна година')).toHaveValue('2026');
+    await dialog.getByRole('button', { name: 'Отказ' }).click();
+    await expect(dialog).toHaveCount(0);
+  });
+});
+
 test.describe('partners', () => {
   test('creates a partner with validation of the name', async ({ page }) => {
     await openApp(page);

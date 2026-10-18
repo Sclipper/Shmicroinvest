@@ -19,11 +19,19 @@ export function Shell({ screens, onCommand }: { screens: Record<string, ScreenDe
   const dialogs = useDialogs();
   const [changeUser, setChangeUser] = useState(false);
 
-  const run = (item: Extract<MenuItem, { label: string }>) => {
+  /** Close several tabs; any unsaved page among them asks once (06 2.2). */
+  const closeMany = async (exceptKey?: string) => {
+    if (ws.tabs.some((t) => t.dirty && t.key !== exceptKey) && !(await dialogs.confirm(LOSE_CHANGES))) return false;
+    ws.closeAll(exceptKey);
+    return true;
+  };
+
+  const run = async (item: Extract<MenuItem, { label: string }>) => {
     if (item.screen) ws.open(item.screen);
     else if (item.command === 'closeCurrent') ws.active && closeTab(ws.active);
-    else if (item.command === 'closeAll') ws.closeAll();
-    else if (item.command === 'closeAllButCurrent') ws.closeAll(ws.active ?? undefined);
+    else if (item.command === 'closeAll') void closeMany();
+    else if (item.command === 'closeAllButCurrent') void closeMany(ws.active ?? undefined);
+    else if ((item.command === 'logout' || item.command === 'chooseCompany') && !(await closeMany())) return;
     else if (item.command === 'about') void dialogs.alert('Шмикроинвест Шмелта Про — уеб счетоводна система, съвместима с Microinvest Делта Про 1.01.089.', 'За програмата');
     else if (item.command === 'changeUser') setChangeUser(true);
     else if (item.command) onCommand(item.command);
@@ -34,6 +42,28 @@ export function Shell({ screens, onCommand }: { screens: Record<string, ScreenDe
     if (t?.dirty && !(await dialogs.confirm('Желаете ли изход без запис на данните?'))) return;
     ws.close(key);
   };
+
+  // Unsaved pages also guard closing the browser tab.
+  const anyDirty = ws.tabs.some((t) => t.dirty);
+  useEffect(() => {
+    if (!anyDirty) return;
+    const onUnload = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener('beforeunload', onUnload);
+    return () => window.removeEventListener('beforeunload', onUnload);
+  }, [anyDirty]);
+
+  // Hidden hotkey Ctrl+Shift+F8 (06 2.5): active database information.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey && e.shiftKey && e.key === 'F8')) return;
+      e.preventDefault();
+      void api.get<{ server: string; engine: string; company: string; database: string; version: string }>('/session/database-info').then((i) =>
+        dialogs.alert(`Сървър: ${i.server} (${i.engine})\nФирма: ${i.company}\nБаза данни: ${i.database}\nВерсия на базата: ${i.version}`, 'Активна база данни'),
+      );
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [dialogs]);
 
   // Global shortcuts from the menu definition.
   const runRef = useRef(run);
@@ -53,7 +83,7 @@ export function Shell({ screens, onCommand }: { screens: Record<string, ScreenDe
       const item = map.get(g);
       if (!item || UNBINDABLE.has(g)) return;
       e.preventDefault();
-      runRef.current(item);
+      void runRef.current(item);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -77,7 +107,7 @@ export function Shell({ screens, onCommand }: { screens: Record<string, ScreenDe
           );
         })}
       </main>
-      <StatusBar />
+      <StatusBar onCommand={(c) => (c === 'changeUser' ? setChangeUser(true) : void run({ label: '', command: c }))} />
       {changeUser && <ChangeUserDialog onClose={() => setChangeUser(false)} />}
     </div>
   );
@@ -275,8 +305,8 @@ function TabStrip({ onClose }: { onClose: (key: string) => void }) {
           )}
         >
           <button className="truncate" onClick={() => ws.activate(t.key)}>
-            {t.dirty && <span className="text-brand-600">● </span>}
             {t.title}
+            {t.dirty && <span className="text-brand-600"> *</span>}
           </button>
           <button className="rounded p-0.5 opacity-50 hover:bg-slate-200 hover:opacity-100" onClick={() => onClose(t.key)} aria-label="Затвори">
             <X className="size-3" />
@@ -287,27 +317,69 @@ function TabStrip({ onClose }: { onClose: (key: string) => void }) {
   );
 }
 
-function StatusBar() {
+const LOSE_CHANGES = 'Има незаписани промени, които ще бъдат загубени! Желаете ли да продължите?';
+
+/** Status bar (06 2.3): every cell is clickable; the clock ticks each second. */
+function StatusBar({ onCommand }: { onCommand: (c: Cmd) => void }) {
   const s = useSession();
-  const ws = useWorkspace();
+  const can = useCan();
   const [editDate, setEditDate] = useState(false);
   const [editBranch, setEditBranch] = useState(false);
+  const [editYear, setEditYear] = useState(false);
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const time = now.toLocaleTimeString('bg-BG', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'Europe/Sofia' });
   return (
     <footer className="flex items-center gap-px border-t border-slate-300 bg-slate-200 text-[12px] text-slate-700">
-      <Cell label="Година" onClick={() => ws.open('years')}>
+      <Cell label="Потребител" onClick={can('UI_Edit_Administration_ChangeActiveUser') ? () => onCommand('changeUser') : undefined}>{s.user.name}</Cell>
+      <Cell label="Фирма" onClick={can('UI_File_ChooseCompany') ? () => onCommand('chooseCompany') : undefined}>{s.company.name}</Cell>
+      <Cell label="Година" onClick={can('UI_Edit_ChangeActiveFinancialYear') ? () => setEditYear(true) : undefined}>
         {s.year.year}
         {s.year.isLocked && ' 🔒'}
       </Cell>
-      <Cell label="Фирма">{s.company.name}</Cell>
       <Cell label="Клон" onClick={() => setEditBranch(true)}>{s.branch?.name ?? '-'}</Cell>
-      <Cell label="Потребител">{s.user.name}</Cell>
       <Cell label="Валута">{s.baseCurrency === 'EUR' ? 'EUR (евро)' : 'BGN (лева)'}</Cell>
       <Cell label="Дата" onClick={() => setEditDate(true)}>
-        {bgDate(s.workingDate)}
+        {bgDate(s.workingDate)} <span className="font-normal text-slate-500" data-testid="clock">{time}</span>
       </Cell>
       {editDate && <WorkingDateDialog onClose={() => setEditDate(false)} />}
       {editBranch && <BranchDialog onClose={() => setEditBranch(false)} />}
+      {editYear && <YearDialog onClose={() => setEditYear(false)} />}
     </footer>
+  );
+}
+
+/** Year chooser from the status bar (01b 6.3): locked years cannot be chosen. */
+function YearDialog({ onClose }: { onClose: () => void }) {
+  const s = useSession();
+  const qc = useQueryClient();
+  const dialogs = useDialogs();
+  const years = useQuery({ queryKey: ['years'], queryFn: () => api.get<{ id: number; year: number; isLocked: boolean }[]>('/years') });
+  const [year, setYear] = useState(s.year.year);
+  const save = async () => {
+    if (years.data?.find((y) => y.year === year)?.isLocked) {
+      await dialogs.alert('Избраната счетоводна година е заключена и не може да бъде избрана!');
+      return;
+    }
+    try {
+      await api.put('/years/active', { year });
+      await qc.invalidateQueries();
+      onClose();
+    } catch (e) {
+      await dialogs.error(e);
+    }
+  };
+  return (
+    <Dialog title="Счетоводна година" onClose={onClose} width={300} footer={<><Button variant="primary" onClick={save}>OK</Button><Button onClick={onClose}>Отказ</Button></>}>
+      <Field label="Активна година">
+        <select className="field-input" value={year} onChange={(e) => setYear(Number(e.target.value))}>
+          {years.data?.map((y) => <option key={y.id} value={y.year}>{y.year}{y.isLocked ? ' (заключена)' : ''}</option>)}
+        </select>
+      </Field>
+    </Dialog>
   );
 }
 
@@ -327,6 +399,8 @@ function WorkingDateDialog({ onClose }: { onClose: () => void }) {
   const dialogs = useDialogs();
   const [date, setDate] = useState(s.workingDate);
   const save = async () => {
+    // 06 2.4: a date in an earlier year moves the active year back to it.
+    if (Number(date.slice(0, 4)) < s.year.year && !(await dialogs.confirm('Текущата дата на приложението не може да е в по-ранна година от избраната счетоводна година! За счетоводна година ще бъде избрана текущата година на приложението. Желаете ли да продължите?'))) return;
     try {
       await api.put('/session/working-date', { date });
       await qc.invalidateQueries();
