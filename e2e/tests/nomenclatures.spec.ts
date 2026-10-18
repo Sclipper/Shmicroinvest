@@ -122,3 +122,14 @@ test('partner lookup fills the form from the EIK (server answer stubbed)', async
   await expect(tab.locator('input[value="СОФИЯ"]')).toBeVisible();
   await expect(tab.locator('input[value="1504"]')).toBeVisible();
 });
+
+test('currency rules come from the server with the spec texts', async ({ page }) => {
+  await openApp(page);
+  await menu(page, 'Редакция', 'Валути');
+  const tab = activeTab(page);
+  await tab.getByRole('button', { name: 'Нова валута' }).click();
+  await tab.getByLabel('Код (ISO)').fill('EU');
+  await tab.getByLabel('Наименование').fill('Евро-тест');
+  await tab.getByRole('button', { name: 'Запис' }).first().click();
+  await expect(page.getByText('Зададен е невалиден код на валутата. Кодът трябва да се състои от три главни латински букви.')).toBeVisible();
+});
