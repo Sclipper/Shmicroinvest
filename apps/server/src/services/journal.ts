@@ -11,6 +11,7 @@ import { ApiError, badRequest, notFound } from '../lib/errors.ts';
 import { accountingNumberUsed, findSequence, reserveNumber } from './sequences.ts';
 import { logActivity } from './audit.ts';
 import { vatEntryChecks } from './vat/entryChecks.ts';
+import { releaseAssetLinks } from './assetLinks.ts';
 
 export interface LineInput {
   accountId: number;
@@ -275,6 +276,7 @@ export async function deleteEntry(db: DbOrTx, id: number, year: ActiveYear, user
   if (fy?.isLocked) throw badRequest(JOURNAL_MESSAGES.strVoidAccountingLockedYearWarning);
   if (fy && !e.isInitialBalance && isMonthLocked(fy.lockedMonths, Number(e.accountingDate.slice(5, 7)))) throw badRequest(JOURNAL_MESSAGES.strLockedMonthOperation);
   void year;
+  await releaseAssetLinks(db, id);
   await db.delete(s.accountingPaymentDetails).where(or(eq(s.accountingPaymentDetails.paymentAccountingId, id), eq(s.accountingPaymentDetails.refAccountingId, id)));
   // 01a 8.6: generated schedule rows and reschedule periods become unprocessed again.
   await db.update(s.accountingTemplateSchedules).set({ accountingId: null, isProcessed: false }).where(eq(s.accountingTemplateSchedules.accountingId, id));

@@ -29,6 +29,7 @@ import { templateRoutes } from './routes/templates.ts';
 import { stockRoutes } from './routes/stock.ts';
 import { settingsExtraRoutes } from './routes/settingsExtras.ts';
 import { vatRoutes } from './routes/vat.ts';
+import { assetRoutes } from './routes/assets.ts';
 
 const WEB_DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../web/dist');
 
@@ -54,7 +55,8 @@ export function createApp(driver: DbDriver, opts: { serveWeb?: boolean } = {}) {
     .route('/', templateRoutes)
     .route('/', stockRoutes)
     .route('/', settingsExtraRoutes)
-    .route('/', vatRoutes);
+    .route('/', vatRoutes)
+    .route('/', assetRoutes);
 
   const app = new Hono<AppEnv>();
   app.use('*', async (c, next) => {

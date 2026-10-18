@@ -51,8 +51,9 @@ export const MENU: TopMenu[] = [
         ],
       },
       { sep: true },
-      { label: 'Дълготрайни активи', permission: 'UI_Operations_Depreciations' },
+      { label: 'Дълготрайни активи', permission: 'UI_Operations_Depreciations', gesture: 'Ctrl+D', screen: 'assets' },
       { label: 'Разсрочване на приходи/разходи', permission: 'UI_Operations_AccountingReschedules', gesture: 'Ctrl+R', screen: 'reschedules' },
+      { label: 'Заявки за осчетоводяване', permission: 'UI_Operations_AccountingRequests', gesture: 'Ctrl+Q', screen: 'accountingRequests' },
       { sep: true },
       {
         label: 'Сметкоплан и начални салда', permission: 'UI_Operations_ChartOfAccounts', children: [
@@ -158,6 +159,16 @@ export const MENU: TopMenu[] = [
         ],
       },
       { label: 'Разсрочване на приходи и разходи', permission: 'UI_Reporting_AccountingReschedules', screen: 'reschedulesReport' },
+      { sep: true },
+      {
+        label: 'Дълготрайни активи', permission: 'UI_Reporting_Depreciations', children: [
+          { label: 'Месечни амортизационни квоти', permission: 'UI_Reporting_Depreciations_MonthlyDepreciationQuotas', gesture: 'Alt+M', screen: 'assetQuotas' },
+          { label: 'Инвентарна книга', permission: 'UI_Reporting_Depreciations_InventoryBook', gesture: 'Alt+I', screen: 'assetInventoryBook' },
+          { label: 'Амортизационен план', permission: 'UI_Reporting_Depreciations_DepreciationPlan', screen: 'assetPlan' },
+          { label: 'Активи по категории', permission: 'UI_Reporting_Depreciations_AssetsByCategories', screen: 'assetCategories' },
+          { label: 'Инвентаризационен опис на ДМА', permission: 'UI_Reporting_Depreciations_InventoryListMOL', screen: 'assetInventoryMol' },
+        ],
+      },
       { sep: true },
       { label: 'Индивидуален сметкоплан', permission: 'UI_Reporting_ChartOfAccountsReport', screen: 'chartReport' },
       { label: 'Действия по потребители', permission: 'UI_Reporting_UsersActivitiesReport', screen: 'activity' },

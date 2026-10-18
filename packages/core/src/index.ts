@@ -24,3 +24,4 @@ export * from './journalExtras.ts';
 export * from './schedules.ts';
 export * from './stock.ts';
 export * from './vat/index.ts';
+export * from './depreciation.ts';
