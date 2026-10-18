@@ -303,9 +303,9 @@ function Toolbar({ screens, run }: { screens: Record<string, ScreenDef>; run: (i
     <div role="toolbar" aria-label="Лента с инструменти" className="flex h-[51px] shrink-0 items-stretch gap-0.5 overflow-x-auto border-b border-slate-300 bg-gradient-to-b from-slate-50 to-slate-100 px-2 py-1">
       {buttons.map((b) => (
         <button key={b.id} title={b.tooltip} aria-label={b.tooltip} onClick={() => run(b.item)}
-          className="flex w-[68px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-sm px-0.5 text-[10.5px] text-slate-700 hover:bg-brand-100">
+          className="flex min-w-[52px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-sm px-1.5 text-[10.5px] whitespace-nowrap text-slate-700 hover:bg-brand-100">
           <b.Icon className="size-5 text-brand-600" strokeWidth={1.6} />
-          <span className="max-w-full truncate">{b.caption}</span>
+          <span>{b.caption}</span>
         </button>
       ))}
     </div>
