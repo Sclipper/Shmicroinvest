@@ -1,5 +1,5 @@
 {
-  "id": "b6a723c8-a5a1-4c12-8be2-7dc55a7ed890",
+  "id": "4d40ef99-f9b4-4343-843c-30a9e684f836",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -5416,6 +5416,130 @@
             "id"
           ],
           "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.vat_base_lines": {
+      "name": "vat_base_lines",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "byDefault",
+            "name": "vat_base_lines_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "accounting_id": {
+          "name": "accounting_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sign": {
+          "name": "sign",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "vat_term_id": {
+          "name": "vat_term_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "numeric(19, 6)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
+        "ref_amount": {
+          "name": "ref_amount",
+          "type": "numeric(19, 6)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
+        "company_id": {
+          "name": "company_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "ix_vat_base_lines_accounting": {
+          "name": "ix_vat_base_lines_accounting",
+          "columns": [
+            {
+              "expression": "accounting_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "vat_base_lines_accounting_id_accountings_id_fk": {
+          "name": "vat_base_lines_accounting_id_accountings_id_fk",
+          "tableFrom": "vat_base_lines",
+          "tableTo": "accountings",
+          "columnsFrom": [
+            "accounting_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "vat_base_lines_vat_term_id_vat_terms_id_fk": {
+          "name": "vat_base_lines_vat_term_id_vat_terms_id_fk",
+          "tableFrom": "vat_base_lines",
+          "tableTo": "vat_terms",
+          "columnsFrom": [
+            "vat_term_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "vat_base_lines_company_id_companies_id_fk": {
+          "name": "vat_base_lines_company_id_companies_id_fk",
+          "tableFrom": "vat_base_lines",
+          "tableTo": "companies",
+          "columnsFrom": [
+            "company_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
           "onUpdate": "no action"
         }
       },

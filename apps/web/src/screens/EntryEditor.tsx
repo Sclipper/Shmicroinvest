@@ -17,6 +17,7 @@ import { confirmBeforeSave, confirmVoid, differentNumberMessage } from './entry/
 import { useShortcuts } from './entry/shortcuts.ts';
 import { MaterialDetailsDialog, type MaterialLine } from './stock/MaterialDetailsDialog.tsx';
 import { LoadTemplateDialog, SaveTemplateDialog } from './templates/TemplateDialogs.tsx';
+import { useEntryVat } from './vat/EntryVat.tsx';
 
 export interface Line {
   accountId: number | null;
@@ -71,6 +72,7 @@ type Dlg = null | 'saveTemplate' | 'loadTemplate' | 'expenses' | EditorMode;
 const EDITOR_COMMANDS = [
   'Save', 'Balancing', 'BalancingAndSave', 'BalancingSaveAndCopy', 'SaveAndExpensesDistribution', 'ExpensesDistribution', 'SaveTemplate', 'LoadTemplates',
   'CopyAccountingData', 'PasteAccountingData', 'CalculatePrice', 'DeliveryMaterialDetails', 'SaleMaterialDetails', 'PrevAccounting', 'NextAccounting',
+  'CalculateVAT', 'AddVatPurchase', 'AddVatSale', 'ICAProtocol',
 ] as const;
 
 /** A new entry for a delivery (Ctrl+Shift+D) or sale (Ctrl+Shift+S) of materials (03a 4.5). */
@@ -112,6 +114,7 @@ export function EntryEditor({ tab, mode }: ScreenProps & { mode?: EditorMode }) 
     setD((x) => (x ? { ...x, ...p } : x));
     setDirty(true);
   };
+  const vat = useEntryVat(d, patch, byId);
 
   if (!d || !lookups.data) {
     return (
@@ -181,9 +184,12 @@ export function EntryEditor({ tab, mode }: ScreenProps & { mode?: EditorMode }) 
     try {
       if (!(await confirmBeforeSave(dialogs, source))) return null;
       const body = payload(source);
-      const r = source.id
-        ? await api.put<{ id: number; number: string; warnings: { key: string; text: string; severity: 'warning' }[] }>(`/entries/${source.id}`, body)
-        : await api.post<{ id: number; number: string; warnings: { key: string; text: string; severity: 'warning' }[] }>('/entries', body);
+      type Saved = { id: number; number: string; warnings: { key: string; text: string; severity: 'warning' }[] };
+      // VAT questions (02b 12) come back as a 409 confirm and are resent with `force`.
+      const r = await vat.confirmSave((force) => source.id
+        ? api.put<Saved>(`/entries/${source.id}`, { ...body, force })
+        : api.post<Saved>('/entries', { ...body, force }));
+      if (!r) return null;
       await afterSave(r, !source.id);
       setDirty(false);
       const next = after === 'close' && keepOpen ? 'new' : after;
@@ -312,6 +318,10 @@ export function EntryEditor({ tab, mode }: ScreenProps & { mode?: EditorMode }) 
       case 'SaleMaterialDetails': return setDlg('sale');
       case 'PrevAccounting': return void navigate('prev');
       case 'NextAccounting': return void navigate('next');
+      case 'CalculateVAT': return void vat.calculateVat();
+      case 'AddVatPurchase': return vat.addVat('purchase');
+      case 'AddVatSale': return vat.addVat('sale');
+      case 'ICAProtocol': return vat.openProtocol();
     }
   };
 
@@ -368,6 +378,7 @@ export function EntryEditor({ tab, mode }: ScreenProps & { mode?: EditorMode }) 
             </Button>
           </>
         )}
+        {vat.toolbar}
         <Button icon={<X className="size-3.5" />} onClick={async () => (!tab.dirty || (await dialogs.confirm(XM.strStateChangedWarning))) && ws.close(tab.key)}>
           Отказ
         </Button>
@@ -437,6 +448,7 @@ export function EntryEditor({ tab, mode }: ScreenProps & { mode?: EditorMode }) 
           <Field label="Падеж" className="col-span-1">
             <TextInput type="date" value={d.dueDate} onChange={(e) => patch({ dueDate: e.target.value })} className="px-1" />
           </Field>
+          {vat.header}
           {session.settings.IsParagraphEnabled === 'True' && (
             <Field label="Параграф" className="col-span-12">
               <DictionaryInput type="paragraphs" value={d.paragraph} onChange={(v) => patch({ paragraph: v })} />
@@ -491,6 +503,7 @@ export function EntryEditor({ tab, mode }: ScreenProps & { mode?: EditorMode }) 
         />
       )}
       {dlg === 'expenses' && d.id && <ExpensesDialog onClose={() => setDlg(null)} onOk={(c) => distribute(c, d.id!)} />}
+      {vat.dialog}
     </div>
   );
 }

@@ -1,5 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
-import { accountId, activeTab, api, menu, openApp } from './fixtures.ts';
+import { accountId, activeTab, api, menu, moduleCompany } from './fixtures.ts';
+
+const { openApp } = moduleCompany('journal');
 
 /** Journal extras (spec 02a 5, 6, 8, 9) and material delivery / sale (03a 4.5). */
 

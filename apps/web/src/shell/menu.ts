@@ -65,6 +65,7 @@ export const MENU: TopMenu[] = [
       {
         label: 'Импорт на операции', permission: 'UI_Operations_Import', children: [
           { label: 'Импорт от текстов файл', permission: 'UI_Operations_Import_TXTImport' },
+          { label: 'Импорт от ДДС Дневници', permission: 'UI_Operations_Import_VATDiaryImport', screen: 'vatImport' },
           { label: 'Импорт от Excel', permission: 'UI_Operations_Import_ExcelImport' },
           { label: 'Импорт от XML', permission: 'UI_Operations_Import_XMLImport' },
         ],
@@ -72,7 +73,8 @@ export const MENU: TopMenu[] = [
       { sep: true },
       {
         label: 'Автоматични операции', permission: 'UI_Operations_AutoOperations', children: [
-          { label: 'Приключване на ДДС', permission: 'UI_Operations_AutoOperations_VAT' },
+          { label: 'Приключване на ДДС', permission: 'UI_Operations_AutoOperations_VAT', gesture: 'Alt+F', screen: 'vatClosing' },
+          { label: 'Коефициент по чл. 73 от ЗДДС', permission: 'UI_Operations_AutoOperations_VATOperations_VATRatio', screen: 'article73' },
           { label: 'Преоценка', permission: 'UI_Operations_AutoOperations_Reevaluation' },
           { label: 'Приключване на разходни и приходни сметки', permission: 'UI_Operations_AutoOperations_ConcludeAccounts' },
           { label: 'Закриване на документи', permission: 'UI_Operations_AutoOperations_DocumentsClosing' },
@@ -118,7 +120,14 @@ export const MENU: TopMenu[] = [
         ],
       },
       { sep: true },
-      { label: 'ДДС дневници, декларация и VIES', permission: 'UI_Reporting_VATDiary', gesture: 'Alt+D' },
+      { label: 'ДДС дневници, декларация и VIES', permission: 'UI_Reporting_VATDiary', gesture: 'Alt+D', screen: 'vatDiary' },
+      { label: 'Протоколи по чл. 117 от ЗДДС', permission: 'UI_Reporting_ICAReport', screen: 'icaReport' },
+      {
+        label: 'Проверки', permission: 'UI_Reporting_Validation', children: [
+          { label: 'Проверка за дублирани и липсващи документи', permission: 'UI_Reporting_Validation_AccountingsValidation', screen: 'vatValidation' },
+          { label: 'Проверка на документи с файл от НАП', permission: 'UI_Reporting_Validation_AccountingsNAPFileValidation', screen: 'napCheck' },
+        ],
+      },
       { label: 'Отчети и баланс', permission: 'UI_Reporting_FinancialReports', gesture: 'Alt+B', screen: 'financialStatements' },
       { sep: true },
       {

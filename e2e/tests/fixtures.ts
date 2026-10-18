@@ -1,21 +1,44 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 export const BASE_URL = `http://localhost:${process.env.E2E_PORT ?? 4310}`;
 export const ADMIN = { name: 'Администратор', password: 'e2e-secret' };
 export const COMPANY = { name: 'Е2Е Тест ООД', bulstat: '831641791' };
-/** Company of the statements spec: balances left by other specs would unbalance its balance sheet. */
-export const STATEMENTS_COMPANY = { name: 'Отчети Е2Е ООД', state: '.auth/statements.json' };
+/**
+ * Companies of the module specs (created by the global setup). Each module works
+ * on data no other spec touches: sub-accounts, overdrafts or unclosed results
+ * left by one module would break the balances another one checks.
+ */
+export const MODULE_COMPANIES = {
+  statements: 'Отчети Е2Е ООД',
+  vat: 'ДДС Е2Е ООД',
+  journal: 'Журнал Е2Е ООД',
+} as const;
+export type ModuleKey = keyof typeof MODULE_COMPANIES;
+export const moduleState = (m: ModuleKey) => `.auth/${m}.json`;
+
+/** Runs the spec file in its module company; call once at the top of the file. */
+export function moduleCompany(m: ModuleKey) {
+  test.use({ storageState: moduleState(m) });
+  const name = MODULE_COMPANIES[m];
+  return { name, state: moduleState(m), openApp: (page: Page) => openApp(page, name) };
+}
 
 /** Opens the app and waits for the shell. */
-export async function openApp(page: Page) {
+export async function openApp(page: Page, company: string = COMPANY.name) {
   await page.goto('/');
-  await expect(page.locator('footer')).toContainText(COMPANY.name);
+  await expect(page.locator('footer')).toContainText(company);
+}
+
+/** Picks the shared test company on the login screen (the module companies are listed too). */
+export async function chooseCompany(page: Page) {
+  await page.getByRole('combobox', { name: /^Фирма/ }).selectOption({ label: COMPANY.name });
 }
 
 /** Logs in with a session of its own, for tests that switch user or company (they would end the shared session). */
 export async function loginFresh(page: Page) {
   await page.context().clearCookies();
   await page.goto('/');
+  await chooseCompany(page);
   await page.getByLabel('Парола').fill(ADMIN.password);
   await page.getByRole('button', { name: 'Вход' }).click();
   await page.locator('footer').waitFor();

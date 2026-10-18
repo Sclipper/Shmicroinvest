@@ -3,3 +3,4 @@ export * from './nomenclatures.ts';
 export * from './journal.ts';
 export * from './statements.ts';
 export * from './journalExtras.ts';
+export * from './vat.ts';

@@ -24,6 +24,7 @@ import { journalExtraRoutes } from './routes/journalExtras.ts';
 import { templateRoutes } from './routes/templates.ts';
 import { stockRoutes } from './routes/stock.ts';
 import { settingsExtraRoutes } from './routes/settingsExtras.ts';
+import { vatRoutes } from './routes/vat.ts';
 
 const WEB_DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../web/dist');
 
@@ -44,7 +45,8 @@ export function createApp(driver: DbDriver, opts: { serveWeb?: boolean } = {}) {
     .route('/', journalExtraRoutes)
     .route('/', templateRoutes)
     .route('/', stockRoutes)
-    .route('/', settingsExtraRoutes);
+    .route('/', settingsExtraRoutes)
+    .route('/', vatRoutes);
 
   const app = new Hono<AppEnv>();
   app.use('*', async (c, next) => {

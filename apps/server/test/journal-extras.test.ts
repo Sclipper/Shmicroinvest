@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { listToMask, SCHEDULER_MODE } from '@shmi/core';
-import { createTestCompany, type TestCompany } from './helpers.ts';
+import { createTestCompany, type EntrySpec, type TestCompany } from './helpers.ts';
 
 /**
  * Journal extras (spec 02a): editor acceptance checks 4.8, numbering 3,
@@ -77,7 +77,11 @@ describe('02a 4.8 acceptance checks', () => {
   });
 
   it('6. a credit note with positive amounts warns (strCreditNoteAmountWarning)', async () => {
-    const e = await t.post({ date: '2026-02-11', docType: 3, partner: client, transactionTypeId: 3, dr: [['411', '12', { companyId: client }]], cr: [['702', '12']] });
+    const spec: EntrySpec = { date: '2026-02-11', docType: 3, partner: client, transactionTypeId: 3, dr: [['411', '12', { companyId: client }]], cr: [['702', '12']] };
+    // At save the user is asked first (strCreditNoteAmountConfirmation); after "Да" the warning stays.
+    const asked = await t.tryPost(spec);
+    expect([asked.status, keys(asked.body)]).toEqual([409, ['strCreditNoteAmountConfirmation']]);
+    const e = await t.post({ ...spec, force: true });
     expect(e.warnings.map((w) => w.key)).toContain('strCreditNoteAmountWarning');
   });
 

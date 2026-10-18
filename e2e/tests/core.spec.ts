@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { ADMIN, COMPANY, accountId, activeTab, api, menu, openApp } from './fixtures.ts';
+import { ADMIN, COMPANY, accountId, activeTab, api, chooseCompany, menu, openApp } from './fixtures.ts';
 
 test.describe('shell and login', () => {
   test('logs in through the login screen and logs out', async ({ page }) => {
@@ -7,6 +7,7 @@ test.describe('shell and login', () => {
     await page.context().clearCookies();
     await page.goto('/');
     await expect(page.getByText('Шмикроинвест Шмелта Про')).toBeVisible();
+    await chooseCompany(page);
     await page.getByLabel('Парола').fill('wrong');
     await page.getByRole('button', { name: 'Вход' }).click();
     await expect(page.getByText('Въведено е грешно потребителско име или парола!')).toBeVisible();

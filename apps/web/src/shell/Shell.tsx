@@ -83,6 +83,8 @@ export function Shell({ screens, onCommand }: { screens: Record<string, ScreenDe
     };
     for (const m of MENU) walk(m.items);
     const onKey = (e: KeyboardEvent) => {
+      // A screen's own bindings win (the editor's Shift+F2 adds the VAT line, not Шаблони).
+      if (e.defaultPrevented) return;
       const g = gestureOf(e);
       const item = map.get(g);
       if (!item || UNBINDABLE.has(g)) return;

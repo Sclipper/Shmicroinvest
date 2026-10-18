@@ -8,6 +8,7 @@ import { REPORT_SCREENS } from './registry.reports.tsx';
 import { ADMIN_SCREENS } from './registry.admin.tsx';
 import { STATEMENT_SCREENS } from './registry.statements.tsx';
 import { JOURNAL_SCREENS } from './registry.journal.tsx';
+import { VAT_SCREENS } from './registry.vat.tsx';
 
 const defs: ScreenDef[] = [
   { id: 'entry', title: 'Контиране', component: EntryEditor, permission: 'UI_Operations_Accounting', multi: true },
@@ -20,6 +21,7 @@ const defs: ScreenDef[] = [
   ...ADMIN_SCREENS,
   ...STATEMENT_SCREENS,
   ...JOURNAL_SCREENS,
+  ...VAT_SCREENS,
 ];
 
 export const SCREENS: Record<string, ScreenDef> = Object.fromEntries(defs.map((d) => [d.id, d]));

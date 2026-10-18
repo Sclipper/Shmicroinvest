@@ -1,12 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
-import { BASE_URL, STATEMENTS_COMPANY, accountId, activeTab, api, menu } from './fixtures.ts';
+import { BASE_URL, accountId, activeTab, api, menu, moduleCompany } from './fixtures.ts';
 
-const OWN = STATEMENTS_COMPANY;
-
-async function openApp(page: Page) {
-  await page.goto('/');
-  await expect(page.locator('footer')).toContainText(OWN.name);
-}
+const OWN = moduleCompany('statements');
+const { openApp } = OWN;
 
 /** Current-year amount of a statement cell in the two-sided balance sheet. */
 function cell(page: Page, key: string) {
@@ -20,8 +16,6 @@ async function runBalance(page: Page) {
 }
 
 test.describe('financial statements', () => {
-  test.use({ storageState: OWN.state });
-
   test.beforeAll(async ({ browser }) => {
     const context = await browser.newContext({ baseURL: BASE_URL, storageState: OWN.state });
     const page = await context.newPage();
