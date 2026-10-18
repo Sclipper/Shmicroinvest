@@ -5,6 +5,7 @@ import { Journal } from './screens/Journal.tsx';
 import { Partners } from './screens/Partners.tsx';
 import { REPORT_SCREENS } from './registry.reports.tsx';
 import { ADMIN_SCREENS } from './registry.admin.tsx';
+import { ASSET_SCREENS } from './registry.assets.tsx';
 
 const defs: ScreenDef[] = [
   { id: 'entry', title: 'Контиране', component: EntryEditor, permission: 'UI_Operations_Accounting', multi: true },
@@ -14,6 +15,7 @@ const defs: ScreenDef[] = [
   { id: 'partners', title: 'Партньори', component: Partners, permission: 'UI_Edit_Companies' },
   ...REPORT_SCREENS,
   ...ADMIN_SCREENS,
+  ...ASSET_SCREENS,
 ];
 
 export const SCREENS: Record<string, ScreenDef> = Object.fromEntries(defs.map((d) => [d.id, d]));
