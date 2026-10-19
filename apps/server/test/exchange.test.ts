@@ -329,8 +329,8 @@ describe('Excel import (04a 5)', () => {
   it('protocols without VAT are imported: bread (type 8, code 07) and call-off stock (type 6) (04a 5.3)', async () => {
     const content = await xlsx([
       ['h'],
-      ['602-401', '80', '23.07.2026', 'Хляб ЕООД', '161616161', '', '', '0000000911', 'Ф-ра', '23.07.2026', 'Хляб', '', '', '3-без ДК', '', '', '8-ВОП хляб', '7-Хляб'],
-      ['602-401', '60', '23.07.2026', 'Хляб ЕООД', '161616161', '', '', '0000000912', 'Ф-ра', '23.07.2026', 'Склад', '', '', '3-без ДК', '', '', '6-Режим складиране', ''],
+      ['602-401', '80', '23.07.2026', 'Хляб ЕООД', '212121212', '', '', '0000000911', 'Ф-ра', '23.07.2026', 'Хляб', '', '', '3-без ДК', '', '', '8-ВОП хляб', '7-Хляб'],
+      ['602-401', '60', '23.07.2026', 'Хляб ЕООД', '212121212', '', '', '0000000912', 'Ф-ра', '23.07.2026', 'Склад', '', '', '3-без ДК', '', '', '6-Режим складиране', ''],
     ]);
     const mapping = { ...opsMapping, hasIcaColumns: true, columns: { ...opsMapping.columns, OperationType: 'Q', OperationGoodType: 'R' } };
     const r = await call('POST', '/exchange/excel/import', { fileName: 'ica.xlsx', contentBase64: content, entity: 'operations', mapping });
@@ -349,7 +349,7 @@ describe('Excel import (04a 5)', () => {
     const yearId = ((await call('GET', '/years')).body as { id: number; year: number }[]).find((y) => y.year === 2026)!.id;
     const next = await peekNextNumber(d, CHANNEL.VatProtocol, yearId);
     await t.post({ date: '2026-07-24', docType: DOCUMENT_TYPE.VatProtocol, docNumber: next, dr: [['602', 1]], cr: [['401', 1]], partner: await t.partner('Ръчен протокол ООД', ['401']) });
-    const content = await xlsx([['h'], ['602-401', '10', '24.07.2026', 'Хляб ЕООД', '161616161', '', '', '0000000913', 'Ф-ра', '24.07.2026', 'Хляб', '', '', '3-без ДК', '', '', '8-ВОП хляб', '7-Хляб']]);
+    const content = await xlsx([['h'], ['602-401', '10', '24.07.2026', 'Хляб ЕООД', '212121212', '', '', '0000000913', 'Ф-ра', '24.07.2026', 'Хляб', '', '', '3-без ДК', '', '', '8-ВОП хляб', '7-Хляб']]);
     const r = await call('POST', '/exchange/excel/import', { fileName: 'ica.xlsx', contentBase64: content, entity: 'operations', mapping: { ...opsMapping, hasIcaColumns: true, columns: { ...opsMapping.columns, OperationType: 'Q', OperationGoodType: 'R' } } });
     expect(r.status, r.text).toBe(200);
     const [row] = await queryRows<{ number: string }>(d, sql`
