@@ -2,8 +2,8 @@ import { Hono, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import {
-  EXCEL_ENTITIES, XML_OPERATION_CATEGORIES, decodeText, msg, parseTransferXml, parseTrzFeed, readSetupSheet, trzAggregate, trzAvailableMonths,
-  trzDefaultAccountingDate, trzDefaultTerm, trzGrid, trzTotal, writeTransferXml, type ExcelEntity, type ExcelMapping,
+  CLOSING_MODES, EXCEL_ENTITIES, XML_OPERATION_CATEGORIES, decodeText, msg, parseTransferXml, parseTrzFeed, readSetupSheet, trzAggregate, trzAvailableMonths,
+  trzDefaultAccountingDate, trzDefaultTerm, trzGrid, trzTotal, writeTransferXml, type ClosingMode, type ExcelEntity, type ExcelMapping,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import type { AppEnv } from '../context.ts';
@@ -35,6 +35,8 @@ const ENTITIES = ['operations', 'partners', 'chart', 'products', 'initialBalance
  * unknown key is allowed), so the menu group's key is checked as well.
  */
 const REPORT_EXPORT = ['UI_Edit_Administration', 'UI_Edit_Administration_ReportExport'] as const;
+/** SelectedWayOfSearching: closing mode <-> the stored Delta enum name. */
+const WAYS: [ClosingMode, string][] = [['document', 'Document'], ['amount', 'Amount'], ['optionalReference', 'OptionalReference']];
 /** Report definitions carry SQL: only an administrator may add or remove them. */
 const requireAdmin: MiddlewareHandler<AppEnv> = async (c, next) => {
   if (!c.var.user.isAdmin) throw new ApiError(403, 'Нямате права за тази операция.');
@@ -58,12 +60,27 @@ export const exchangeRoutes = new Hono<AppEnv>()
       categories: XML_OPERATION_CATEGORIES,
     });
   })
+  /** Documents closing after the import (IsDocumentsClosingEnabled / SelectedWayOfSearching, 3.5). */
+  .get('/exchange/xml/settings', requirePermission('UI_Operations_Import_XMLImport'), async (c) => {
+    const way = await getConfig(c.var.db, 'SelectedWayOfSearching', c.var.user.id);
+    return c.json({
+      isDocumentsClosingEnabled: (await getConfig(c.var.db, 'IsDocumentsClosingEnabled', c.var.user.id)) === 'True',
+      selectedWayOfSearching: WAYS.find((w) => w[1] === way)?.[0] ?? 'document',
+      ways: CLOSING_MODES.map((m) => ({ id: m.id, label: m.label })),
+    });
+  })
   .post('/exchange/xml/import', requirePermission('UI_Operations_Import_XMLImport'), async (c) => {
     const up = await readUpload(c);
     const categoryMap = toCategoryMap(categoryMapBody.parse(up.fields.categoryMap));
+    const closing = z.object({ isDocumentsClosingEnabled: z.boolean().optional(), selectedWayOfSearching: z.enum(['document', 'amount', 'optionalReference']).optional() }).parse(up.fields);
     const data = await importStep(async () => parseTransferXml(decodeText(up.bytes)), false);
     for (const [k, v] of Object.entries(categoryMap)) if (v) await setConfig(c.var.db, `Category_${k}`, String(v), c.var.user.id);
-    const r = await importStep(() => importTransferData(c.var.db, data, { year: c.var.year, userId: c.var.user.id, today: workingDate(c.var.session) }, categoryMap));
+    if (closing.isDocumentsClosingEnabled !== undefined) await setConfig(c.var.db, 'IsDocumentsClosingEnabled', closing.isDocumentsClosingEnabled ? 'True' : 'False', c.var.user.id);
+    const way = closing.selectedWayOfSearching ?? 'document';
+    if (closing.isDocumentsClosingEnabled) await setConfig(c.var.db, 'SelectedWayOfSearching', WAYS.find((w) => w[0] === way)![1], c.var.user.id);
+    const r = await importStep(() => importTransferData(c.var.db, data, { year: c.var.year, userId: c.var.user.id, today: workingDate(c.var.session) }, categoryMap, {
+      closeDocuments: closing.isDocumentsClosingEnabled ? way : null,
+    }));
     await logActivity(c.var.db, c.var.user.id, 'import', 'xml', null, `Импорт от XML: ${up.fileName}`);
     return c.json({ ...r, message: msg('strTransferCompleted') });
   })

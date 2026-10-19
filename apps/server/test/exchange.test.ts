@@ -263,6 +263,37 @@ describe('TransferData XML (04a 3)', () => {
     ]);
   });
 
+  it('closes the imported payments against open invoices when asked (IsDocumentsClosingEnabled / SelectedWayOfSearching, 3.5)', async () => {
+    const p = await t2.partner('Закриване XML ООД', ['411/50'], { bulstat: '191919191' }); // 411 has sub-accounts here
+    const inv = await t2.call('POST', '/entries', {
+      accountingDate: '2026-08-01', documentDate: '2026-08-01', documentTypeId: 1, documentNumber: '0000000801', term: 'Продажба', companyId: p,
+      debits: [{ accountId: t2.acc('411/50'), amount: '150' }], credits: [{ accountId: t2.acc('702'), amount: '150' }],
+    });
+    expect(inv.status, inv.text).toBe(201);
+    const pay = (n: string): TransferData => ({
+      accountings: [{
+        accountingDate: '2026-08-05', vies: 1, vatTerm: 1, term: 'Плащане', document: { documentType: 11, number: n, date: '2026-08-05' },
+        company: { name: 'Закриване XML ООД', bulstat: '191919191', bankAccounts: [], companyAccounts: [] },
+        details: [{ accountNumber: '503', amount: '150.00', direction: 'Debit', vatTerm: 1 }, { accountNumber: '411/50', amount: '150.00', direction: 'Credit', vatTerm: 1 }],
+      }],
+    });
+    const open = async () => (await openItems(await t.driver.company(t2.database), { startDate: '2026-01-01', endDate: '2026-12-31', companyIds: [p] })).map((i) => i.open);
+    // By document: the bank statement has another type and number, nothing is closed.
+    let r = await t2.call('POST', '/exchange/xml/import', { fileName: 'pay.xml', text: writeTransferXml(pay('BS-1')), isDocumentsClosingEnabled: true, selectedWayOfSearching: 'document' });
+    expect(r.status, r.text).toBe(200);
+    expect(r.body.closedPairs).toBe(0);
+    expect((await open()).sort()).toEqual(['-150.00', '150.00']);
+    // By amount: the second payment closes the invoice.
+    r = await t2.call('POST', '/exchange/xml/import', { fileName: 'pay.xml', text: writeTransferXml(pay('BS-2')), isDocumentsClosingEnabled: true, selectedWayOfSearching: 'amount' });
+    expect(r.body.closedPairs).toBe(1);
+    expect(await open()).toEqual(['-150.00']);
+    expect((await t2.call('GET', '/exchange/xml/settings')).body).toMatchObject({ isDocumentsClosingEnabled: true, selectedWayOfSearching: 'amount' });
+    // Off: nothing is closed and the setting is remembered.
+    r = await t2.call('POST', '/exchange/xml/import', { fileName: 'pay.xml', text: writeTransferXml(pay('BS-3')), isDocumentsClosingEnabled: false });
+    expect(r.body.closedPairs).toBeUndefined();
+    expect((await t2.call('GET', '/exchange/xml/settings')).body.isDocumentsClosingEnabled).toBe(false);
+  });
+
   it('reports an empty export', async () => {
     const r = await t.call('POST', '/exchange/xml/export', { from: '2026-12-30', to: '2026-12-31' });
     expect(r.status).toBe(422);

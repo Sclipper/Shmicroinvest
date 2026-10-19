@@ -1,7 +1,7 @@
 import { and, asc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import {
   DataImportError, ZERO, accountingLines, critical, dec, isCompanyCategory, msg, operationToLines, round2, warning, XML_OPERATION_CATEGORIES,
-  type Dec, type ExchangeMessage, type TdAccounting, type TdCompany, type TdDetail, type TransferData, CHANNEL, DOCUMENT_TYPE,
+  type ClosingMode, type Dec, type ExchangeMessage, type TdAccounting, type TdCompany, type TdDetail, type TransferData, CHANNEL, DOCUMENT_TYPE,
 } from '@shmi/core';
 import * as s from '../../db/company/schema/index.ts';
 import type { CompanyDb, DbOrTx } from '../../db/provider.ts';
@@ -9,6 +9,7 @@ import type { ActiveYear } from '../../context.ts';
 import { rebuildAccountsTree } from '../chart.ts';
 import { saveEntry, type LineInput } from '../journal.ts';
 import { documentNumberUsed } from '../autoEntries.ts';
+import { closeDocumentsForImport } from '../documentsClosing.ts';
 import { reserveNumber } from '../sequences.ts';
 import { checkDates, currencyIdsByIso, findOrCreatePartner, loadChart, throwIf, type Chart, type ImportAccount } from './common.ts';
 import { XML_PRODUCT_MESSAGES, importProduct } from './products.ts';
@@ -94,6 +95,8 @@ export interface XmlImportResult {
   products: number;
   accountings: number;
   warnings: ExchangeMessage[];
+  /** Payment pairs written by the documents closing after the import. */
+  closedPairs?: number;
 }
 
 /** Category -> account mapping of wizard step 2 (default: account whose code equals the category's code). */
@@ -108,9 +111,10 @@ export async function xmlCategoryDefaults(db: DbOrTx, year: number) {
 /**
  * Imports a TransferData file (3.5): accounts, partners, products, then
  * accountings and operations; each set in its own transaction, a failing set
- * aborts the remaining ones (earlier sets stay saved).
+ * aborts the remaining ones (earlier sets stay saved). With closeDocuments
+ * the imported accountings are closed against the open items after the save.
  */
-export async function importTransferData(db: CompanyDb, data: TransferData, ctx: ImportCtx, categoryMap: Record<number, number | null> = {}): Promise<XmlImportResult> {
+export async function importTransferData(db: CompanyDb, data: TransferData, ctx: ImportCtx, categoryMap: Record<number, number | null> = {}, opts: { closeDocuments?: ClosingMode | null } = {}): Promise<XmlImportResult> {
   const result: XmlImportResult = { accounts: 0, partners: 0, products: 0, accountings: 0, warnings: [] };
   const fy = ctx.year;
   if (data.accounts?.length) {
@@ -172,11 +176,14 @@ export async function importTransferData(db: CompanyDb, data: TransferData, ctx:
       throwIf(checkDates(dates, fy));
       const viesIds = new Set((await tx.select({ id: s.vieses.id }).from(s.vieses)).map((v) => v.id));
       const cache = new Map<string, number>();
+      const imported: number[] = [];
       for (const acc of accountings) {
         if (!viesIds.has(acc.vies)) throw new DataImportError(critical('strXMLImportInvalidVies', acc.vies));
-        await importAccounting(tx, chart, acc, isos, ctx, cache);
+        imported.push((await importAccounting(tx, chart, acc, isos, ctx, cache)).id);
         result.accountings++;
       }
+      // Optional documents closing after the save (IsDocumentsClosingEnabled / SelectedWayOfSearching).
+      if (opts.closeDocuments) result.closedPairs = (await closeDocumentsForImport(tx, fy, imported, ctx.userId, opts.closeDocuments)).length;
     });
   }
   return result;

@@ -103,6 +103,7 @@ export function TextImport() {
 /* ------------------------------------------------------------------ */
 
 interface XmlValidate { accounts: number; partners: number; products: number; accountings: number; operations: number; needsCategories: boolean }
+interface XmlSettings { isDocumentsClosingEnabled: boolean; selectedWayOfSearching: 'document' | 'amount' | 'optionalReference'; ways: { id: string; label: string }[] }
 
 export function XmlImport() {
   const invalidate = useInvalidate();
@@ -111,11 +112,16 @@ export function XmlImport() {
   const [info, setInfo] = useState<XmlValidate | null>(null);
   const cats = useQuery({ queryKey: ['exchange', 'xml-categories'], queryFn: () => api.get<CategoryRow[]>('/exchange/xml/categories') });
   const [map, setMap] = useState<Record<number, number | null>>({});
+  const settings = useQuery({ queryKey: ['exchange', 'xml-settings'], queryFn: () => api.get<XmlSettings>('/exchange/xml/settings') });
+  const [closing, setClosing] = useState<{ enabled: boolean; way: XmlSettings['selectedWayOfSearching'] }>({ enabled: false, way: 'document' });
   const [busy, setBusy] = useState(false);
   const res = useResult();
   useEffect(() => {
     if (cats.data) setMap(Object.fromEntries(cats.data.map((c) => [c.categoryId, c.accountId])));
   }, [cats.data]);
+  useEffect(() => {
+    if (settings.data) setClosing({ enabled: settings.data.isDocumentsClosingEnabled, way: settings.data.selectedWayOfSearching });
+  }, [settings.data]);
   const validate = async () => {
     if (!file) return;
     setBusy(true);
@@ -135,10 +141,12 @@ export function XmlImport() {
     setBusy(true);
     res.reset();
     try {
-      const r = await upload<{ accounts: number; partners: number; products: number; accountings: number; warnings: Message[]; message: string }>('/exchange/xml/import', file, { categoryMap: info?.needsCategories ? map : undefined });
+      const r = await upload<{ accounts: number; partners: number; products: number; accountings: number; closedPairs?: number; warnings: Message[]; message: string }>('/exchange/xml/import', file, {
+        categoryMap: info?.needsCategories ? map : undefined, isDocumentsClosingEnabled: closing.enabled, selectedWayOfSearching: closing.way,
+      });
       res.setMessages(r.warnings ?? []);
-      res.setDone(`${r.message} Сметки: ${r.accounts}, партньори: ${r.partners}, СМЗ: ${r.products}, контирания: ${r.accountings}.`);
-      await invalidate('entries', 'reports', 'partners', 'accounts');
+      res.setDone(`${r.message} Сметки: ${r.accounts}, партньори: ${r.partners}, СМЗ: ${r.products}, контирания: ${r.accountings}.${r.closedPairs !== undefined ? ` Закрити двойки документи: ${r.closedPairs}.` : ''}`);
+      await invalidate('entries', 'reports', 'partners', 'accounts', 'payments', 'exchange');
     } catch (e) {
       res.setMessages(errorMessages(e));
     } finally {
@@ -173,6 +181,14 @@ export function XmlImport() {
               <tr><td>Операции</td><td className="text-right">{info.operations}</td></tr>
             </tbody>
           </table>
+        )}
+        {step === 2 && info && (
+          <div className="flex flex-wrap items-center gap-3">
+            <Checkbox label="Закриване на документи след импорта" checked={closing.enabled} onChange={(v) => setClosing({ ...closing, enabled: v })} />
+            <Select value={closing.way} disabled={!closing.enabled} onChange={(e) => setClosing({ ...closing, way: e.target.value as XmlSettings['selectedWayOfSearching'] })} className="w-64" aria-label="Начин на търсене">
+              {(settings.data?.ways ?? []).map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
+            </Select>
+          </div>
         )}
         <MessageList messages={res.messages} />
         {res.done && <div className="rounded-sm border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-800">{res.done}</div>}

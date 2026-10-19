@@ -129,15 +129,15 @@ export async function saveClosing(db: DbOrTx, year: ActiveYear, f: Omit<ClosingF
 }
 
 /**
- * CloseDocumentsForImport: after a bank or Excel import the imported entries
+ * CloseDocumentsForImport: after a bank, Excel or XML import the imported entries
  * are paired first among themselves, then with existing open items of the
- * active year, by a partial-allocation walk.
+ * active year, by a partial-allocation walk (grouped by the way of searching when given).
  */
-export async function closeDocumentsForImport(db: DbOrTx, year: ActiveYear, importedAccountingIds: number[], userId: number) {
+export async function closeDocumentsForImport(db: DbOrTx, year: ActiveYear, importedAccountingIds: number[], userId: number, mode?: ClosingMode) {
   if (!importedAccountingIds.length) return [];
   const all = await activeItems(db, year, {});
   const imported = new Set(importedAccountingIds);
-  const pairs = closeForImport(all.filter((i) => imported.has(i.accountingId)), all.filter((i) => !imported.has(i.accountingId)));
+  const pairs = closeForImport(all.filter((i) => imported.has(i.accountingId)), all.filter((i) => !imported.has(i.accountingId)), mode);
   const docs = await documentIds(db, pairs.map((p) => p.payment.accountingId));
   const written = await insertPaymentLinks(db, pairs.map((p) => ({
     paymentAccountingId: p.payment.accountingId,

@@ -280,11 +280,13 @@ export function pairForClosing<T extends ClosingItem>(items: T[], mode: ClosingM
 /**
  * Import-mode closing (CloseDocumentsForImport): per (account, partner, side)
  * the cursor walk of `allocateWalk`, first among the imported items, then the
- * imported items against the existing ones.
+ * imported items against the existing ones. With a mode (the XML import's
+ * SelectedWayOfSearching, 04a 3.5) the groups are those of the mode
+ * (`closingKey`: same document, same amount or same second remark).
  */
-export function closeForImport<T extends ClosingItem>(imported: T[], existing: T[]): ClosingPair<T>[] {
+export function closeForImport<T extends ClosingItem>(imported: T[], existing: T[], mode?: ClosingMode): ClosingPair<T>[] {
   const out: ClosingPair<T>[] = [];
-  const key = (i: T) => `${i.accountId}|${i.companyId}|${i.side}`;
+  const key = (i: T): string | null => (mode ? closingKey(mode, i) : `${i.accountId}|${i.companyId}|${i.side}`);
   const remaining = new Map<T, Dec>();
   const remainingCur = new Map<T, Dec>();
   for (const i of [...imported, ...existing]) {
@@ -293,8 +295,15 @@ export function closeForImport<T extends ClosingItem>(imported: T[], existing: T
   }
   const run = (ls: T[], ps: T[]) => {
     const groups = new Map<string, { l: T[]; p: T[] }>();
-    for (const i of ls) if (i.kind === 'liability') { const g = groups.get(key(i)) ?? { l: [], p: [] }; g.l.push(i); groups.set(key(i), g); }
-    for (const i of ps) if (i.kind === 'payment') { const g = groups.get(key(i)) ?? { l: [], p: [] }; g.p.push(i); groups.set(key(i), g); }
+    const add = (i: T, side: 'l' | 'p') => {
+      const k = key(i);
+      if (k == null) return;
+      const g = groups.get(k) ?? { l: [], p: [] };
+      g[side].push(i);
+      groups.set(k, g);
+    };
+    for (const i of ls) if (i.kind === 'liability') add(i, 'l');
+    for (const i of ps) if (i.kind === 'payment') add(i, 'p');
     for (const g of groups.values()) {
       const byDate = (a: T, b: T) => (a.accountingDate < b.accountingDate ? -1 : a.accountingDate > b.accountingDate ? 1 : a.accountingId - b.accountingId);
       g.l.sort(byDate); g.p.sort(byDate);
