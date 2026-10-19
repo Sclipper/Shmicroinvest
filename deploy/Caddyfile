@@ -1,0 +1,22 @@
+# HTTPS for Shmicroinvest Shmelta Pro. Caddy obtains and renews the certificate for
+# {$DOMAIN} (Let's Encrypt / ZeroSSL) once DNS points at this server and ports 80/443
+# are open. DOMAIN=localhost uses Caddy's own local CA (for a test run).
+
+{$DOMAIN} {
+	encode zstd gzip
+	# The app sets its own security headers (CSP, HSTS over HTTPS, nosniff, ...).
+	reverse_proxy app:3000 {
+		# Large imports and backup restores can take a while.
+		transport http {
+			read_timeout 10m
+			write_timeout 10m
+		}
+	}
+	request_body {
+		max_size 110MB
+	}
+	log {
+		output stdout
+		format console
+	}
+}
