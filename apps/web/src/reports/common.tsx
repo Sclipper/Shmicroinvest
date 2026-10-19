@@ -1,12 +1,14 @@
-import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { FileDown, FileSpreadsheet, Play, Printer } from 'lucide-react';
-import { buildXlsx, type XlsxCell, type XlsxSheet } from '@shmi/core';
+import { ZERO, buildXlsx, dec, mergeSavedFilter, periodPresets, type PeriodPreset, type XlsxCell, type XlsxSheet } from '@shmi/core';
+import { api } from '../api.ts';
+import { DateInput } from '../components/DateInput.tsx';
 import { bgDate, moneyOrBlank } from '../format.ts';
 import { AccountPicker } from '../components/pickers.tsx';
 import { useDialogs } from '../components/dialogs.tsx';
-import { Button, CommandBar, Empty, ErrorText, Field, Select, Spinner, TextInput, cx } from '../components/ui.tsx';
+import { Button, CommandBar, Empty, ErrorText, Field, Select, Spinner, cx } from '../components/ui.tsx';
 import { useAccounts, useSession } from '../session.tsx';
 import type { Account } from '../types.ts';
 
@@ -19,55 +21,53 @@ export interface Period {
   to: string;
 }
 
-const pad = (n: number) => String(n).padStart(2, '0');
-const lastDay = (y: number, m: number) => new Date(Date.UTC(y, m, 0)).getUTCDate();
-const MONTHS = ['Януари', 'Февруари', 'Март', 'Април', 'Май', 'Юни', 'Юли', 'Август', 'Септември', 'Октомври', 'Ноември', 'Декември'];
-
-function presets(year: number): { key: string; label: string; from: string; to: string }[] {
-  const out = [{ key: 'y', label: `Цялата ${year} г.`, from: `${year}-01-01`, to: `${year}-12-31` }];
-  for (let q = 1; q <= 4; q++) {
-    const m1 = (q - 1) * 3 + 1;
-    out.push({ key: `q${q}`, label: `${['I', 'II', 'III', 'IV'][q - 1]} тримесечие`, from: `${year}-${pad(m1)}-01`, to: `${year}-${pad(m1 + 2)}-${lastDay(year, m1 + 2)}` });
-  }
-  MONTHS.forEach((name, i) => out.push({ key: `m${i + 1}`, label: name, from: `${year}-${pad(i + 1)}-01`, to: `${year}-${pad(i + 1)}-${lastDay(year, i + 1)}` }));
-  return out;
-}
-
-/** Default period = the active financial year. */
+/** Default period = the active financial year (from its start date). */
 export function useYearPeriod(): Period {
   const s = useSession();
-  return { from: `${s.year.year}-01-01`, to: `${s.year.year}-12-31` };
+  const start = s.year.startDate?.startsWith(String(s.year.year)) ? s.year.startDate.slice(0, 10) : `${s.year.year}-01-01`;
+  return { from: start, to: `${s.year.year}-12-31` };
 }
 
-/** "Период" picker: preset list plus От дата / До дата (spec 05 1.4). */
-export function PeriodFields({ value, onChange }: { value: Period; onChange: (p: Period) => void }) {
+/** Presets of the active year (PeriodPickerPeriods, spec 05 1.4). */
+export function usePeriodPresets(): PeriodPreset[] {
   const s = useSession();
-  const list = useMemo(() => presets(s.year.year), [s.year.year]);
-  const current = list.find((p) => p.from === value.from && p.to === value.to)?.key ?? '';
+  const years = useQuery({ queryKey: ['years'], queryFn: () => api.get<{ year: number; startDate: string }[]>('/years'), staleTime: 5 * 60_000 });
+  const previous = years.data?.find((y) => y.year === s.year.year - 1)?.startDate ?? null;
+  return useMemo(() => periodPresets(s.year, s.workingDate, previous), [s.year, s.workingDate, previous]);
+}
+
+/**
+ * "Период" picker: preset list plus От дата / До дата in dd.MM.yyyy (spec 05 1.4).
+ * Choosing a preset fills both dates; editing a date shows "Избран период" (Custom).
+ */
+export function PeriodFields({ value, onChange }: { value: Period; onChange: (p: Period) => void }) {
+  const list = usePeriodPresets();
+  const current = list.find((p) => p.from === value.from && p.to === value.to)?.id ?? 0;
   return (
     <>
       <Field label="Период">
         <Select
           value={current}
-          className="w-40"
+          className="w-48"
+          aria-label="Период"
           onChange={(e) => {
-            const p = list.find((x) => x.key === e.target.value);
+            const p = list.find((x) => x.id === Number(e.target.value));
             if (p) onChange({ from: p.from, to: p.to });
           }}
         >
-          <option value="">Избран период</option>
+          <option value={0}>Избран период</option>
           {list.map((p) => (
-            <option key={p.key} value={p.key}>
+            <option key={p.id} value={p.id}>
               {p.label}
             </option>
           ))}
         </Select>
       </Field>
       <Field label="От дата">
-        <TextInput type="date" value={value.from} onChange={(e) => onChange({ ...value, from: e.target.value })} className="w-36" required />
+        <DateInput value={value.from} onChange={(e) => onChange({ ...value, from: e.target.value })} className="w-32" aria-label="От дата" required />
       </Field>
       <Field label="До дата">
-        <TextInput type="date" value={value.to} onChange={(e) => onChange({ ...value, to: e.target.value })} className="w-36" required />
+        <DateInput value={value.to} onChange={(e) => onChange({ ...value, to: e.target.value })} className="w-32" aria-label="До дата" required />
       </Field>
     </>
   );
@@ -113,9 +113,42 @@ export function useAccountName() {
 /* Running a report                                                    */
 /* ------------------------------------------------------------------ */
 
+const filterUrl = (name: string) => `/settings/report-filters/${encodeURIComponent(name)}`;
+
+/** Stores the filter a report ran with (per user, 05 1.2 SavePropertyState). */
+function saveReportFilter(name: string, filters: unknown) {
+  if (!filters || typeof filters !== 'object' || Array.isArray(filters)) return;
+  void api.put(filterUrl(name), filters).catch(() => undefined);
+}
+
+/**
+ * Filter state of a report screen, restored from the user's last run of the
+ * report (GetPropertyStateValue, 05 1.2). The name must be the one passed to
+ * useReport, which saves the filter on every "Справка".
+ */
+export function useReportFilters<F extends object>(name: string, defaults: F): [F, Dispatch<SetStateAction<F>>] {
+  const s = useSession();
+  const [f, setF] = useState(defaults);
+  const touched = useRef(false);
+  const saved = useQuery({ queryKey: ['reportFilter', name], queryFn: () => api.get<{ value: Record<string, unknown> | null }>(filterUrl(name)), staleTime: 0, gcTime: 0, retry: false });
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current || !saved.data) return;
+    restored.current = true;
+    // The user started typing before the saved filter arrived: keep the typed values.
+    if (!touched.current) setF((cur) => mergeSavedFilter(cur, saved.data.value, s.year.year));
+  }, [saved.data, s.year.year]);
+  const set: Dispatch<SetStateAction<F>> = (v) => {
+    touched.current = true;
+    setF(v);
+  };
+  return [f, set];
+}
+
 /**
  * Report query that runs only on "Справка". Every run refetches, even with
- * unchanged filters (the counter is part of the key).
+ * unchanged filters (the counter is part of the key), and stores the filter
+ * as the user's last filter of the report.
  */
 export function useReport<F, T>(name: string, filters: F, fetcher: (f: F) => Promise<T>, validate?: (f: F) => string | null) {
   const s = useSession();
@@ -134,6 +167,7 @@ export function useReport<F, T>(name: string, filters: F, fetcher: (f: F) => Pro
       void dialogs.alert(err);
       return;
     }
+    saveReportFilter(name, filters);
     setApplied((a) => ({ f: filters, n: (a?.n ?? 0) + 1 }));
   };
   return { q, applied: applied?.f ?? null, run };
@@ -248,15 +282,22 @@ export interface ReportFrameProps<T> {
   children: (data: T) => ReactNode;
 }
 
-/** Common report screen: command bar (Справка / Печат / Експорт CSV), filter form, result grid, print portal. */
-export function ReportFrame<T>({ title, subtitle, filters, options, report, isEmpty, status, csv, csvName, xlsx, actions, children }: ReportFrameProps<T>) {
-  const s = useSession();
-  const formId = useId();
-  const [printing, setPrinting] = useState(false);
-  const { q, applied, run } = report;
-  const data = applied ? q.data : undefined;
-  const ready = data !== undefined && !q.isFetching && !isEmpty(data);
+/** Date and time of a printout, "dd.MM.yyyy HH:mm" (Europe/Sofia). */
+export function printedAt(d = new Date()) {
+  const p = new Intl.DateTimeFormat('bg-BG', { timeZone: 'Europe/Sofia', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(d);
+  const v = (t: string) => p.find((x) => x.type === t)?.value ?? '';
+  return `${v('day')}.${v('month')}.${v('year')} ${v('hour')}:${v('minute')}`;
+}
 
+/** "Визуализиране на дата и час в справки" (IsVisualizeDateTimeOnReportingEnabled, 06 3.4). */
+export function useShowPrintDateTime() {
+  const s = useSession();
+  return (s.settings?.IsVisualizeDateTimeOnReportingEnabled ?? '').toLowerCase() === 'true';
+}
+
+/** Opens the browser print dialog while `printing` is set; resets it when the dialog closes. */
+export function usePrinting(): [boolean, () => void] {
+  const [printing, setPrinting] = useState(false);
   useEffect(() => {
     if (!printing) return;
     const done = () => setPrinting(false);
@@ -271,6 +312,47 @@ export function ReportFrame<T>({ title, subtitle, filters, options, report, isEm
       window.removeEventListener('afterprint', done);
     };
   }, [printing]);
+  return [printing, () => setPrinting(true)];
+}
+
+/** Print-only copy of a report: company, title, subtitle, optional date and time, body, signature lines. */
+export function PrintPortal({ title, subtitle, children, signatures = true }: { title: ReactNode; subtitle?: ReactNode; children: ReactNode; signatures?: boolean }) {
+  const s = useSession();
+  const withTime = useShowPrintDateTime();
+  return createPortal(
+    <div className="report-print-portal">
+      <style href="shmi-report-print" precedence="default">
+        {PRINT_CSS}
+      </style>
+      <div className="mb-2">
+        <div className="flex justify-between text-[11px] text-slate-600">
+          <span>{s.company.name}{s.company.bulstat ? `, ЕИК ${s.company.bulstat}` : ''}</span>
+          {withTime && <span data-testid="print-date-time">Дата и час: {printedAt()}</span>}
+        </div>
+        <h1 className="text-[16px] font-bold">{title}</h1>
+        {subtitle && <div className="text-[12px]">{subtitle}</div>}
+      </div>
+      {children}
+      {signatures && (
+        <div className="mt-6 flex justify-between text-[11px]">
+          <span>Съставил: ....................</span>
+          <span>Гл. счетоводител: ....................</span>
+          <span>Управител: ....................</span>
+        </div>
+      )}
+    </div>,
+    document.body,
+  );
+}
+
+/** Common report screen: command bar (Справка / Печат / Експорт CSV), filter form, result grid, print portal. */
+export function ReportFrame<T>({ title, subtitle, filters, options, report, isEmpty, status, csv, csvName, xlsx, actions, children }: ReportFrameProps<T>) {
+  const s = useSession();
+  const formId = useId();
+  const [printing, print] = usePrinting();
+  const { q, applied, run } = report;
+  const data = applied ? q.data : undefined;
+  const ready = data !== undefined && !q.isFetching && !isEmpty(data);
 
   const exportCsv = () => {
     if (!data || !csv) return;
@@ -283,14 +365,6 @@ export function ReportFrame<T>({ title, subtitle, filters, options, report, isEm
     downloadXlsx(csvName, xlsx ? xlsx(data) : [rowsToSheet(title, [...titleRows, ...(csv?.(data) ?? [])], titleRows.length)]);
   };
 
-  const header = (
-    <div className="mb-2">
-      <div className="text-[11px] text-slate-600">{s.company.name}{s.company.bulstat ? `, ЕИК ${s.company.bulstat}` : ''}</div>
-      <h1 className="text-[16px] font-bold">{title}</h1>
-      {subtitle && <div className="text-[12px]">{subtitle}</div>}
-    </div>
-  );
-
   return (
     <div className="flex h-full flex-col">
       <style href="shmi-report-print" precedence="default">
@@ -300,7 +374,7 @@ export function ReportFrame<T>({ title, subtitle, filters, options, report, isEm
         <Button type="submit" form={formId} variant="primary" icon={<Play className="size-3.5" />}>
           Справка
         </Button>
-        <Button icon={<Printer className="size-3.5" />} disabled={!ready} onClick={() => setPrinting(true)}>
+        <Button icon={<Printer className="size-3.5" />} disabled={!ready} onClick={print}>
           Печат
         </Button>
         {csv && (
@@ -351,20 +425,11 @@ export function ReportFrame<T>({ title, subtitle, filters, options, report, isEm
           children(data)
         )}
       </div>
-      {printing &&
-        data !== undefined &&
-        createPortal(
-          <div className="report-print-portal">
-            {header}
-            {children(data)}
-            <div className="mt-6 flex justify-between text-[11px]">
-              <span>Съставил: ....................</span>
-              <span>Гл. счетоводител: ....................</span>
-              <span>Управител: ....................</span>
-            </div>
-          </div>,
-          document.body,
-        )}
+      {printing && data !== undefined && (
+        <PrintPortal title={title} subtitle={subtitle}>
+          {children(data)}
+        </PrintPortal>
+      )}
     </div>
   );
 }
@@ -374,5 +439,9 @@ export function Amt({ v, className }: { v: string | number | null | undefined; c
   return <td className={cx('num', className)}>{moneyOrBlank(v)}</td>;
 }
 
-/** Sum of decimal strings, rounded to cents (for client-side totals). */
-export const sum = <T,>(rows: T[], pick: (r: T) => string | number | null | undefined) => Math.round(rows.reduce((a, r) => a + Number(pick(r) ?? 0), 0) * 100) / 100;
+/** Sum of decimal strings with decimal.js, as a 2-decimal string (client-side totals; never JS floats). */
+export const sum = <T,>(rows: T[], pick: (r: T) => string | number | null | undefined): string =>
+  rows.reduce((a, r) => {
+    const v = pick(r);
+    return v === null || v === undefined || v === '' ? a : a.plus(dec(v));
+  }, ZERO).toFixed(2);

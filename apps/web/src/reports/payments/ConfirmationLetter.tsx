@@ -1,9 +1,8 @@
-import { useState } from 'react';
 import { api, qs } from '../../api.ts';
 import { Field, TextInput } from '../../components/ui.tsx';
 import { bgDate, money } from '../../format.ts';
 import { useSession } from '../../session.tsx';
-import { ReportFrame, amt, useReport, useYearPeriod, type Cell } from '../common.tsx';
+import { ReportFrame, amt, useReport, useYearPeriod, type Cell, useReportFilters } from '../common.tsx';
 import { baseCurrencyWord, type LettersResult, type PartnerLetter } from './letters.ts';
 import { ReportTypeSelect, Sheet, SheetPrintButton } from './shared.tsx';
 
@@ -16,7 +15,7 @@ import { ReportTypeSelect, Sheet, SheetPrintButton } from './shared.tsx';
 export function ConfirmationLetter() {
   const period = useYearPeriod();
   const s = useSession();
-  const [f, setF] = useState({ to: period.to, type: 0, companyName: '', minSum: '' });
+  const [f, setF] = useReportFilters('confirmationLetter', { to: period.to, type: 0, companyName: '', minSum: '' });
   const report = useReport(
     'confirmationLetter',
     f,

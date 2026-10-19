@@ -101,3 +101,54 @@ export function rateFromEcb(ecbUnitsPerEur: DecInput, baseIso: 'EUR' | 'BGN', is
   if (e.isZero()) return ZERO;
   return roundRate((baseIso === 'EUR' ? new D(1) : bgnPerEur).div(e));
 }
+
+/** One line of the "Валутни разлики" printout (CurrencyDifferences.AccountInfo). */
+export interface CurrencyDifferenceLine {
+  accountNumber: string;
+  accountName: string;
+  debit: string;
+  credit: string;
+}
+
+export interface CurrencyDifferencesInput {
+  accountNumber: string;
+  accountDescription: string;
+  companyName?: string | null;
+  currencyIso?: string;
+  direction: RevaluationDirection;
+  sum: DecInput;
+}
+
+/**
+ * "Валутни разлики" (strCurrencyDifferences, 05 6.11) after a revaluation:
+ * the revalued accounts with their difference on the debit (positive) or
+ * credit (negative) side, then the differences accounts (pDifferencesAccount:
+ * 724 credited with the positive total, 624 debited with the negative total)
+ * and the total line (pDifferencesTotal = positive minus negative).
+ */
+export function currencyDifferencesReport(
+  rows: CurrencyDifferencesInput[],
+  fx: { income: { number: string; description: string }; expense: { number: string; description: string } },
+) {
+  let positive = ZERO;
+  let negative = ZERO;
+  const lines: CurrencyDifferenceLine[] = [];
+  for (const r of rows) {
+    if (r.direction === 'neutral' || dec(r.sum).isZero()) continue;
+    const v = round2(r.sum);
+    const name = [r.accountDescription, r.currencyIso, r.companyName].filter(Boolean).join(', ');
+    if (r.direction === 'positive') positive = positive.plus(v);
+    else negative = negative.plus(v);
+    lines.push({ accountNumber: r.accountNumber, accountName: name, debit: r.direction === 'positive' ? v.toFixed(2) : '0.00', credit: r.direction === 'negative' ? v.toFixed(2) : '0.00' });
+  }
+  const differences: CurrencyDifferenceLine[] = [];
+  if (positive.greaterThan(0)) differences.push({ accountNumber: fx.income.number, accountName: fx.income.description, debit: '0.00', credit: positive.toFixed(2) });
+  if (negative.greaterThan(0)) differences.push({ accountNumber: fx.expense.number, accountName: fx.expense.description, debit: negative.toFixed(2), credit: '0.00' });
+  return {
+    lines,
+    differences,
+    totals: { debit: positive.toFixed(2), credit: negative.toFixed(2) },
+    /** Net difference: positive = net income (724), negative = net expense (624). */
+    differencesTotal: positive.minus(negative).toFixed(2),
+  };
+}

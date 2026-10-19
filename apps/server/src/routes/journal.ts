@@ -5,11 +5,12 @@ import { sql } from 'drizzle-orm';
 import { CHANNEL } from '@shmi/core';
 import type { AppEnv } from '../context.ts';
 import { exec, type DbOrTx } from '../db/provider.ts';
-import { requirePermission, workingDate } from '../session.ts';
+import { requireAnyPermission, requirePermission, workingDate } from '../session.ts';
 import { deleteEntry, loadEntry, reversalDraft, saveEntry, type SaveContext } from '../services/journal.ts';
 import { autoPayment, bindEntry, fail, validateAutoPayment } from '../services/payments.ts';
 import { peekNextNumber } from '../services/sequences.ts';
 import { journalLines } from '../services/reports.ts';
+import { journalFilterFromQuery } from './reports.ts';
 import { entryFilterConditions } from '../services/journalExtras.ts';
 
 const amount = z.string().regex(/^-?\d+(\.\d+)?$/, 'Невалидна сума.');
@@ -87,7 +88,7 @@ export const journalRoutes = new Hono<AppEnv>()
    * Operations list (Журнал на операциите): one row per entry with its
    * correspondences collapsed, filtered by period and free text, paged.
    */
-  .get('/entries', async (c) => {
+  .get('/entries', requirePermission(EDIT), async (c) => {
     const { db, year } = c.var;
     const q = c.req.query();
     const limit = Math.min(Number(q.limit ?? 200), 2000);
@@ -122,23 +123,20 @@ export const journalRoutes = new Hono<AppEnv>()
     return c.json({ rows: rows.rows, total });
   })
 
-  /** Chronological register lines (Хронологичен регистър): debit/credit pairs. */
-  .get('/journal-lines', async (c) => {
-    const { year } = c.var;
+  /** Chronological register lines (Хронологичен регистър, 05 5): debit/credit pairs with every filter of the options screen. */
+  .get('/journal-lines', requirePermission('UI_Reporting_ChronologicalReport'), async (c) => {
     const q = c.req.query();
     return c.json(await journalLines(c.var.db, {
-      startDate: q.from ?? `${year.year}-01-01`, endDate: q.to ?? `${year.year}-12-31`,
-      byExportMonth: q.byExportMonth === '1',
-      debitAccount: q.debit, creditAccount: q.credit, account: q.account,
-      companyIds: q.companyId ? [Number(q.companyId)] : undefined,
-      documentTypeId: q.documentTypeId ? Number(q.documentTypeId) : undefined,
-      text: q.text, limit: q.limit ? Number(q.limit) : 5000,
+      ...journalFilterFromQuery(q, c.var.year.year),
+      mapToReportChart: true,
+      limit: q.limit ? Math.min(Number(q.limit), 20000) : 5000,
     }));
   })
 
   .get('/entries/next-number', async (c) => c.json({ number: await peekNextNumber(c.var.db, CHANNEL.Accounting, c.var.year.id, c.var.user.id) }))
 
-  .get('/entries/:id', async (c) => c.json(await loadEntry(c.var.db, Number(c.req.param('id')))))
+  // The entry editor opens entries for posting (Контиране) and for editing (Редакция на контиране).
+  .get('/entries/:id', requireAnyPermission(ADD, EDIT), async (c) => c.json(await loadEntry(c.var.db, Number(c.req.param('id')))))
 
   .get('/entries/:id/reversal', requirePermission(ADD), async (c) =>
     c.json(await reversalDraft(c.var.db, Number(c.req.param('id')), workingDate(c.var.session))))

@@ -754,3 +754,41 @@ describe('02a 9 templates, schedules, reschedules', () => {
     });
   });
 });
+
+describe('journal read routes need the journal rights', () => {
+  /** Logs in as a user of a new group with the permission overrides, runs fn, then returns to the admin. */
+  async function asRole(name: string, perms: Record<number, boolean>, fn: () => Promise<void>) {
+    const role = await call('POST', '/roles', { name });
+    expect(role.status, role.text).toBeLessThan(300);
+    expect((await call('PUT', `/roles/${role.body.id}/permissions`, perms)).status).toBe(200);
+    const u = await call('POST', '/users', { name: `${name} потребител`, password: 'secret1', roleId: role.body.id });
+    expect(u.status, u.text).toBe(201);
+    const adminId = (await call('GET', '/session')).body.user.id;
+    expect((await call('POST', '/login', { companyDb: t.companyDb, userId: u.body.id, password: 'secret1' })).status).toBe(200);
+    try {
+      await fn();
+    } finally {
+      expect((await call('POST', '/login', { companyDb: t.companyDb, userId: adminId, password: 'secret1' })).status).toBe(200);
+    }
+  }
+
+  it('list needs UI_Edit_Accountings; an entry, its attachments and the running balances need posting or editing rights', async () => {
+    const e = await t.post({ date: '2026-02-20', docNumber: 'PERM-1', dr: [['501', 10]], cr: [['101', 10]] });
+    const reads = [`/entries/${e.id}`, `/journal/entries/${e.id}/attachments`, `/journal/account-balances?ids=${acc('501')}&date=2026-02-28&excludeId=0`];
+    // 15 = UI_Operations_Accounting, 28 = UI_Edit_Accountings, 34 = UI_Reporting_ChronologicalReport.
+    await asRole('Без контиране', { 15: false, 28: false, 34: false }, async () => {
+      expect((await call('GET', '/entries')).status).toBe(403);
+      for (const url of reads) expect((await call('GET', url)).status, url).toBe(403);
+      expect((await call('GET', '/journal/attachments/1/download')).status).toBe(403);
+      expect((await call('GET', '/journal-lines')).status).toBe(403);
+    });
+    await asRole('Само контиране', { 15: true, 28: false }, async () => {
+      expect((await call('GET', '/entries')).status).toBe(403);
+      for (const url of reads) expect((await call('GET', url)).status, url).toBe(200);
+    });
+    await asRole('Само редакция', { 15: false, 28: true }, async () => {
+      expect((await call('GET', '/entries')).status).toBe(200);
+      for (const url of reads) expect((await call('GET', url)).status, url).toBe(200);
+    });
+  });
+});

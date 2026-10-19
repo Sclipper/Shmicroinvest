@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { EURO_CHANGEOVER_DATE, ZERO, dec, type Dec } from '@shmi/core';
 import { exec, type DbOrTx } from '../db/provider.ts';
+import { badRequest } from '../lib/errors.ts';
 import {
   accountBalances, accountRuleSql, ancestorsOf, fyWindowSql, chartMapper, compareAccountNumbers, conversionSql, loadTree, matchesAccount, netDebit, trialBalance, yearOf,
   type LedgerOptions, type TreeAccount, type TrialBalanceOptions, type TrialBalanceRow,
@@ -142,6 +143,12 @@ function totalsOf(rows: TrialBalanceRow[], byId: Map<number, TreeAccount>) {
   return Object.fromEntries(AMOUNT_KEYS.map((k) => [k, top.reduce((s, r) => s.plus(dec(r[k])), ZERO).toFixed(2)])) as Record<(typeof AMOUNT_KEYS)[number], string>;
 }
 
+/** Totals of filtered trial-balance rows: the rows without an ancestor among them. */
+export async function trialTotals(db: DbOrTx, rows: TrialBalanceRow[]) {
+  const all = await loadTree(db);
+  return totalsOf(rows, new Map(all.map((a) => [a.id, a])));
+}
+
 export interface MonthRow {
   month: string;
   openingDebit: string; openingCredit: string;
@@ -204,25 +211,82 @@ export async function trialBalanceByMonths(db: DbOrTx, o: TrialBalanceOptions) {
   return out.sort((p, q) => compareAccountNumbers(p.number, q.number));
 }
 
-export const TRIAL_BALANCE_FILTER_COLUMNS = ['AccountNumber', 'AccountDescription', 'InitialDebitBalance', 'InitialCreditBalance', 'DebitTurnover', 'CreditTurnover', 'FinalDebitBalance', 'FinalCreditBalance'] as const;
+/** "Филтър по" columns of the trial balance layouts (05 3.2, 3.8): standard, foreign currency, materials, partners. */
+export const TRIAL_BALANCE_FILTER_COLUMNS = [
+  'AccountNumber', 'AccountDescription', 'InitialDebitBalance', 'InitialCreditBalance', 'DebitTurnover', 'CreditTurnover', 'FinalDebitBalance', 'FinalCreditBalance', 'OptionalReference',
+  'ISOCode', 'CurrencyInitialDebitBalance', 'CurrencyInitialCreditBalance', 'CurrencyDebitTurnover', 'CurrencyCreditTurnover', 'CurrencyFinalDebitBalance', 'CurrencyFinalCreditBalance',
+  'MaterialInitialDebitBalance', 'MaterialInitialCreditBalance', 'MaterialDebitTurnover', 'MaterialCreditTurnover', 'MaterialFinalDebitBalance', 'MaterialFinalCreditBalance',
+  'CompanyName',
+] as const;
 export type TrialBalanceFilterColumn = (typeof TRIAL_BALANCE_FILTER_COLUMNS)[number] | '';
+type Column = Exclude<TrialBalanceFilterColumn, ''>;
 
-const COLUMN_OF: Record<Exclude<TrialBalanceFilterColumn, ''>, (r: TrialBalanceRow) => string> = {
-  AccountNumber: (r) => r.number,
-  AccountDescription: (r) => r.description,
-  InitialDebitBalance: (r) => r.openingDebit,
-  InitialCreditBalance: (r) => r.openingCredit,
-  DebitTurnover: (r) => r.debitTurnover,
-  CreditTurnover: (r) => r.creditTurnover,
-  FinalDebitBalance: (r) => r.closingDebit,
-  FinalCreditBalance: (r) => r.closingCredit,
+const BASE_AMOUNTS = ['InitialDebitBalance', 'InitialCreditBalance', 'DebitTurnover', 'CreditTurnover', 'FinalDebitBalance', 'FinalCreditBalance'] as const;
+const AMOUNT_OF: Record<(typeof BASE_AMOUNTS)[number], (typeof AMOUNT_KEYS)[number]> = {
+  InitialDebitBalance: 'openingDebit', InitialCreditBalance: 'openingCredit', DebitTurnover: 'debitTurnover',
+  CreditTurnover: 'creditTurnover', FinalDebitBalance: 'closingDebit', FinalCreditBalance: 'closingCredit',
 };
+
+/** Columns searched with "Всички" per layout (the combo's items after "Всички"). */
+export const TRIAL_BALANCE_ANY_COLUMNS: Record<'standard' | 'currency' | 'quantity' | 'partners', Column[]> = {
+  standard: ['AccountNumber', 'AccountDescription', ...BASE_AMOUNTS],
+  currency: ['AccountNumber', 'AccountDescription', 'ISOCode', ...BASE_AMOUNTS.map((c) => `Currency${c}` as Column), ...BASE_AMOUNTS],
+  quantity: ['AccountNumber', 'AccountDescription', ...BASE_AMOUNTS.map((c) => `Material${c}` as Column), ...BASE_AMOUNTS],
+  partners: ['CompanyName', ...BASE_AMOUNTS],
+};
+
+type FilterableRow = Partial<Record<(typeof AMOUNT_KEYS)[number], string>> & {
+  number?: string; description?: string; isoCode?: string; companyName?: string; optionalReference?: string;
+  extra?: Partial<Record<(typeof AMOUNT_KEYS)[number], string>> | null;
+};
+
+function columnValue(r: FilterableRow, c: Column): string | undefined {
+  switch (c) {
+    case 'AccountNumber': return r.number;
+    case 'AccountDescription': return r.description;
+    case 'ISOCode': return r.isoCode;
+    case 'CompanyName': return r.companyName;
+    case 'OptionalReference': return r.optionalReference;
+    default: {
+      const base = c.replace(/^(Currency|Material)/, '') as (typeof BASE_AMOUNTS)[number];
+      return c === base ? r[AMOUNT_OF[base]] : r.extra?.[AMOUNT_OF[base]];
+    }
+  }
+}
+
+/** "Филтър по" column of a trial-balance layout; 400 for a column the layout does not have. */
+export function trialFilterColumn(v: string | undefined, layout: keyof typeof TRIAL_BALANCE_ANY_COLUMNS): TrialBalanceFilterColumn {
+  const column = (v ?? '') as TrialBalanceFilterColumn;
+  if (!column) return '';
+  const allowed = layout === 'standard' ? [...TRIAL_BALANCE_ANY_COLUMNS.standard, 'OptionalReference'] : TRIAL_BALANCE_ANY_COLUMNS[layout];
+  if (!TRIAL_BALANCE_FILTER_COLUMNS.includes(column as never) || !allowed.includes(column as never)) throw badRequest('Невалидна колона за филтър.');
+  return column;
+}
+
+/**
+ * Free-text filter of a trial-balance layout: LIKE '%x%' on the chosen
+ * column, or on any column of the layout; amounts are matched as the text of
+ * the stored decimal (a typed decimal comma counts as the point).
+ */
+export function filterTrialRows<R extends FilterableRow>(rows: R[], column: TrialBalanceFilterColumn, text: string | undefined, any: Column[]): R[] {
+  const q = text?.trim().toLowerCase();
+  if (!q) return rows;
+  const numeric = q.replace(/\s/g, '').replace(',', '.');
+  const cols = column ? [column] : any;
+  return rows.filter((r) => cols.some((c) => {
+    const v = columnValue(r, c);
+    if (v === undefined || v === null) return false;
+    const s = String(v).toLowerCase();
+    return s.includes(q) || (/^-?[\d.]+$/.test(s) && s.includes(numeric));
+  }));
+}
 
 /**
  * Standard trial balance with the free-text filter ("Филтър по" / "Филтър",
- * LIKE '%x%' on the chosen column or any column) and "Търсене във всички нива
+ * LIKE '%x%' on the chosen column or any column), "Търсене във всички нива
  * на сметкоплана" (description matches at any depth, returned with their
- * ancestors and descendants).
+ * ancestors and descendants) and "Втора забележка" (OptionalReference: the
+ * rows are split per matching optional reference, 05 3.3).
  */
 export async function trialBalanceFiltered(db: DbOrTx, o: TrialBalanceOptions & { filterColumn?: TrialBalanceFilterColumn; filterText?: string; searchAllLevels?: boolean }) {
   const text = o.filterText?.trim().toLowerCase();
@@ -230,6 +294,21 @@ export async function trialBalanceFiltered(db: DbOrTx, o: TrialBalanceOptions & 
   const all = await loadTree(db);
   const byId = new Map(all.map((a) => [a.id, a]));
   const like = (v: string) => v.toLowerCase().includes(text);
+  if (o.filterColumn === 'OptionalReference') {
+    const refs = await exec(db, sql`
+      SELECT DISTINCT r.id, r.description FROM accountings a JOIN reference_texts r ON r.id = a.optional_reference_id
+      WHERE r.description ILIKE ${`%${o.filterText!.trim()}%`} AND a.accounting_date <= ${o.endDate}
+      ORDER BY r.description`);
+    const rows: (TrialBalanceRow & { optionalReference: string })[] = [];
+    let totals = Object.fromEntries(AMOUNT_KEYS.map((k) => [k, ZERO])) as Record<(typeof AMOUNT_KEYS)[number], Dec>;
+    for (const ref of refs.rows as { id: number; description: string }[]) {
+      const part = await trialBalance(db, { ...o, postingFilter: sql`a.optional_reference_id = ${ref.id}` });
+      rows.push(...part.rows.map((r) => ({ ...r, optionalReference: ref.description })));
+      totals = Object.fromEntries(AMOUNT_KEYS.map((k) => [k, totals[k].plus(dec(part.totals[k]))])) as typeof totals;
+    }
+    rows.sort((p, q) => compareAccountNumbers(p.number, q.number) || (p.optionalReference < q.optionalReference ? -1 : p.optionalReference > q.optionalReference ? 1 : 0));
+    return { rows, totals: Object.fromEntries(AMOUNT_KEYS.map((k) => [k, totals[k].toFixed(2)])) as Record<(typeof AMOUNT_KEYS)[number], string> };
+  }
   if (o.searchAllLevels && o.filterColumn === 'AccountDescription') {
     const full = await trialBalance(db, { ...o, subAccountLevel: 5 });
     const hits = full.rows.filter((r) => like(r.description));
@@ -243,9 +322,7 @@ export async function trialBalanceFiltered(db: DbOrTx, o: TrialBalanceOptions & 
     return { rows, totals: totalsOf(rows, byId) };
   }
   const base = await trialBalance(db, o);
-  // Numeric columns are matched as text of the stored decimal (as the SP does).
-  const pick = o.filterColumn ? [COLUMN_OF[o.filterColumn]] : Object.values(COLUMN_OF);
-  const rows = base.rows.filter((r) => pick.some((f) => like(f(r))));
+  const rows = filterTrialRows(base.rows, o.filterColumn ?? '', o.filterText, TRIAL_BALANCE_ANY_COLUMNS.standard);
   return { rows, totals: totalsOf(rows, byId) };
 }
 
@@ -275,7 +352,7 @@ export async function ledgerZeroTurnoverAccounts(db: DbOrTx, o: LedgerOptions, p
   for (const a of [...found.values()].sort((p, q) => compareAccountNumbers(p.number, q.number))) {
     const balances = await accountBalances(db, a.number, o);
     if ([balances.openingDebit, balances.openingCredit].every((v) => v === '0.00')) continue;
-    out.push({ number: a.number, description: a.description, counters: [] as { number: string; description: string; debit: string; credit: string }[], totalDebit: '0.00', totalCredit: '0.00', balances });
+    out.push({ number: a.number, description: a.description, englishDescription: a.englishDescription ?? '', counters: [] as { number: string; description: string; englishDescription: string; debit: string; credit: string }[], totalDebit: '0.00', totalCredit: '0.00', balances });
   }
   return out;
 }

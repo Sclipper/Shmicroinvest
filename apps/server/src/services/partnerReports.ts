@@ -629,3 +629,87 @@ export async function receivedIssued(db: DbOrTx, o: ReceivedIssuedOptions) {
   out.sort(sorts[o.sort ?? 'DocumentNumber'] ?? sorts.DocumentNumber);
   return out;
 }
+
+/* ------------------------------------------------------------------ */
+/* Справка партньори (spCompaniesReport, 05 7.7)                       */
+/* ------------------------------------------------------------------ */
+
+/** "Филтър по" columns of the partners register, in the order of the original combo. */
+export const COMPANIES_FILTER_COLUMNS = [
+  'CompanyNameAndBulstat', 'BulstatAndVATNumber', 'CompanyName', 'VatNumber', 'Bulstat', 'ContactName', 'City', 'Address', 'PostalCode', 'Phone', 'Email', 'LastModifiedDate',
+] as const;
+export type CompaniesFilterColumn = (typeof COMPANIES_FILTER_COLUMNS)[number];
+
+export interface CompaniesReportOptions {
+  /** Partner group: the group and its whole subtree. */
+  groupId?: number;
+  /** Substring of the partner's joined account numbers. */
+  account?: string;
+  filterColumn?: CompaniesFilterColumn | '';
+  filterText?: string;
+}
+
+export interface CompaniesReportRow {
+  companyId: number;
+  companyName: string;
+  groupId: number;
+  vatNumber: string;
+  bulstat: string;
+  contactName: string;
+  country: string;
+  city: string;
+  address: string;
+  postalCode: string;
+  phone: string;
+  email: string;
+  /** "Дата на създаване" (LastModifiedDate), yyyy-mm-dd. */
+  lastModifiedDate: string;
+  /** Linked accounts, "; "-delimited (@pAccountsDelimiter). */
+  accountNumbers: string;
+  ibans: string;
+}
+
+const ACCOUNTS_DELIMITER = '; ';
+const bgDay = (iso: string) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}` : '');
+
+/**
+ * Partners register: every non-deleted partner with its first address
+ * (lowest id), linked accounts and IBANs; group filter on the group's
+ * subtree, account filter as a substring of the joined account list, the
+ * free-text filter on one column or any. Ordered by name; no euro dependency.
+ */
+export async function companiesReport(db: DbOrTx, o: CompaniesReportOptions): Promise<CompaniesReportRow[]> {
+  const group = o.groupId && o.groupId !== 1
+    ? sql`AND co.group_id IN (WITH RECURSIVE g AS (SELECT id FROM company_groups WHERE id = ${o.groupId} UNION ALL SELECT c.id FROM company_groups c JOIN g ON c.parent_id = g.id) SELECT id FROM g)`
+    : sql``;
+  const rows = await queryRows<{
+    id: number; name: string; group_id: number; vat_number: string | null; bulstat: string | null; contact_name: string | null; email: string | null;
+    last_modified: string; country: string | null; city: string | null; address: string | null; postal_code: string | null; phone: string | null;
+    accounts: string | null; ibans: string | null;
+  }>(db, sql`
+    SELECT co.id, co.name, co.group_id, co.vat_number, co.bulstat, co.contact_name, co.email,
+      to_char(co.last_modified_date, 'YYYY-MM-DD') AS last_modified,
+      ad.country, ad.city, ad.address, ad.postal_code, ad.phone,
+      (SELECT string_agg(ac.number, ${ACCOUNTS_DELIMITER} ORDER BY ac.number) FROM company_accounts ca JOIN accounts ac ON ac.id = ca.account_id WHERE ca.company_id = co.id) AS accounts,
+      (SELECT string_agg(b.account, ${ACCOUNTS_DELIMITER} ORDER BY b.id) FROM bank_accounts b WHERE b.owner_type = 'company' AND b.owner_id = co.id) AS ibans
+    FROM companies co
+    LEFT JOIN LATERAL (
+      SELECT cn.name AS country, a.city, a.address, a.postal_code, a.phone FROM addresses a LEFT JOIN countries cn ON cn.id = a.country_id
+      WHERE a.owner_type = 'company' AND a.owner_id = co.id ORDER BY a.id LIMIT 1
+    ) ad ON TRUE
+    WHERE NOT co.is_deleted ${group}
+    ORDER BY co.name, co.id`);
+  const account = o.account?.trim();
+  return rows
+    .map((r): CompaniesReportRow => ({
+      companyId: r.id, companyName: r.name, groupId: r.group_id, vatNumber: r.vat_number ?? '', bulstat: r.bulstat ?? '', contactName: r.contact_name ?? '',
+      country: r.country ?? '', city: r.city ?? '', address: r.address ?? '', postalCode: r.postal_code ?? '', phone: r.phone ?? '', email: r.email ?? '',
+      lastModifiedDate: r.last_modified, accountNumbers: r.accounts ?? '', ibans: r.ibans ?? '',
+    }))
+    .filter((r) => !account || r.accountNumbers.includes(account))
+    .filter((r) => matchesColumnFilter({
+      CompanyNameAndBulstat: `${r.companyName} ${r.bulstat}`, BulstatAndVATNumber: `${r.bulstat} ${r.vatNumber}`, CompanyName: r.companyName, VatNumber: r.vatNumber,
+      Bulstat: r.bulstat, ContactName: r.contactName, City: r.city, Address: r.address, PostalCode: r.postalCode, Phone: r.phone, Email: r.email,
+      LastModifiedDate: `${r.lastModifiedDate} ${bgDay(r.lastModifiedDate)}`,
+    }, o.filterColumn ?? '', o.filterText ?? ''));
+}

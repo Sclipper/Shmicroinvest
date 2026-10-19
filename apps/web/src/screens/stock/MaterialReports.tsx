@@ -139,7 +139,7 @@ function DeliverySale({ isPurchase }: { isPurchase: boolean }) {
       csv={(d) => [
         head,
         ...d.map((r) => [r.accounting_number, bgDate(r.accounting_date), r.account_number, ...(a.english ? [r.english_description ?? ''] : []), r.product_code ?? '', r.product_name, r.product_measure, qtyCell(r.quantity), qtyCell(r.price), amt(r.amount), r.company_name ?? '', r.document_type ?? '', r.document_number ?? '', bgDate(r.document_date)]),
-        ['Общо:', '', '', ...(a.english ? [''] : []), '', '', '', '', '', sum(d, (r) => r.amount)],
+        ['Общо:', '', '', ...(a.english ? [''] : []), '', '', '', '', '', amt(sum(d, (r) => r.amount))],
       ]}
       filters={<CommonFields f={f} set={set} partner entryNumbers />}
       options={englishBox(f, set)}
@@ -283,7 +283,7 @@ export function AveragePriceReport() {
       csv={(d) => [
         head,
         ...d.map((r) => [r.accountNumber, ...(a.english ? [r.englishDescription ?? ''] : []), r.code ?? '', r.measure, r.productName, qtyCell(r.materialInitialBalance), amt(r.initialBalance), qtyCell(r.materialDebitTurnover), amt(r.debitTurnover), qtyCell(r.averagePrice), qtyCell(r.materialCreditTurnover), amt(r.writeOutValue), qtyCell(r.materialFinalBalance), amt(r.finalBalance)]),
-        ['Общо:', ...Array(textCols - 1).fill(''), '', sum(d, (r) => r.initialBalance), '', sum(d, (r) => r.debitTurnover), '', '', sum(d, (r) => r.writeOutValue), '', sum(d, (r) => r.finalBalance)],
+        ['Общо:', ...Array(textCols - 1).fill(''), '', amt(sum(d, (r) => r.initialBalance)), '', amt(sum(d, (r) => r.debitTurnover)), '', '', amt(sum(d, (r) => r.writeOutValue)), '', amt(sum(d, (r) => r.finalBalance))],
       ]}
       filters={<CommonFields f={f} set={set} />}
       options={englishBox(f, set)}
@@ -355,7 +355,7 @@ export function WriteOutReport() {
       csv={(d) => [
         head,
         ...d.map((r) => [r.accountNumber, ...(a.english ? [r.englishDescription ?? ''] : []), r.productName, r.productCode ?? '', r.measure, qtyCell(r.initialBalanceQtty), amt(r.initialBalance), qtyCell(r.bookedQtty), amt(r.bookedSum), qtyCell(r.averagePrice), qtyCell(r.chargedQtty), amt(r.writeOff)]),
-        ['Общо:', ...Array(textCols + 5).fill(''), sum(d, (r) => r.writeOff)],
+        ['Общо:', ...Array(textCols + 5).fill(''), amt(sum(d, (r) => r.writeOff))],
       ]}
       filters={<CommonFields f={f} set={set} />}
       options={englishBox(f, set)}
@@ -447,7 +447,7 @@ export function InventoryListReport() {
       csv={(d) => [
         head,
         ...d.map((r) => [String(r.no), r.accountNumber, a.english ? (r.englishDescription ?? r.productName) : r.productName, r.productMeasure, qtyCell(r.materialFinalBalance), qtyCell(r.averagePrice), amt(r.finalBalance), '', '', '', '']),
-        ['Общо:', '', '', '', '', '', sum(d, (r) => r.finalBalance)],
+        ['Общо:', '', '', '', '', '', amt(sum(d, (r) => r.finalBalance))],
       ]}
       filters={
         <>

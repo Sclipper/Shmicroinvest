@@ -189,3 +189,25 @@ export function PartnerPicker({ value, valueName, onChange, autoFocus, invalid, 
     />
   );
 }
+
+export interface PickedPartner {
+  id: number;
+  name: string;
+}
+
+/** Several partners (the reports' "Партньор" multi-select, CompanyIDs as a comma list): picked names as removable chips. */
+export function PartnerMultiPicker({ value, onChange, className }: { value: PickedPartner[]; onChange: (v: PickedPartner[]) => void; className?: string }) {
+  return (
+    <div className={cx('flex min-w-0 flex-wrap items-center gap-1', className)} data-testid="partner-multi">
+      {value.map((p) => (
+        <span key={p.id} className="inline-flex h-6 items-center gap-1 rounded-sm border border-slate-300 bg-slate-100 px-1.5 text-[12px]">
+          <span className="max-w-40 truncate" title={p.name}>{p.name}</span>
+          <button type="button" className="text-slate-500 hover:text-red-700" aria-label={`Премахване на ${p.name}`} onClick={() => onChange(value.filter((x) => x.id !== p.id))}>
+            ✕
+          </button>
+        </span>
+      ))}
+      <PartnerPicker value={null} onChange={(p) => p && !value.some((x) => x.id === p.id) && onChange([...value, { id: p.id, name: p.name }])} className="w-48" />
+    </div>
+  );
+}

@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import {
-  CATEGORY, COMPANY_CATEGORIES, JOURNAL_MESSAGES, REVALUATION_MESSAGES, canSaveRevaluation, dec, isCompanyCategory, isListedRevaluation,
+  CATEGORY, COMPANY_CATEGORIES, JOURNAL_MESSAGES, REVALUATION_MESSAGES, canSaveRevaluation, currencyDifferencesReport, dec, isCompanyCategory, isListedRevaluation,
   isMonthLocked, partnerRevaluationCheck, rateFromEcb, revaluationLegs, revalue, roundRate, type ValidationMessage,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
@@ -260,7 +260,7 @@ export async function previewRevaluation(db: DbOrTx, year: ActiveYear, r: Revalu
  * currency amount (only the base value moves).
  */
 export async function postRevaluation(db: DbOrTx, ctx: { year: ActiveYear; userId: number; branchId?: number }, r: RevaluationRequest) {
-  const { rows } = await previewRevaluation(db, ctx.year, r, { requireRates: true });
+  const { rows, accounts } = await previewRevaluation(db, ctx.year, r, { requireRates: true });
   const sums = rows.map((x) => x.sum);
   if (!rows.length || !canSaveRevaluation(sums)) throw revaluationError('strZeroReevaluationSumError');
   if (r.tab === 'currency' && r.rates?.length) await saveRates(db, r.date, ctx.year.year, r.rates);
@@ -283,5 +283,6 @@ export async function postRevaluation(db: DbOrTx, ctx: { year: ActiveYear; userI
     }, { ...ctx, ignoreKeys: ['strForeignCurrencyRequired'] });
     posted.push({ id: res.id, number: res.number, accountId: row.accountId, companyId: row.companyId, direction: row.direction, amount: row.sum });
   }
-  return posted;
+  const postedRows = rows.filter((row) => row.debitAccountId && row.creditAccountId && !dec(row.sum).isZero());
+  return { entries: posted, differences: currencyDifferencesReport(postedRows, accounts) };
 }

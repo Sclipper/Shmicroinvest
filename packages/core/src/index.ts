@@ -38,3 +38,4 @@ export * from './exchange/excelImport.ts';
 export * from './exchange/euro.ts';
 export * from './exchange/backup.ts';
 export * from './exchange/exportReports.ts';
+export * from './reportFilters.ts';

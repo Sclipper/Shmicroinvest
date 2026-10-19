@@ -1,4 +1,4 @@
-import { dec, type Dec, type DecInput } from './money.ts';
+import { BGN_PER_EUR, dec, formatMoney, type Dec, type DecInput } from './money.ts';
 import { amountInWords } from './amountInWords.ts';
 import { CLIENT_CATEGORIES, SUPPLIER_CATEGORIES } from './categories.ts';
 
@@ -100,4 +100,26 @@ export function matchesColumnFilter(row: Record<string, unknown>, column: string
     const s = String(v).toLowerCase();
     return s.includes(q) || s.includes(alt);
   });
+}
+
+/**
+ * Legal-limit warning of Касова наличност и вземания (strCashAndReceivablesLimitExceeded,
+ * CashAndReceivablesExceededView). The limit is the configuration key
+ * `CashAndReceivablesLimit` (base currency); without it 10 000 лв, i.e. 5 112.92 EUR
+ * from 2026 (10 000 / 1.95583, rounded).
+ */
+export const CASH_AND_RECEIVABLES_LIMIT_KEY = 'CashAndReceivablesLimit';
+export const CASH_AND_RECEIVABLES_LIMIT_MESSAGE =
+  'Общата сума на касовите наличности и вземанията от собственици и от работници, служители и подотчетни лица ({0}) надвишава допустимия лимит от {1}.';
+
+export function cashAndReceivablesDefaultLimit(year: number): string {
+  return year >= 2026 ? dec(10000).div(BGN_PER_EUR).toDecimalPlaces(2).toFixed(2) : '10000.00';
+}
+
+/** The warning text when the total is above the limit, else null. A zero or negative limit switches the check off. */
+export function cashAndReceivablesLimitWarning(total: DecInput, limit: DecInput, currency: string): string | null {
+  const l = dec(limit);
+  if (!l.greaterThan(0) || !dec(total).greaterThan(l)) return null;
+  const show = (v: DecInput) => `${formatMoney(v)} ${currency}`;
+  return CASH_AND_RECEIVABLES_LIMIT_MESSAGE.replace('{0}', show(total)).replace('{1}', show(l));
 }

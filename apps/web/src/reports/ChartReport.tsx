@@ -1,8 +1,7 @@
-import { useState } from 'react';
 import { api, qs } from '../api.ts';
 import { Checkbox, Field, cx } from '../components/ui.tsx';
 import { useSession } from '../session.tsx';
-import { AccountNumberPicker, LevelSelect, ReportFrame, useReport, type Cell } from './common.tsx';
+import { AccountNumberPicker, LevelSelect, ReportFrame, useReport, type Cell, useReportFilters } from './common.tsx';
 
 interface Row {
   number: string;
@@ -14,7 +13,7 @@ interface Row {
 /** Индивидуален сметкоплан, справка (spec 05 4.4, spChartOfAccountsReport). */
 export function ChartReport() {
   const s = useSession();
-  const [f, setF] = useState({ account: '', level: 5, english: false });
+  const [f, setF] = useReportFilters('chartReport', { account: '', level: 5, english: false });
   const report = useReport('chartReport', f, (x) => api.get<Row[]>(`/reports/chart${qs({ level: x.level, account: x.account })}`));
   const a = report.applied ?? f;
   const subtitle = [`${s.year.year} г.`, a.account && `сметка ${a.account}`].filter(Boolean).join(', ');

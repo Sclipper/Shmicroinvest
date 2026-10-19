@@ -150,6 +150,7 @@ export const MENU: TopMenu[] = [
           { label: 'Разплащания и обвързани документи', permission: 'UI_Reporting_Companies_PaymentsReport', gesture: 'Alt+R', screen: 'paymentsReport' },
           { label: 'Потвърдително писмо за задължения/вземания', permission: 'UI_Reporting_Companies_LiabilitiesLetterReport', screen: 'confirmationLetter' },
           { label: 'Просрочени задължения', permission: 'UI_Reporting_Companies_Overdues', screen: 'overdues' },
+          { label: 'Справка партньори', permission: 'UI_Reporting_Companies', screen: 'companiesReport' },
         ],
       },
       { sep: true },

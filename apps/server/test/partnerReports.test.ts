@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestCompany, type TestCompany } from './helpers.ts';
 import { insertPaymentLinks } from '../src/services/openItems.ts';
+import { setConfig } from '../src/services/config.ts';
 
 /** Partner and cash reports (spec 05 6, 05 7 received/issued). */
 
@@ -236,6 +237,36 @@ describe('cash reports', () => {
     expect(cash.rows.map((x: any) => [x.accountNumber, x.finalDebitBalance])).toEqual(expect.arrayContaining([['501', '700.00'], ['502/1', '90.00']]));
     expect(r.sections.find((x: any) => x.key === 'workersReceivables').rows).toEqual([expect.objectContaining({ accountNumber: '422', debitBalance: '50.00' })]);
   });
+
+  it('cash and receivables follow the edited formulas (Редакция на формули)', async () => {
+    const formulas = (await c.call('GET', '/statements/formulas')).body as { id: number; key: string }[];
+    const cr1 = formulas.find((f) => f.key === 'cr1')!;
+    expect((await c.call('PUT', '/statements/formulas', { edits: [{ id: cr1.id, formula: 'fdb(501)' }] })).status).toBe(200);
+    try {
+      const r = await cget('/reports/cash-and-receivables?from=2026-01-01&to=2026-12-31');
+      expect(r).toMatchObject({ availableCash: '700.00', totalAmount: '750.00' });
+    } finally {
+      await c.call('POST', '/statements/formulas/restore', { ids: [cr1.id] });
+    }
+  });
+
+  it('legal limit: warning in the report and the start-up pop-up until "Не показвай повече" (per user)', async () => {
+    // Default limit 5 112,92 EUR: 840 is within it.
+    const ok = await cget('/reports/cash-and-receivables/limit');
+    expect(ok).toMatchObject({ total: '840.00', limit: '5112.92', exceeded: false, message: null });
+    expect((await cget('/reports/cash-and-receivables?from=2026-01-01&to=2026-12-31')).warning).toBeNull();
+    await setConfig(await c.driver.company(c.companyDb), 'CashAndReceivablesLimit', '800');
+    const text = 'Общата сума на касовите наличности и вземанията от собственици и от работници, служители и подотчетни лица (840,00 EUR) надвишава допустимия лимит от 800,00 EUR.';
+    const over = await cget('/reports/cash-and-receivables/limit');
+    expect(over).toMatchObject({ total: '840.00', limit: '800.00', exceeded: true, hidden: false, message: text });
+    expect((await cget('/reports/cash-and-receivables?from=2026-01-01&to=2026-12-31')).warning).toBe(text);
+    expect((await c.call('PUT', '/reports/cash-and-receivables/limit', { hidden: true })).status).toBe(200);
+    expect(await cget('/reports/cash-and-receivables/limit')).toMatchObject({ exceeded: true, hidden: true, message: null });
+    // The report itself still warns.
+    expect((await cget('/reports/cash-and-receivables?from=2026-01-01&to=2026-12-31')).warning).toBe(text);
+    await c.call('PUT', '/reports/cash-and-receivables/limit', { hidden: false });
+    await setConfig(await c.driver.company(c.companyDb), 'CashAndReceivablesLimit', '');
+  });
 });
 
 describe('euro changeover (6.12, 6.9)', () => {
@@ -275,5 +306,39 @@ describe('euro changeover (6.12, 6.9)', () => {
     expect(mixed.orders[0]).toMatchObject({ documentNumber: '3', amount: '100.00', amountText: 'Сто евро' });
     const old = await mget('/reports/cash-order?documentTypeId=8&account=501&from=2025-12-01&to=2025-12-31');
     expect(old.orders[0]).toMatchObject({ amount: '195.58', amountText: 'Сто деветдесет и пет лв. и 58 ст.' });
+  });
+});
+
+describe('Справка партньори (spCompaniesReport, 05 7.7)', () => {
+  it('lists partners by name with the first address, accounts and IBANs; group subtree, account and column filters', async () => {
+    const top = await t.call('POST', '/partner-groups', { name: 'Доставчици', parentId: 1 });
+    expect(top.status, top.text).toBe(201);
+    const sub = await t.call('POST', '/partner-groups', { name: 'Местни', parentId: top.body.id });
+    expect(sub.status, sub.text).toBe(201);
+    const local = await t.partner('Местен Доставчик ЕООД', ['401', '411'], {
+      groupId: sub.body.id, bulstat: '204060801', vatNumber: 'BG204060801', email: 'office@mestni.bg',
+      addresses: [{ address: 'ул. Втора 2', city: 'Пловдив', postalCode: '4000', phone: '032 222' }, { address: 'ул. Трета 3', city: 'Варна' }],
+      bankAccounts: [{ account: 'BG11UNCR70001512345678' }, { account: 'BG22STSA93000012345678' }],
+    });
+
+    const all = await get('/reports/companies');
+    const names = all.map((r: { companyName: string }) => r.companyName);
+    expect(names).toEqual([...names].sort((a: string, b: string) => a.localeCompare(b, 'bg')));
+    expect(all.find((r: { companyId: number }) => r.companyId === sup1)).toMatchObject({ contactName: 'Иван Иванов', city: 'София', address: 'ул. Първа 1', phone: '02 111', ibans: 'BG80BNBG96611020345678', accountNumbers: '401' });
+    const row = all.find((r: { companyId: number }) => r.companyId === local);
+    expect(row).toMatchObject({ city: 'Пловдив', postalCode: '4000', accountNumbers: '401; 411', ibans: 'BG11UNCR70001512345678; BG22STSA93000012345678', email: 'office@mestni.bg' });
+    expect(row.lastModifiedDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+
+    // The group filter takes the whole subtree.
+    expect((await get(`/reports/companies?groupId=${top.body.id}`)).map((r: { companyId: number }) => r.companyId)).toEqual([local]);
+    expect((await get(`/reports/companies?groupId=${sub.body.id}`)).map((r: { companyId: number }) => r.companyId)).toEqual([local]);
+    // Account: substring of the joined list.
+    const with411 = (await get('/reports/companies?account=411')).map((r: { companyId: number }) => r.companyId);
+    expect(with411).toEqual(expect.arrayContaining([cli, late, local]));
+    expect(with411).not.toContain(sup1);
+    expect((await get('/reports/companies?filterColumn=City&filterText=пловдив')).map((r: { companyId: number }) => r.companyId)).toEqual([local]);
+    expect((await get('/reports/companies?filterColumn=BulstatAndVATNumber&filterText=BG2040')).map((r: { companyId: number }) => r.companyId)).toEqual([local]);
+    expect((await get('/reports/companies?filterText=121212121')).map((r: { companyId: number }) => r.companyId)).toEqual([sup1]);
+    expect((await t.call('GET', '/reports/companies?filterColumn=Nope&filterText=x')).status).toBe(400);
   });
 });

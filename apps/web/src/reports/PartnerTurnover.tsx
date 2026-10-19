@@ -1,11 +1,11 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useMemo } from 'react';
 import { isCompanyCategory } from '@shmi/core';
 import { api, qs } from '../api.ts';
 import { PartnerPicker } from '../components/pickers.tsx';
 import { Checkbox, Field } from '../components/ui.tsx';
 import { useAccounts } from '../session.tsx';
 import type { Account } from '../types.ts';
-import { AccountNumberPicker, Amt, PeriodFields, ReportFrame, amt, periodText, sum, useAccountName, useReport, useYearPeriod, type Cell } from './common.tsx';
+import { AccountNumberPicker, Amt, PeriodFields, ReportFrame, amt, periodText, sum, useAccountName, useReport, useYearPeriod, type Cell, useReportFilters } from './common.tsx';
 
 interface Row {
   companyId: number;
@@ -25,7 +25,7 @@ const AMOUNTS = ['openingDebit', 'openingCredit', 'debitTurnover', 'creditTurnov
 export function PartnerTurnover() {
   const period = useYearPeriod();
   const accountName = useAccountName();
-  const [f, setF] = useState({ ...period, account: '', zero: false, byExportMonth: false, companyId: null as number | null, companyName: '' as string | null });
+  const [f, setF] = useReportFilters('partnerTurnover', { ...period, account: '', zero: false, byExportMonth: false, companyId: null as number | null, companyName: '' as string | null });
   const report = useReport(
     'partnerTurnover',
     f,
@@ -55,7 +55,7 @@ export function PartnerTurnover() {
   const csv = (d: Row[]): Cell[][] => [
     ['Партньор', 'ЕИК/ДДС номер', 'Начално салдо Дебит', 'Начално салдо Кредит', 'Обороти Дебит', 'Обороти Кредит', 'Крайно салдо Дебит', 'Крайно салдо Кредит'],
     ...d.map((r) => [r.companyName, r.vat, ...AMOUNTS.map((k) => amt(r[k]))]),
-    ['Общо:', '', ...AMOUNTS.map((k) => sum(d, (r) => r[k]))],
+    ['Общо:', '', ...AMOUNTS.map((k) => amt(sum(d, (r) => r[k])))],
   ];
 
   return (

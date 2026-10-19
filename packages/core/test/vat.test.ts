@@ -282,6 +282,18 @@ describe('sales and purchase diaries (fnSaleDiaryReport / fnPurchaseDiaryReport)
     const t = diaryTotals(rows, 17);
     expect([s(t[0]), s(t[22 - 9]), s(t[25 - 9]), s(t[20 - 9])]).toEqual(['30.00', '50.00', '70.00', '30.00']);
   });
+  it('extended diaries keep the entry number and both notes and do not merge entries with different notes', () => {
+    const a = { ...sale(100, 20, { number: '501', documentNumber: '77', accountingDate: '2026-06-10' }), reference: 'Обект 1', optionalReference: 'Договор 5' };
+    const b = { ...sale(50, 10, { number: '502', documentNumber: '77', accountingDate: '2026-06-10' }), reference: 'Обект 2', optionalReference: '' };
+    const o = { start: '2026-06-01', end: '2026-06-30 23:59:59', addCashDocs: true };
+    const plain = saleDiary([a, b], o);
+    expect(plain).toHaveLength(1);
+    expect(col(plain[0]!, 9)).toBe('150.00');
+    const ext = saleDiary([a, b], { ...o, extended: true });
+    expect(ext.map((r) => [r.accountingNumber, r.reference, r.optionalReference, col(r, 9)])).toEqual([['501', 'Обект 1', 'Договор 5', '100.00'], ['502', 'Обект 2', '', '50.00']]);
+    const p = { ...purchase(80, 16, 2, { number: '503', accountingDate: '2026-06-12' }), reference: 'Доставка' };
+    expect(purchaseDiary([p], { ...o, extended: true })[0]).toMatchObject({ accountingNumber: '503', reference: 'Доставка', optionalReference: '' });
+  });
 });
 
 describe('VAT declaration cells (spVATDeclarationReport)', () => {

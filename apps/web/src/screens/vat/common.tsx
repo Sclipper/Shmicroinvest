@@ -14,6 +14,9 @@ export interface DiaryRow {
   partnerName: string;
   description: string;
   vatDiaryCode: string;
+  /** Забележка / Втора забележка (filled for every row, shown by the extended diaries). */
+  reference: string;
+  optionalReference: string;
   cols: string[];
 }
 

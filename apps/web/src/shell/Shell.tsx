@@ -12,6 +12,7 @@ import { Button, Dialog, Field, TextInput, cx } from '../components/ui.tsx';
 import { MENU, TOOLBAR, UNBINDABLE, findMenuItem, gestureOf, type MenuEntry, type MenuItem } from './menu.ts';
 import { useWorkspace, type ScreenDef } from './workspace.tsx';
 import { chooseActiveYear } from '../screens/admin/yearChoice.ts';
+import { CashLimitNotice } from './CashLimitNotice.tsx';
 
 type Cmd = NonNullable<Extract<MenuItem, { label: string }>['command']>;
 
@@ -118,6 +119,8 @@ export function Shell({ screens, onCommand }: { screens: Record<string, ScreenDe
           );
         })}
       </main>
+      {/* Outside <main>: its children are the tab panes. */}
+      <CashLimitNotice />
       <StatusBar onCommand={(c) => (c === 'changeUser' ? setChangeUser(true) : void run({ label: '', command: c }))} />
       {changeUser && <ChangeUserDialog onClose={() => setChangeUser(false)} />}
     </div>

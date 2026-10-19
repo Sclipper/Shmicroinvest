@@ -85,8 +85,8 @@ export const closingsRoutes = new Hono<AppEnv>()
   })
   .post('/revaluation', requirePermission(REVALUATION), zValidator('json', revaluationBody), async (c) => {
     const body = c.req.valid('json');
-    const entries = await c.var.db.transaction((tx) => postRevaluation(tx, ctxOf(c), body));
-    return c.json({ entries }, 201);
+    // entries + the "Валутни разлики" printout (05 6.11) of the posted differences.
+    return c.json(await c.var.db.transaction((tx) => postRevaluation(tx, ctxOf(c), body)), 201);
   })
 
   // ---- Manual closing (Приключване на разходни и приходни сметки) ----

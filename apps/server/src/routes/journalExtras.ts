@@ -7,7 +7,7 @@ import * as s from '../db/company/schema/index.ts';
 import { exec } from '../db/provider.ts';
 import { zValidator } from '../lib/validate.ts';
 import { notFound } from '../lib/errors.ts';
-import { requirePermission, workingDate } from '../session.ts';
+import { requireAnyPermission, requirePermission, workingDate } from '../session.ts';
 import { deleteEntry, loadEntry, saveEntry } from '../services/journal.ts';
 import {
   addAttachment, assertCorrespondence, copyDraft, correspondenceToEntry, duplicateDocuments, entryFilterConditions, expensesDraft,
@@ -116,7 +116,7 @@ export const journalExtraRoutes = new Hono<AppEnv>()
   })
 
   // ---- 4.6 attachments ---------------------------------------------------
-  .get('/journal/entries/:id/attachments', async (c) => c.json({ rows: await listAttachments(c.var.db, Number(c.req.param('id'))) }))
+  .get('/journal/entries/:id/attachments', requireAnyPermission(ADD, EDIT), async (c) => c.json({ rows: await listAttachments(c.var.db, Number(c.req.param('id'))) }))
 
   /** Raw file body; name and description in the query string. */
   .post('/journal/entries/:id/attachments', requirePermission(EDIT), async (c) => {
@@ -128,7 +128,7 @@ export const journalExtraRoutes = new Hono<AppEnv>()
     return c.json(r, 201);
   })
 
-  .get('/journal/attachments/:id/download', async (c) => {
+  .get('/journal/attachments/:id/download', requireAnyPermission(ADD, EDIT), async (c) => {
     const [a] = await c.var.db.select().from(s.accountingAttachments).where(eq(s.accountingAttachments.id, Number(c.req.param('id'))));
     if (!a) throw notFound('Файлът');
     return c.body(a.data as Uint8Array<ArrayBuffer>, 200, {
@@ -231,7 +231,7 @@ export const journalExtraRoutes = new Hono<AppEnv>()
   })
 
   /** Current balance of accounts (IsAccountingBalanceEnabled, 02a 4.7): active year up to the date, opening balances included. */
-  .get('/journal/account-balances', async (c) => {
+  .get('/journal/account-balances', requireAnyPermission(ADD, EDIT), async (c) => {
     const { db, year } = c.var;
     const ids = (c.req.query('ids') ?? '').split(',').map(Number).filter((n) => Number.isInteger(n) && n > 0);
     if (!ids.length) return c.json({ rows: [] });

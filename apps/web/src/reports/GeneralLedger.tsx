@@ -1,8 +1,8 @@
-import { Fragment, useState } from 'react';
+import { Fragment } from 'react';
 import { api, qs } from '../api.ts';
 import { PartnerPicker } from '../components/pickers.tsx';
 import { Checkbox, Field, Select } from '../components/ui.tsx';
-import { AccountNumberPicker, Amt, LevelSelect, PeriodFields, ReportFrame, amt, periodText, sum, useReport, useYearPeriod, type Cell } from './common.tsx';
+import { AccountNumberPicker, Amt, LevelSelect, PeriodFields, ReportFrame, amt, periodText, sum, useReport, useYearPeriod, type Cell, useReportFilters } from './common.tsx';
 
 interface Balances {
   openingDebit: string;
@@ -15,7 +15,8 @@ interface Balances {
 interface Group {
   number: string;
   description: string;
-  counters: { number: string; description: string; debit: string; credit: string }[];
+  englishDescription?: string;
+  counters: { number: string; description: string; englishDescription?: string; debit: string; credit: string }[];
   totalDebit: string;
   totalCredit: string;
   balances?: Balances;
@@ -24,26 +25,28 @@ interface Group {
 /** Главна книга (spec 05 4.1): turnovers of every account against each corresponding account. */
 export function GeneralLedger() {
   const period = useYearPeriod();
-  const [f, setF] = useState({ ...period, account: '', level: 2, balances: false, zero: false, byExportMonth: false, companyId: null as number | null, companyName: '' as string | null });
+  const [f, setF] = useReportFilters('generalLedger', { ...period, account: '', level: 2, balances: false, zero: false, byExportMonth: false, english: false, companyId: null as number | null, companyName: '' as string | null });
   const report = useReport('generalLedger', f, (x) =>
     api.get<Group[]>(`/reports/general-ledger${qs({ from: x.from, to: x.to, account: x.account, level: x.level, balances: x.balances ? undefined : '0', zero: x.balances && x.zero, byExportMonth: x.byExportMonth, companyId: x.companyId })}`),
   );
   const a = report.applied ?? f;
   const withBal = a.balances;
+  // "Наименование на сметки на чужд език" (standard layout): the English name where the account has one.
+  const name = (r: { description: string; englishDescription?: string }) => (a.english && !a.balances && r.englishDescription ? r.englishDescription : r.description);
   const subtitle = [periodText(a), a.account && `сметка ${a.account}`, a.companyId && `партньор ${a.companyName}`].filter(Boolean).join(', ');
 
   const csv = (d: Group[]): Cell[][] => {
     const out: Cell[][] = [['Сметка', 'Наименование', 'Дебит', 'Кредит']];
     for (const g of d) {
-      out.push([g.number, g.description]);
-      for (const c of g.counters) out.push([c.number, c.description, amt(c.debit), amt(c.credit)]);
+      out.push([g.number, name(g)]);
+      for (const c of g.counters) out.push([c.number, name(c), amt(c.debit), amt(c.credit)]);
       out.push([`Общо за ${g.number}`, '', amt(g.totalDebit), amt(g.totalCredit)]);
       if (g.balances) {
         out.push(['Начално салдо', '', amt(g.balances.openingDebit), amt(g.balances.openingCredit)]);
         out.push(['Крайно салдо', '', amt(g.balances.closingDebit), amt(g.balances.closingCredit)]);
       }
     }
-    out.push(['Общо', '', sum(d, (g) => g.totalDebit), sum(d, (g) => g.totalCredit)]);
+    out.push(['Общо', '', amt(sum(d, (g) => g.totalDebit)), amt(sum(d, (g) => g.totalCredit))]);
     return out;
   };
 
@@ -78,6 +81,7 @@ export function GeneralLedger() {
         <>
           <Checkbox label="С отчитане на месец за експорт" checked={f.byExportMonth} onChange={(byExportMonth) => setF({ ...f, byExportMonth })} />
           {f.balances && <Checkbox label="Включване на сметки със салда и с нулеви обороти" checked={f.zero} onChange={(zero) => setF({ ...f, zero })} />}
+          {!f.balances && <Checkbox label="Наименование на сметки на чужд език" checked={f.english} onChange={(english) => setF({ ...f, english })} />}
         </>
       }
     >
@@ -97,13 +101,13 @@ export function GeneralLedger() {
                 <tr className="grp">
                   <td className="nowrap text-brand-700">{g.number}</td>
                   <td colSpan={3} className="text-brand-700">
-                    {g.description}
+                    {name(g)}
                   </td>
                 </tr>
                 {g.counters.map((c) => (
                   <tr key={c.number}>
                     <td className="nowrap pl-6!">{c.number}</td>
-                    <td className="max-w-[32rem] truncate">{c.description}</td>
+                    <td className="max-w-[32rem] truncate">{name(c)}</td>
                     <Amt v={c.debit} />
                     <Amt v={c.credit} />
                   </tr>

@@ -1,8 +1,7 @@
-import { useState } from 'react';
 import { api, qs } from '../../api.ts';
 import { Checkbox, Field, TextInput } from '../../components/ui.tsx';
 import { bgDate, money } from '../../format.ts';
-import { Amt, PeriodFields, ReportFrame, amt, periodText, useReport, useYearPeriod, type Cell } from '../common.tsx';
+import { Amt, PeriodFields, ReportFrame, amt, periodText, useReport, useYearPeriod, type Cell, useReportFilters } from '../common.tsx';
 import { CashAccountSelect, ReportTypeSelect } from './shared.tsx';
 
 interface Row {
@@ -23,7 +22,7 @@ const rate = (v: string) => (v ? Number(v).toFixed(5) : '');
 /** Касова книга (spec 05 6.8): cash receipts and payments by document with opening, turnover and closing. */
 export function CashBook() {
   const period = useYearPeriod();
-  const [f, setF] = useState({ ...period, type: 0, account: '501', sub: false, companyName: '' });
+  const [f, setF] = useReportFilters('cashBook', { ...period, type: 0, account: '501', sub: false, companyName: '' });
   const report = useReport('cashBook', f, (x) => api.get<Result>(`/reports/cash-book${qs({ from: x.from, to: x.to, account: x.account, sub: x.sub, companyName: x.companyName })}`), (x) => (x.account ? null : 'Не е избрана сметка.'));
   const a = report.applied ?? f;
   const fc = a.type === 1;

@@ -1,9 +1,9 @@
-import { Fragment, useState } from 'react';
+import { Fragment } from 'react';
 import { DOC_CHANNEL } from '@shmi/core';
 import { api } from '../../api.ts';
 import { Field, Select } from '../../components/ui.tsx';
 import { bgDate } from '../../format.ts';
-import { Amt, PeriodFields, ReportFrame, amt, periodText, useReport, useYearPeriod, type Cell } from '../../reports/common.tsx';
+import { Amt, PeriodFields, ReportFrame, amt, periodText, useReport, useYearPeriod, type Cell, useReportFilters } from '../../reports/common.tsx';
 
 /** "Дублирани и липсващи документи" (UI_Reporting_Validation_AccountingsValidation; spec 05 7.7, 04a 1.12). */
 
@@ -18,7 +18,7 @@ interface Result {
 }
 
 export function DocumentValidation() {
-  const [f, setF] = useState({ ...useYearPeriod(), reportType: 0, channel: '' });
+  const [f, setF] = useReportFilters('vatValidation', { ...useYearPeriod(), reportType: 0, channel: '' });
   const report = useReport('vatValidation', f, (x) => api.post<Result>('/vat/validation', { from: x.from, to: x.to, reportType: x.reportType, channel: x.channel || undefined }));
   const a = report.applied ?? f;
   const csv = (d: Result): Cell[][] => [

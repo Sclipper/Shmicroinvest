@@ -49,18 +49,20 @@ export async function loadVatAccountings(db: DbOrTx, w: LoadWindow): Promise<Vat
     id: number; number: string; financial_year_id: number; accounting_date: string; vies_month: string; transaction_type_id: number;
     vies_id: number | null; ica_type: number; ica_accounting_id: number | null; is_initial_balance: boolean; is_initial_correspondence: boolean;
     document_type_id: number | null; code: string | null; short_name: string | null; document_number: string | null; document_date: string | null;
-    branch_code: string | null; term: string | null;
+    branch_code: string | null; term: string | null; reference: string | null; optional_reference: string | null;
   }>(db, sql`
     WITH m AS (SELECT id, financial_year_id, number, ica_accounting_id FROM accountings WHERE ${match})
     SELECT a.id, a.number, a.financial_year_id, a.accounting_date::text AS accounting_date, a.vies_month::text AS vies_month,
       a.transaction_type_id, a.vies_id, a.ica_type, a.ica_accounting_id, a.is_initial_balance, a.is_initial_correspondence,
       doc.document_type_id, dt.code, dt.short_name, doc.number AS document_number, doc.date::text AS document_date,
-      b.code AS branch_code, t.description AS term
+      b.code AS branch_code, t.description AS term, r.description AS reference, r2.description AS optional_reference
     FROM accountings a
     LEFT JOIN documents doc ON doc.id = a.document_id
     LEFT JOIN document_types dt ON dt.id = doc.document_type_id
     LEFT JOIN branches b ON b.id = a.branch_id
     LEFT JOIN terms t ON t.id = a.term_id
+    LEFT JOIN reference_texts r ON r.id = a.reference_id
+    LEFT JOIN reference_texts r2 ON r2.id = a.optional_reference_id
     WHERE a.id IN (SELECT id FROM m)
       OR a.id IN (SELECT ica_accounting_id FROM m WHERE ica_accounting_id IS NOT NULL)
       OR a.ica_accounting_id IN (SELECT id FROM m)
@@ -122,7 +124,7 @@ export async function loadVatAccountings(db: DbOrTx, w: LoadWindow): Promise<Vat
     accountingDate: h.accounting_date, viesMonth: h.vies_month,
     transactionTypeId: h.transaction_type_id, documentTypeId: h.document_type_id,
     documentCode: h.code ?? '', documentShortName: h.short_name ?? '', documentNumber: h.document_number ?? '', documentDate: h.document_date ?? h.accounting_date,
-    branchCode: h.branch_code ?? '', term: h.term ?? '', viesId: h.vies_id, icaType: h.ica_type, icaAccountingId: h.ica_accounting_id,
+    branchCode: h.branch_code ?? '', term: h.term ?? '', reference: h.reference ?? '', optionalReference: h.optional_reference ?? '', viesId: h.vies_id, icaType: h.ica_type, icaAccountingId: h.ica_accounting_id,
     isInitialBalance: h.is_initial_balance, isInitialCorrespondence: h.is_initial_correspondence,
     extendedCodes: codes.get(h.id) ?? [], details: byAcc.get(h.id) ?? [],
   }));

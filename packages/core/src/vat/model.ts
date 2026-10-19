@@ -49,6 +49,9 @@ export interface VatAccounting {
   branchCode: string;
   /** Основание (Term). */
   term: string;
+  /** Забележка (Reference) and Втора забележка (OptionalReference): shown by the extended diaries. */
+  reference?: string;
+  optionalReference?: string;
   viesId: number | null;
   icaType: number;
   /** Link main -> protocol accounting. */

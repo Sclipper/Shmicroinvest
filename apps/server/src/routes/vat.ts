@@ -20,7 +20,7 @@ const amount = z.union([z.string(), z.number()]).transform((v) => String(v)).ref
 const reportBody = z.object({
   from: date, to: date,
   kl33: num, kl70: num, kl71: num, kl80: num, kl81: num, kl82: num,
-  autoFillCell71: z.boolean().optional(), sortByEntry: z.boolean().optional(), createVies: z.boolean().optional(),
+  autoFillCell71: z.boolean().optional(), sortByEntry: z.boolean().optional(), extended: z.boolean().optional(), createVies: z.boolean().optional(),
   subscriberName: z.string().optional(), subscriberEgn: z.string().optional(), subscriberRole: z.number().int().optional(),
 });
 
@@ -29,6 +29,7 @@ function reportQuery(q: Record<string, string>): VatReportParams {
     ...q,
     autoFillCell71: q.autoFillCell71 === '1' || q.autoFillCell71 === 'true',
     sortByEntry: q.sortByEntry === '1' || q.sortByEntry === 'true',
+    extended: q.extended === '1' || q.extended === 'true',
     createVies: q.createVies === '1' || q.createVies === 'true',
     subscriberRole: q.subscriberRole ? Number(q.subscriberRole) : undefined,
   });

@@ -111,6 +111,14 @@ export function requirePermission(...keys: string[]): MiddlewareHandler<AppEnv> 
   };
 }
 
+/** Passes when the user holds at least one of the keys (a route shared by screens with different rights). */
+export function requireAnyPermission(...keys: string[]): MiddlewareHandler<AppEnv> {
+  return async (c, next) => {
+    for (const k of keys) if (await c.var.can(k)) return next();
+    throw new ApiError(403, 'Нямате права за тази операция.');
+  };
+}
+
 /** Working date = today + per-session offset (ApplicationDate, spec 01b 5). */
 export function workingDate(session: SessionInfo): string {
   return addDays(todayInSofia(), session.state.appDateOffsetDays ?? 0);

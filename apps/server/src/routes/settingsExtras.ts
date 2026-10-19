@@ -258,4 +258,29 @@ export const settingsExtraRoutes = new Hono<AppEnv>()
       await setConfig(c.var.db, k, v, c.var.user.id);
     }
     return c.json({ ok: true });
+  })
+
+  // ---- last filter of every report, per user (GetPropertyStateValue / SavePropertyState, 05 1.2) ----
+  .get('/settings/report-filters/:name', async (c) => {
+    const raw = await getConfig(c.var.db, reportFilterKey(c.req.param('name')), c.var.user.id);
+    let value: unknown = null;
+    try {
+      value = raw ? JSON.parse(raw) : null;
+    } catch {
+      value = null;
+    }
+    return c.json({ value: value && typeof value === 'object' && !Array.isArray(value) ? value : null });
+  })
+
+  .put('/settings/report-filters/:name', zValidator('json', z.record(z.string(), z.unknown())), async (c) => {
+    const text = JSON.stringify(c.req.valid('json'));
+    if (text.length > 20_000) throw badRequest('Филтърът е твърде голям.');
+    await setConfig(c.var.db, reportFilterKey(c.req.param('name')), text, c.var.user.id);
+    return c.json({ ok: true });
   });
+
+/** Configuration key of a report's saved filter (Configuration.Key is 50 characters). */
+function reportFilterKey(name: string) {
+  if (!/^[A-Za-z0-9_:.-]{1,36}$/.test(name)) throw badRequest('Невалидно име на справка.');
+  return `ReportFilter.${name}`;
+}
