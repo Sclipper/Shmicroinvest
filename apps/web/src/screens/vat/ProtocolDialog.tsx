@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { protocolTemplate, protocolVat, VAT_MESSAGES } from '@shmi/core';
+import { ENTRY_FOLLOW_UP_MESSAGES, protocolTemplate, protocolVat, VAT_MESSAGES } from '@shmi/core';
 import { api, ApiError, qs } from '../../api.ts';
 import { useDialogs } from '../../components/dialogs.tsx';
 import { AccountPicker } from '../../components/pickers.tsx';
 import { Button, Dialog, Field, Select, Spinner, TextInput } from '../../components/ui.tsx';
 import { bgDate, money } from '../../format.ts';
 import { useInvalidate, useLookups } from '../../session.tsx';
+import { downloadDoc, esc, printHtml } from '../entry/print.ts';
 
 /**
  * "Протоколи по ЗДДС и други" (ICAViewModel, spec 02b 7 and 19): creates,
@@ -86,6 +87,8 @@ export function ProtocolDialog({ accountingId, onClose }: { accountingId: number
       });
       await invalidate('entries', 'reports', 'vat');
       if (r.warnings.length) await dialogs.messages(`Протокол ${r.documentNumber} е записан с предупреждения`, r.warnings);
+      // 02a 4.4: strPrintVOPProtocolConfirmation after the protocol is saved.
+      if (await dialogs.confirm(ENTRY_FOLLOW_UP_MESSAGES.strPrintVOPProtocolConfirmation)) await print();
       onClose();
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
@@ -194,7 +197,7 @@ export function ProtocolDialog({ accountingId, onClose }: { accountingId: number
   );
 }
 
-interface PrintData {
+export interface PrintData {
   company: { name: string; vatId: string; bulstat: string };
   partner: { name: string; vatNumber: string; bulstat: string } | null;
   main: { number: string; documentNumber: string; documentDate: string };
@@ -202,11 +205,8 @@ interface PrintData {
   terms: { id: number; description: string }[];
 }
 
-const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
-
-/** VOPProtocol print: a protocol under art. 117 ZDDS in a hidden frame. */
-export function printProtocol(d: PrintData) {
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Протокол ${esc(d.protocol.documentNumber)}</title>
+export function protocolHtml(d: PrintData) {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Протокол ${esc(d.protocol.documentNumber)}</title>
 <style>body{font:13px Arial,sans-serif;margin:24px}h1{font-size:18px;text-align:center}table{border-collapse:collapse;width:100%;margin-top:12px}td,th{border:1px solid #333;padding:4px 6px}td.n{text-align:right}.sig{display:flex;justify-content:space-between;margin-top:48px}</style></head><body>
 <h1>ПРОТОКОЛ № ${esc(d.protocol.documentNumber)} / ${bgDate(d.protocol.documentDate)}</h1>
 <p style="text-align:center">по чл. 117 от ЗДДС — ${esc(d.protocol.typeName)}</p>
@@ -219,17 +219,10 @@ export function printProtocol(d: PrintData) {
 <p>${d.terms.map((t) => esc(`${t.id} - ${t.description}`)).join('<br>')}</p>
 <div class="sig"><span>Съставил: ....................</span><span>Управител: ....................</span></div>
 </body></html>`;
-  const frame = document.createElement('iframe');
-  frame.style.position = 'fixed';
-  frame.style.width = '0';
-  frame.style.height = '0';
-  frame.style.border = '0';
-  document.body.appendChild(frame);
-  frame.contentDocument!.open();
-  frame.contentDocument!.write(html);
-  frame.contentDocument!.close();
-  setTimeout(() => {
-    frame.contentWindow!.print();
-    setTimeout(() => frame.remove(), 1000);
-  }, 50);
 }
+
+/** VOPProtocol print: a protocol under art. 117 ZDDS in a hidden frame. */
+export const printProtocol = (d: PrintData) => printHtml(protocolHtml(d));
+
+/** "Експорт на протокол по ЗДДС" (02a 7): the protocol as a Word document named "<yyyyMMdd> <number>" (05 11). */
+export const exportProtocol = (d: PrintData) => downloadDoc(`${d.protocol.documentDate.replaceAll('-', '')} ${d.protocol.documentNumber}.doc`, protocolHtml(d));

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { Copy, FilePlus2, Paperclip, Pencil, Printer, RefreshCw, SplitSquareHorizontal, Trash2, Undo2 } from 'lucide-react';
-import { formatMessage, JOURNAL_EXTRA_MESSAGES as XM } from '@shmi/core';
+import { Copy, FileDown, FilePlus2, FileText, Paperclip, Pencil, Printer, RefreshCw, SplitSquareHorizontal, Trash2, Undo2 } from 'lucide-react';
+import { ENTRY_FOLLOW_UP_MESSAGES as FM, formatMessage, JOURNAL_EXTRA_MESSAGES as XM } from '@shmi/core';
 import { api, qs } from '../api.ts';
 import { bgDate, money } from '../format.ts';
 import { useDialogs } from '../components/dialogs.tsx';
@@ -10,6 +10,8 @@ import { useCan, useInvalidate, useSession } from '../session.tsx';
 import { useWorkspace } from '../shell/workspace.tsx';
 import { fromServer } from './EntryEditor.tsx';
 import { ExpensesDialog, type ExpensesChoice } from './entry/EntryPanels.tsx';
+import { printEntryCards, type EntryCard } from './entry/print.ts';
+import { exportProtocol, printProtocol, type PrintData } from './vat/ProtocolDialog.tsx';
 import { confirmVoid } from './entry/saveFlow.ts';
 import { useShortcuts } from './entry/shortcuts.ts';
 import { EntryFilterForm, emptyFilter, filterParams, type EntryFilterValues } from './journal/EntryFilter.tsx';
@@ -101,13 +103,36 @@ export function Journal({ initial = false }: { initial?: boolean; tab?: unknown 
     }
   };
 
+  /** Печат (Ctrl+P): the entry cards of the selected entries, not the page (05 7.11). */
+  const printSelected = async () => {
+    const ids = rows.filter((r) => sel.includes(r.id)).map((r) => r.id);
+    if (!ids.length) return dialogs.alert(FM.strSelectAccountingToPrint);
+    try {
+      printEntryCards(await Promise.all(ids.map((id) => api.get<EntryCard>(`/journal/entries/${id}/print`))));
+    } catch (e) {
+      await dialogs.error(e);
+    }
+  };
+
+  /** "Печат / Експорт на протокол по ЗДДС" (02a 7): the VAT protocol of the selected entry. */
+  const protocol = async (how: 'print' | 'export') => {
+    if (!one) return;
+    try {
+      const d = await api.get<PrintData>(`/journal/entries/${one.id}/protocol`);
+      if (how === 'print') printProtocol(d);
+      else exportProtocol(d);
+    } catch (e) {
+      await dialogs.error(e);
+    }
+  };
+
   const onKeyDown = (e: React.KeyboardEvent) => {
     const cmd = shortcuts.match(e, LIST_COMMANDS);
     if (!cmd || (e.target as HTMLElement).closest('input,select,textarea')) return;
     e.preventDefault();
     e.stopPropagation();
     if (cmd === 'NewAccountingFromSelected') void copySelected();
-    else if (cmd === 'Print') window.print();
+    else if (cmd === 'Print') void printSelected();
     else if (cmd === 'SelectAllItems') setSel(rows.map((r) => r.id));
   };
 
@@ -137,9 +162,19 @@ export function Journal({ initial = false }: { initial?: boolean; tab?: unknown 
             </Button>
           </>
         )}
-        <Button icon={<Printer className="size-3.5" />} onClick={() => window.print()} title={shortcuts.gesture('Print')}>
+        <Button icon={<Printer className="size-3.5" />} onClick={printSelected} disabled={!sel.length} title={shortcuts.gesture('Print')}>
           Печат
         </Button>
+        {!initial && (
+          <>
+            <Button icon={<FileText className="size-3.5" />} disabled={!one} onClick={() => protocol('print')}>
+              Печат на протокол по ЗДДС
+            </Button>
+            <Button icon={<FileDown className="size-3.5" />} disabled={!one} onClick={() => protocol('export')}>
+              Експорт на протокол по ЗДДС
+            </Button>
+          </>
+        )}
         <Button icon={<RefreshCw className="size-3.5" />} onClick={() => q.refetch()}>
           Обнови
         </Button>
