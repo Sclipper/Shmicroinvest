@@ -8,6 +8,7 @@ import * as s from '../../db/company/schema/index.ts';
 import type { DbOrTx } from '../../db/provider.ts';
 import { rebuildAccountsTree } from '../chart.ts';
 import { saveEntry } from '../journal.ts';
+import { documentNumberUsed } from '../autoEntries.ts';
 import { reserveNumber } from '../sequences.ts';
 import { checkDates, currencyIdsByIso, documentTypesByShortName, findOrCreatePartner, loadChart, throwIf } from './common.ts';
 import { excelProductMessages, importProduct } from './products.ts';
@@ -78,7 +79,7 @@ export async function importExcel(tx: DbOrTx, sheets: ExcelSheet[], entity: Exce
       }, { year: ctx.year, userId: ctx.userId, skipHeaderChecks: true });
       if (d.ica && vatS && d.ica.debitAccount) {
         const ica = d.ica;
-        const number = ica.documentNumber ?? (await reserveNumber(tx, CHANNEL.VatProtocol, ctx.year.id, async () => false)).number;
+        const number = ica.documentNumber ?? (await reserveNumber(tx, CHANNEL.VatProtocol, ctx.year.id, (n) => documentNumberUsed(tx, ica.documentTypeId, ctx.year.id, n))).number;
         // A protocol is built even without VAT: call-off stock (type 6, codes 41-58), 163a and the
         // bread/flour types carry no ICAVAT but must reach the VAT diaries (04a 5.3 ICA items 3-7).
         const amount = round2(ica.vatAmount);

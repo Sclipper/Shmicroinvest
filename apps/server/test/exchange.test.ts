@@ -1,12 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
 import ExcelJS from 'exceljs';
-import { BACKUP_FORMAT_VERSION, formatTextImportLine, parseTransferXml, writeTransferXml, type TransferData } from '@shmi/core';
+import { BACKUP_FORMAT_VERSION, CHANNEL, DOCUMENT_TYPE, formatTextImportLine, parseTransferXml, writeTransferXml, type TransferData } from '@shmi/core';
 import { createTestCompany, type TestCompany } from './helpers.ts';
 import { encodeBackup } from '../src/services/exchange/backup.ts';
 import { encodeLogicalDump, logicalDump } from '../src/db/logicalDump.ts';
 import { queryRows } from '../src/db/provider.ts';
 import { insertPaymentLinks, openItems } from '../src/services/openItems.ts';
+import { peekNextNumber } from '../src/services/sequences.ts';
 
 let t: TestCompany;
 let call: TestCompany['call'];
@@ -308,6 +309,21 @@ describe('Excel import (04a 5)', () => {
       WHERE md.number IN ('0000000911', '0000000912') ORDER BY md.number`);
     expect(rows.map((x) => [x.doc, x.ica_type, x.dr, x.code])).toEqual([['0000000911', 8, '0.00', '07'], ['0000000912', 6, '0.00', '00']]);
     expect(rows[0]!.term).toBe('Самоначисляване на ДДС при доставка на хляб');
+  });
+
+  it('the protocol number from the channel skips a number typed by hand', async () => {
+    const d = await t.driver.company(t.companyDb);
+    const yearId = ((await call('GET', '/years')).body as { id: number; year: number }[]).find((y) => y.year === 2026)!.id;
+    const next = await peekNextNumber(d, CHANNEL.VatProtocol, yearId);
+    await t.post({ date: '2026-07-24', docType: DOCUMENT_TYPE.VatProtocol, docNumber: next, dr: [['602', 1]], cr: [['401', 1]], partner: await t.partner('Ръчен протокол ООД', ['401']) });
+    const content = await xlsx([['h'], ['602-401', '10', '24.07.2026', 'Хляб ЕООД', '161616161', '', '', '0000000913', 'Ф-ра', '24.07.2026', 'Хляб', '', '', '3-без ДК', '', '', '8-ВОП хляб', '7-Хляб']]);
+    const r = await call('POST', '/exchange/excel/import', { fileName: 'ica.xlsx', contentBase64: content, entity: 'operations', mapping: { ...opsMapping, hasIcaColumns: true, columns: { ...opsMapping.columns, OperationType: 'Q', OperationGoodType: 'R' } } });
+    expect(r.status, r.text).toBe(200);
+    const [row] = await queryRows<{ number: string }>(d, sql`
+      SELECT pd.number FROM accountings a JOIN documents md ON md.id = a.document_id JOIN accountings p ON p.id = a.ica_accounting_id JOIN documents pd ON pd.id = p.document_id
+      WHERE md.number = '0000000913'`);
+    expect(row!.number).not.toBe(next);
+    expect(Number(row!.number)).toBe(Number(next) + 1);
   });
 
   it('one bad row: nothing is saved; mapping errors block', async () => {

@@ -8,6 +8,7 @@ import type { CompanyDb, DbOrTx } from '../../db/provider.ts';
 import type { ActiveYear } from '../../context.ts';
 import { rebuildAccountsTree } from '../chart.ts';
 import { saveEntry, type LineInput } from '../journal.ts';
+import { documentNumberUsed } from '../autoEntries.ts';
 import { reserveNumber } from '../sequences.ts';
 import { checkDates, currencyIdsByIso, findOrCreatePartner, loadChart, throwIf, type Chart, type ImportAccount } from './common.ts';
 import { XML_PRODUCT_MESSAGES, importProduct } from './products.ts';
@@ -219,7 +220,7 @@ async function importAccounting(tx: DbOrTx, chart: Chart, acc: TdAccounting, iso
     const debitAcc = ica.terminateAssetCreditAccount ? chart.byNumber.get(ica.terminateAssetCreditAccount.trim()) : chart.byCategory(16);
     let number = ica.document.number?.trim() ?? '';
     if (!number && ica.document.documentType === DOCUMENT_TYPE.VatProtocol) {
-      number = (await reserveNumber(tx, CHANNEL.VatProtocol, ctx.year.id, async () => false)).number;
+      number = (await reserveNumber(tx, CHANNEL.VatProtocol, ctx.year.id, (n) => documentNumberUsed(tx, DOCUMENT_TYPE.VatProtocol, ctx.year.id, n))).number;
     }
     // Protocols without VAT (call-off stock, 163a, bread/flour) are imported too (04a 3.7 step 8).
     const vat = round2(ica.vatAmount ?? 0).toFixed(2);

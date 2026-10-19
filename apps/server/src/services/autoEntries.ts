@@ -9,7 +9,8 @@ import { saveEntry, type EntryInput, type SaveContext } from './journal.ts';
  * spec 02a 12): memorial orders of revaluation and closings, payment entries.
  */
 
-async function documentNumberUsed(db: DbOrTx, documentTypeId: number, financialYearId: number, number: string) {
+/** A document of the type with this number already exists in the year (a manually typed one included). */
+export async function documentNumberUsed(db: DbOrTx, documentTypeId: number, financialYearId: number, number: string) {
   const [r] = await db.select({ n: sql<number>`count(*)::int` }).from(s.accountings)
     .innerJoin(s.documents, eq(s.documents.id, s.accountings.documentId))
     .where(and(eq(s.accountings.financialYearId, financialYearId), eq(s.documents.documentTypeId, documentTypeId), eq(s.documents.number, number)));
