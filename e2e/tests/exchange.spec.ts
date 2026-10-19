@@ -324,7 +324,7 @@ test.describe('data exchange', () => {
       const wb = new ExcelJS.Workbook();
       const sap = wb.addWorksheet('Активи');
       sap.addRow(sapHeader);
-      sap.addRow([`E${n}`, `Е2Е машина ${n}`, 'Иван', '', 'Категория 2', '10.01.2025', '15.01.2025', '', '31.12.2025', 24, '', 1100, 0, 2400, 0, sapAccount, '241/2', '603', 'Не']);
+      sap.addRow([`E${n}`, `Е2Е машина ${n}`, 'Иван', '', 'Категория 2', '10.01.2025', '15.01.2025', '', '31.12.2025', 24, '', 1100, 0, 2400, 0, sapAccount, '241/6', '603', 'Не']);
       const dap = wb.addWorksheet('Активи - ДАП');
       dap.addRow(dapHeader);
       dap.addRow([`E${n}`, `Е2Е машина ${n}`, 'Категория 2', '10.01.2025', '15.01.2025', '', '31.12.2025', 24, '', 1200, 0, 2400]);
@@ -344,7 +344,7 @@ test.describe('data exchange', () => {
     await expect(errors).toContainText(`X${n}`);
     await expect(errors).toContainText('Не е намерена сметка с номер: 999.');
 
-    await dlg.getByTestId('asset-import-file').setInputFiles({ name: 'активи.xlsx', mimeType: xlsxType, buffer: await book('203', false) });
+    await dlg.getByTestId('asset-import-file').setInputFiles({ name: 'активи.xlsx', mimeType: xlsxType, buffer: await book('206', false) });
     await dlg.getByRole('button', { name: 'Импорт', exact: true }).click();
     const alert = page.getByRole('dialog').filter({ hasText: 'Импортирани дълготрайни активи: 1.' });
     await expect(alert).toBeVisible();

@@ -145,7 +145,7 @@ describe('chart-of-accounts templates (01a 7, 03a 1.3-1.4)', { timeout: 120_000 
       expect(by.get('609/1/1')).toMatchObject({ categoryId: 45, parentId: by.get('609/1')!.id });
       expect(by.get('453/1')!.categoryId).toBe(16);
       expect(by.has('415')).toBe(false);
-      expect(await chartSizes(n)).toEqual([{ is_euro: true, n: 301 }]);
+      expect(await chartSizes(n)).toEqual([{ is_euro: true, n: 289 }]);
       // F4 offers the missing accounts of the chosen template.
       expect((await n.call('DELETE', `/accounts/${by.get('716')!.id}`)).status).toBe(200);
       const f4 = (await n.call('GET', '/accounts/templates?q=71')).body as { number: string }[];
