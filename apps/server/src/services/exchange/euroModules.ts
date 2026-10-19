@@ -30,8 +30,8 @@ export async function convertFixedAssets(db: DbOrTx, _mapping: Map<number, numbe
 }
 
 /**
- * Templates: a template with an account that has no EUR counterpart (cash in
- * base currency is never mapped by default) is skipped; accounts are mapped,
+ * Templates: a template with a cash-in-base-currency account (04b 4) or an
+ * account without an EUR counterpart is skipped; accounts are mapped,
  * amounts zeroed, BGN lines become EUR lines; sign, VAT term and partner are kept.
  */
 export async function convertTemplates(db: DbOrTx, mapping: Map<number, number>): Promise<EuroHookResult> {

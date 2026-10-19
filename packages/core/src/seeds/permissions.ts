@@ -141,6 +141,7 @@ export const PERMISSIONS: [number, string, string, number | null, number][] = [
   [146, "UI_Reporting_Depreciations_InventoryListMOL", "Инвентаризационен опис на ДМА", 42, 5],
   // Used by the menu and its CanExecute but not seeded by Delta (01b 3.6); seeded so it can be restricted.
   [147, "UI_Other_GDPRValidator", "GDPR проверка", 8, 4],
+  [148, "UI_Edit_Administration_ReportExport", "Експорт към външни системи", 31, 10],
 ];
 
 /** Intended seeded denials (V1.01.033 meaning), referenced by key (spec 01b 3.5). */

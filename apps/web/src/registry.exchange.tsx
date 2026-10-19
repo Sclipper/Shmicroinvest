@@ -16,6 +16,6 @@ export const EXCHANGE_SCREENS: ScreenDef[] = [
   { id: 'restore', title: 'Възстановяване на фирма', component: RestoreScreen, permission: 'UI_File_RestoreDatabaseBackup' },
   { id: 'chooseCompany', title: 'Избор на фирма', component: ChooseCompany, permission: 'UI_File_ChooseCompany' },
   { id: 'euroConversion', title: 'Конвертиране към евро', component: EuroConversion, permission: 'UI_Edit_Administration' },
-  { id: 'reportExports', title: 'Експорт към външни системи', component: ReportExports, permission: 'UI_Reporting' },
+  { id: 'reportExports', title: 'Експорт към външни системи', component: ReportExports, permission: 'UI_Edit_Administration_ReportExport' },
   { id: 'deltaConversion', title: 'Импорт от Microinvest Делта', component: DeltaConversion, permission: 'UI_Edit_Administration_DeltaConversion' },
 ];

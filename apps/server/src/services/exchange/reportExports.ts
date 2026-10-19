@@ -1,6 +1,6 @@
 import { asc, eq, sql, type SQL } from 'drizzle-orm';
 import {
-  DataImportError, bindNamedParameters, checkExportParameters, critical, exportFileName, isReadOnlyQuery, parseExportReport, writeExportCsv, zipFiles,
+  DataImportError, bindNamedParameters, checkExportParameters, critical, exportFileName, forbiddenQueryReference, isReadOnlyQuery, parseExportReport, writeExportCsv, zipFiles,
 } from '@shmi/core';
 import * as s from '../../db/company/schema/index.ts';
 import type { CompanyDb, DbOrTx } from '../../db/provider.ts';
@@ -39,11 +39,14 @@ export async function runExportReport(db: CompanyDb, id: number, values: Record<
   for (const doc of def.documents) {
     const fileName = exportFileName(doc, def, values);
     if (!isReadOnlyQuery(doc.query)) throw new DataImportError(critical('strCannotExecuteSQLQuery'));
+    const forbidden = forbiddenQueryReference(doc.query);
+    if (forbidden) throw new DataImportError(critical('strCannotExecuteSQLQuery'), [`Заявката използва „${forbidden}“, до което експортите нямат достъп.`]);
     const { parts, params } = bindNamedParameters(doc.query, { ...values, '@fileName': fileName });
     let rows: Record<string, unknown>[];
     try {
       rows = await db.transaction(async (tx) => {
         await tx.execute(sql`SET TRANSACTION READ ONLY`);
+        await tx.execute(sql`SET LOCAL statement_timeout = '30s'`);
         return ((await tx.execute(toSql(parts, params))) as unknown as { rows: Record<string, unknown>[] }).rows;
       });
     } catch (e) {

@@ -8,12 +8,13 @@ import * as s from '../../db/company/schema/index.ts';
 import type { DbOrTx } from '../../db/provider.ts';
 import { rebuildAccountsTree } from '../chart.ts';
 import { saveEntry } from '../journal.ts';
+import { documentNumberUsed } from '../autoEntries.ts';
 import { reserveNumber } from '../sequences.ts';
 import { checkDates, currencyIdsByIso, documentTypesByShortName, findOrCreatePartner, loadChart, throwIf } from './common.ts';
 import { excelProductMessages, importProduct } from './products.ts';
 import { importChartAccount, type ImportCtx } from './transfer.ts';
 
-export interface ExcelImportResult { entity: ExcelEntity; rows: number; created: number }
+export interface ExcelImportResult { entity: ExcelEntity; rows: number; created: number; updated: number }
 
 /** Row iterator over the mapped columns; fully empty rows are skipped. */
 function* mappedRows(sheet: ExcelSheet, m: ExcelMapping, keys: string[]) {
@@ -41,6 +42,11 @@ export async function importExcel(tx: DbOrTx, sheets: ExcelSheet[], entity: Exce
   if (!rows.length) throw new DataImportError(critical('strImportFileHasNoDataErrorMessage'));
   const cellErr = (row: number, k: string, v: string) => new DataImportError(critical('strInvalidDataFormatInExcelCell', row, letter(k), v));
   let created = 0;
+  let updated = 0;
+  // Conflict mode (5.2, corrected D7): Error (default) keeps the entity-specific behaviour (partners and
+  // products matched and reused, a duplicate account number is an error); Update overwrites the matched
+  // partner, account or product. Operations and initial balances are always inserted.
+  const update = m.conflictMode === 'update';
 
   if (entity === 'operations') {
     const chart = await loadChart(tx, ctx.year.year);
@@ -73,23 +79,23 @@ export async function importExcel(tx: DbOrTx, sheets: ExcelSheet[], entity: Exce
       }, { year: ctx.year, userId: ctx.userId, skipHeaderChecks: true });
       if (d.ica && vatS && d.ica.debitAccount) {
         const ica = d.ica;
-        const number = ica.documentNumber ?? (await reserveNumber(tx, CHANNEL.VatProtocol, ctx.year.id, async () => false)).number;
+        const number = ica.documentNumber ?? (await reserveNumber(tx, CHANNEL.VatProtocol, ctx.year.id, (n) => documentNumberUsed(tx, ica.documentTypeId, ctx.year.id, n))).number;
+        // A protocol is built even without VAT: call-off stock (type 6, codes 41-58), 163a and the
+        // bread/flour types carry no ICAVAT but must reach the VAT diaries (04a 5.3 ICA items 3-7).
         const amount = round2(ica.vatAmount);
-        if (!amount.isZero()) {
-          const icaEntry = await saveEntry(tx, {
-            accountingDate: ica.accountingDate, documentDate: ica.documentDate, documentTypeId: ica.documentTypeId, documentNumber: number,
-            companyId: partner?.id ?? null, term: ica.term, reference: ica.reference || null, transactionTypeId: ica.transactionTypeId, viesMonth: ica.viesMonth,
-            icaType: ica.icaType, deliveryDescription: ica.deliveryDescription || null, source: 'import-excel',
-            debits: [{ accountId: ica.debitAccount!.id, amount: amount.toFixed(2), vatTermId: ica.vatTermId }],
-            credits: [{ accountId: vatS.id, amount: amount.toFixed(2), vatTermId: ica.vatTermId }],
-          }, { year: ctx.year, userId: ctx.userId, skipHeaderChecks: true });
-          if (ica.vatDiaryCode) await tx.insert(s.accountingExtendedDetails).values({ accountingId: icaEntry.id, vatDiaryCode: ica.vatDiaryCode });
-          await tx.update(s.accountings).set({ icaAccountingId: icaEntry.id, icaType: ica.icaType }).where(eq(s.accountings.id, saved.id));
-        }
+        const icaEntry = await saveEntry(tx, {
+          accountingDate: ica.accountingDate, documentDate: ica.documentDate, documentTypeId: ica.documentTypeId, documentNumber: number,
+          companyId: partner?.id ?? null, term: ica.term, reference: ica.reference || null, transactionTypeId: ica.transactionTypeId, viesMonth: ica.viesMonth,
+          icaType: ica.icaType, deliveryDescription: ica.deliveryDescription || null, source: 'import-excel',
+          debits: [{ accountId: ica.debitAccount!.id, amount: amount.toFixed(2), vatTermId: ica.vatTermId }],
+          credits: [{ accountId: vatS.id, amount: amount.toFixed(2), vatTermId: ica.vatTermId }],
+        }, { year: ctx.year, userId: ctx.userId, skipHeaderChecks: true });
+        if (ica.vatDiaryCode) await tx.insert(s.accountingExtendedDetails).values({ accountingId: icaEntry.id, vatDiaryCode: ica.vatDiaryCode });
+        await tx.update(s.accountings).set({ icaAccountingId: icaEntry.id, icaType: ica.icaType }).where(eq(s.accountings.id, saved.id));
       }
       created++;
     }
-    return { entity, rows: rows.length, created };
+    return { entity, rows: rows.length, created, updated };
   }
 
   if (entity === 'partners') {
@@ -107,10 +113,11 @@ export async function importExcel(tx: DbOrTx, sheets: ExcelSheet[], entity: Exce
       const r = await findOrCreatePartner(tx, {
         name, contactName: cellText(get('ContactName'), 254), bulstat: cellText(get('Bulstat'), 50), vatNumber: cellText(get('VATNumber'), 50),
         ibans: iban ? [iban] : [], address: { city: cellText(get('City'), 50), address: cellText(get('Address'), 254), phone: cellText(get('Phone'), 100) }, accountIds: ids,
-      });
+      }, undefined, { update });
       if (r?.created) created++;
+      if (r?.updated) updated++;
     }
-    return { entity, rows: rows.length, created };
+    return { entity, rows: rows.length, created, updated };
   }
 
   if (entity === 'chart') {
@@ -125,15 +132,16 @@ export async function importExcel(tx: DbOrTx, sheets: ExcelSheet[], entity: Exce
       if (catText && categoryId === null) throw cellErr(row, 'Category', catText);
       const ch = parseCharacter(cellText(get('Character')));
       if (!ch.ok) throw cellErr(row, 'Character', cellText(get('Character')));
-      await importChartAccount(tx, chart, { number, description, englishDescription: cellText(get('EnglishDescription'), 254), currency: cellText(get('Currency')) || undefined, categoryId, isActive: ch.isActive }, {
-        duplicate: new DataImportError(critical('strNotUniqueAccountNumberInExcel', row, letter('Number'), number)),
+      const r = await importChartAccount(tx, chart, { number, description, englishDescription: cellText(get('EnglishDescription'), 254), currency: cellText(get('Currency')) || undefined, categoryId, isActive: ch.isActive }, {
+        duplicate: update ? 'update' : new DataImportError(critical('strNotUniqueAccountNumberInExcel', row, letter('Number'), number)),
         fail: (key, value) => key === 'parent' ? new DataImportError(critical('strAccountParentNotFound', value))
           : key === 'currency' ? cellErr(row, 'Currency', value) : key === 'category' ? cellErr(row, 'Category', catText) : cellErr(row, 'Currency', value),
       });
-      created++;
+      if (r.created) created++;
+      if (r.updated) updated++;
     }
     await rebuildAccountsTree(tx);
-    return { entity, rows: rows.length, created };
+    return { entity, rows: rows.length, created, updated };
   }
 
   if (entity === 'products') {
@@ -143,10 +151,11 @@ export async function importExcel(tx: DbOrTx, sheets: ExcelSheet[], entity: Exce
       if (!name) throw cellErr(row, 'ProductName', '');
       const supply = cellText(get('IncrementAccount'), 50);
       if (!supply) throw new DataImportError(critical('strProductAccountNotFound', row, letter('IncrementAccount'), ''));
-      const r = await importProduct(tx, chart, { name, code: cellText(get('ProductCode'), 50), measure: cellText(get('Measure'), 50), price: '0', supplyAccountNumber: supply, releaseAccountNumber: cellText(get('DecrementAccount'), 50) || null }, excelProductMessages(row, letter));
+      const r = await importProduct(tx, chart, { name, code: cellText(get('ProductCode'), 50), measure: cellText(get('Measure'), 50), price: '0', supplyAccountNumber: supply, releaseAccountNumber: cellText(get('DecrementAccount'), 50) || null }, excelProductMessages(row, letter), { update });
       if (r.created) created++;
+      if (r.updated) updated++;
     }
-    return { entity, rows: rows.length, created };
+    return { entity, rows: rows.length, created, updated };
   }
 
   // Initial balances (5.4): one accounting per row, dated at the year's start.
@@ -216,7 +225,7 @@ export async function importExcel(tx: DbOrTx, sheets: ExcelSheet[], entity: Exce
     await tx.insert(s.accountInitialBalances).values({ accountId: acc.id, accountingId: head!.id, companyId, documentId, financialYearId: fy.id });
     created++;
   }
-  return { entity, rows: rows.length, created };
+  return { entity, rows: rows.length, created, updated };
 }
 
 /** Builds an empty template workbook for an entity (with the setup sheet filled from the mapping). */

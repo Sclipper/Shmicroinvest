@@ -8,6 +8,7 @@ import { ApiError } from '../../lib/errors.ts';
 import { rebuildAccountsTree } from '../chart.ts';
 import { setConfig } from '../config.ts';
 import { saveEntry } from '../journal.ts';
+import { documentNumberUsed } from '../autoEntries.ts';
 import { reserveNumber } from '../sequences.ts';
 import { checkDates, loadChart, throwIf } from './common.ts';
 import { importChartAccount, type ImportCtx } from './transfer.ts';
@@ -85,7 +86,7 @@ export async function importTrz(tx: DbOrTx, input: TrzImportInput, ctx: ImportCt
     if (amount.isZero()) continue;
     const debit = chart.byNumber.get(r.debit.trim())!;
     const credit = chart.byNumber.get(r.credit.trim())!;
-    const number = dt?.sequenceChannel ? (await reserveNumber(tx, dt.sequenceChannel, ctx.year.id, async () => false)).number : input.month.slice(5, 7);
+    const number = dt?.sequenceChannel ? (await reserveNumber(tx, dt.sequenceChannel, ctx.year.id, (n) => documentNumberUsed(tx, input.documentTypeId, ctx.year.id, n))).number : input.month.slice(5, 7);
     const saved = await saveEntry(tx, {
       accountingDate: input.accountingDate, documentDate: input.accountingDate, viesMonth: input.accountingDate, documentTypeId: input.documentTypeId, documentNumber: number,
       term: input.term, reference: r.itemName, transactionTypeId: 1, source: 'import-trz',

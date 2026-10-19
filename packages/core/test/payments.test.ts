@@ -97,6 +97,16 @@ describe('documents closing (02a 10)', () => {
     const pairs = closeForImport([p60, p40], [inv]);
     expect(pairs.map((p) => [p.liability.accountingId, p.payment.accountingId, p.amount.toFixed(2)])).toEqual([[1, 2, '60.00'], [1, 3, '40.00']]);
   });
+  it('import mode with a way of searching (XML SelectedWayOfSearching): only items of the same group pair', () => {
+    const inv1 = item({ accountingId: 1, open: '100', documentNumber: '0000000005' });
+    const inv2 = item({ accountingId: 2, open: '70', documentNumber: '6' });
+    const pay = item({ accountingId: 3, open: '-70', documentNumber: '6', accountingDate: '2026-02-01' });
+    const pr = (m?: 'document' | 'amount' | 'optionalReference') => closeForImport([pay], [inv1, inv2], m).map((p) => [p.liability.accountingId, p.amount.toFixed(2)]);
+    expect(pr()).toEqual([[1, '70.00']]);
+    expect(pr('document')).toEqual([[2, '70.00']]);
+    expect(pr('amount')).toEqual([[2, '70.00']]);
+    expect(pr('optionalReference')).toEqual([]);
+  });
   it('labels the operation type', () => {
     expect(operationLabel('client', 'liability')).toBe('Вземане');
     expect(operationLabel('supplier', 'liability')).toBe('Задължение');

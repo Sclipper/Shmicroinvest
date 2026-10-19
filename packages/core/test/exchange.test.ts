@@ -9,9 +9,9 @@ import {
   DEFAULT_BANK_TEMPLATES, defaultTemplateTokens, bankRecalc,
   parseTrzFeed, trzAggregate, trzGrid, trzDefaultTerm, trzDefaultAccountingDate, trzAccountingDateValid, trzAvailableMonths, TRZ_ITEMS,
   columnIndex, columnLetters, validateExcelMapping, parseExcelOperationRow, parseDirection, parseCharacter, icaDefaultTerm, cellDate, readSetupSheet,
-  toEuro, convertOpenings, defaultEuroMapping, accountDifference,
+  toEuro, convertOpenings, defaultEuroMapping, accountDifference, convertBalanceToEuro, euroBalanceKind,
   backupFileName, parseBackupFileName, sanitizeCompanyName, compareVersions,
-  parseExportReport, bindNamedParameters, writeExportCsv, exportFileName, checkExportParameters, isReadOnlyQuery,
+  parseExportReport, bindNamedParameters, writeExportCsv, exportFileName, checkExportParameters, isReadOnlyQuery, forbiddenQueryReference,
   msg, parseImportDate, fromOADate,
   type TransferData, type BankTemplateDef, type BankMapContext, type ExcelAccountInfo, type ExcelOperationsContext, type ExcelSheet,
 } from '../src/index.ts';
@@ -391,6 +391,21 @@ describe('Excel import (04a 5)', () => {
     expect(k({ Accounts: '601;602-401;403', Sums: '1;1' })).toEqual(['strInvalidDataFormatInExcelCell']);
     expect(k({ OperationType: '3-x', Term: '' })).toEqual(['strInvalidTermInRowField']);
   });
+  it('a VAT rate on a pair without a "%" side is strVATNotAllowedInOperationErrorWithRowNumber (5.3 VAT split)', () => {
+    const base = { Accounts: '602-401', Sums: '120', Date: '15.03.2025', Partner: 'Алфа', Term: 'x' };
+    let msgs: string[] = [];
+    try {
+      parseExcelOperationRow(row({ ...base, VATOperation: '2-покупка' }), letter, 3, ctx);
+    } catch (e) {
+      msgs = (e as DataImportError).messages.map((m) => `${m.key}: ${m.text}`);
+    }
+    expect(msgs).toEqual(['strVATNotAllowedInOperationErrorWithRowNumber: Грешка при импортирането на ред 3 от файла. В избрания тип операция не се използват ДДС сметки, а има начислен ДДС 20.00 лв.']);
+    // Per pair: the second pair's term (20 %) fails even when the first is VAT-free.
+    expect(errorKeys(() => parseExcelOperationRow(row({ ...base, Accounts: '601;602-401', Sums: '20;100', VATOperation: '1-x;2-покупка' }), letter, 3, ctx))).toEqual(['strVATNotAllowedInOperationErrorWithRowNumber']);
+    // A "%" side or a rate-free term is fine.
+    expect(parseExcelOperationRow(row({ ...base, Accounts: '602%-401', VATOperation: '2-покупка' }), letter, 3, ctx).debits.map((l) => l.amount)).toEqual(['100.00', '20.00']);
+    expect(parseExcelOperationRow(row({ ...base, VATOperation: '3-x' }), letter, 3, ctx).debits.map((l) => l.amount)).toEqual(['120.00']);
+  });
   it('no-VAT term with empty term imports; material analytics', () => {
     const d = parseExcelOperationRow(row({ Accounts: '304-401', Sums: '10(5|2)', Date: '15.03.2025', Partner: 'Алфа', VATOperation: '1-x' }), letter, 3, ctx);
     expect(d.debits[0]).toMatchObject({ quantity: '5', price: '2', amount: '10.00' });
@@ -444,9 +459,34 @@ describe('euro conversion (04b 4)', () => {
     expect(r.difference).toEqual({ accountId: 99, debit: '0.00', credit: '0.01' });
     expect(accountDifference('51.13', '0', '100', '0').toFixed(2)).toBe('0.00');
   });
-  it('default mapping by number, skipping cash in base currency', () => {
-    const m = defaultEuroMapping([{ id: 1, number: '501', categoryId: 21 }, { id: 2, number: '411', categoryId: 10 }, { id: 3, number: '999', categoryId: null }], [{ id: 11, number: '501', categoryId: 21 }, { id: 12, number: '411', categoryId: 10 }], { 3: 12 });
-    expect([...m.entries()]).toEqual([[2, 12], [3, 12]]);
+  it('default mapping by number (cash in base currency too); relations override, null leaves unmapped', () => {
+    const bgn = [{ id: 1, number: '501', categoryId: 21 }, { id: 2, number: '411', categoryId: 10 }, { id: 3, number: '999', categoryId: null }];
+    const eur = [{ id: 11, number: '501', categoryId: 21 }, { id: 12, number: '411', categoryId: 10 }];
+    expect([...defaultEuroMapping(bgn, eur, { 3: 12 }).entries()]).toEqual([[1, 11], [2, 12], [3, 12]]);
+    expect([...defaultEuroMapping(bgn, eur, { 1: null }).entries()]).toEqual([[2, 12]]);
+  });
+  it('opening kinds and their conversion (04b 4 per-account detail conversion)', () => {
+    const cur = { bgn: 1, eur: 2 };
+    expect(euroBalanceKind({ categoryId: 21, currencyId: 1 }, cur)).toBe('cash');
+    expect(euroBalanceKind({ categoryId: 26, currencyId: 2 }, cur)).toBe('eur');
+    expect(euroBalanceKind({ categoryId: 27, currencyId: 3 }, cur)).toBe('foreign');
+    expect(euroBalanceKind({ categoryId: 3, currencyId: 1, productId: 7 }, cur)).toBe('material');
+    expect(euroBalanceKind({ categoryId: 10, currencyId: 1 }, cur)).toBe('bgn');
+    const f = { priceDecimals: 3, rateDecimals: 5 };
+    const sides = (d: string, c: string, cd = '0', cc = '0', qd = '0', qc = '0') => ({ debit: d, credit: c, curDebit: cd, curCredit: cc, qtyDebit: qd, qtyCredit: qc });
+    const show = (x: ReturnType<typeof convertBalanceToEuro>) => [x.debit.toFixed(2), x.credit.toFixed(2), x.curDebit.toFixed(2), x.curCredit.toFixed(2), x.rate?.toString() ?? null, x.fixedRate?.toString() ?? null, x.price?.toString() ?? null];
+    // Cash: EUR amount, the leva as a BGN currency detail with FixedRate 1.
+    expect(show(convertBalanceToEuro('cash', sides('1000', '0'), f))).toEqual(['511.29', '0.00', '1000.00', '0.00', '0.51129', '1', null]);
+    // Foreign: the rate is recalculated, the amount follows the currency amount (not 180000 / 1.95583 = 92032.54).
+    expect(show(convertBalanceToEuro('foreign', sides('180000', '0', '100000'), f))).toEqual(['92033.00', '0.00', '100000.00', '0.00', '0.92033', null, null]);
+    // ... and without a currency amount the plain conversion is the fallback.
+    expect(show(convertBalanceToEuro('foreign', sides('0', '19.56'), f))).toEqual(['0.00', '10.00', '0.00', '0.00', null, null, null]);
+    // Material: price rounded to PriceFormat, amount = price x quantity (1000 x 0.511 = 511.00, not 1000 / 1.95583 = 511.29).
+    expect(show(convertBalanceToEuro('material', sides('1000', '0', '0', '0', '1000'), f))).toEqual(['511.00', '0.00', '0.00', '0.00', null, null, '0.511']);
+    expect(show(convertBalanceToEuro('material', sides('10', '0'), f))).toEqual(['5.11', '0.00', '0.00', '0.00', null, null, null]);
+    // BGN converted per side; EUR accounts copy their currency amounts.
+    expect(show(convertBalanceToEuro('bgn', sides('100', '0.01'), f))).toEqual(['51.13', '0.01', '0.00', '0.00', null, null, null]);
+    expect(show(convertBalanceToEuro('eur', sides('195.58', '0', '100'), f))).toEqual(['100.00', '0.00', '0.00', '0.00', null, null, null]);
   });
 });
 
@@ -481,6 +521,15 @@ describe('report exports (04a 8.3)', () => {
     expect(isReadOnlyQuery('select 1')).toBe(true);
     expect(isReadOnlyQuery('delete from x')).toBe(false);
     expect(isReadOnlyQuery('select 1; drop table x')).toBe(false);
+  });
+  it('protected names in an export query', () => {
+    expect(forbiddenQueryReference('select name, password_hash from users')).toBe('users');
+    expect(forbiddenQueryReference('select u.name from public."USERS" u')).toBe('users');
+    expect(forbiddenQueryReference('select value from configuration where key = @k')).toBe('configuration');
+    expect(forbiddenQueryReference("select pg_read_file('/etc/passwd')")).toBe('pg_read_file');
+    expect(forbiddenQueryReference('select $q$x$q$')).toBe('$$');
+    expect(forbiddenQueryReference("select 'users', number from accounts -- users\n /* configuration */")).toBeNull();
+    expect(forbiddenQueryReference('select number, description from accounts where is_euro')).toBeNull();
   });
   it('CSV has a trailing separator on every line', () => {
     expect(writeExportCsv([{ a: 1, b: 'x' }, { a: 2, b: null }], ';')).toBe('1;x;\r\n2;;\r\n');

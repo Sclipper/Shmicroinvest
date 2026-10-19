@@ -1,9 +1,9 @@
-import { Hono } from 'hono';
+import { Hono, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import {
-  EXCEL_ENTITIES, XML_OPERATION_CATEGORIES, decodeText, msg, parseTransferXml, parseTrzFeed, readSetupSheet, trzAggregate, trzAvailableMonths,
-  trzDefaultAccountingDate, trzDefaultTerm, trzGrid, trzTotal, writeTransferXml, type ExcelEntity, type ExcelMapping,
+  CLOSING_MODES, EXCEL_ENTITIES, XML_OPERATION_CATEGORIES, decodeText, msg, parseTransferXml, parseTrzFeed, readSetupSheet, trzAggregate, trzAvailableMonths,
+  trzDefaultAccountingDate, trzDefaultTerm, trzGrid, trzTotal, writeTransferXml, type ClosingMode, type ExcelEntity, type ExcelMapping,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import type { AppEnv } from '../context.ts';
@@ -29,6 +29,19 @@ const file = (c: { header: (k: string, v: string) => void; body: (b: ArrayBuffer
 const categoryMapBody = z.record(z.string(), z.number().int().nullable()).optional();
 const toCategoryMap = (m?: Record<string, number | null>) => Object.fromEntries(Object.entries(m ?? {}).map(([k, v]) => [Number(k), v]));
 const ENTITIES = ['operations', 'partners', 'chart', 'products', 'initialBalances'] as const;
+/**
+ * "Експорт към външни системи" (04a 8.3) sits under Редакция > Администриране with the key
+ * UI_Edit_Administration_ReportExport (06 1.3). Delta does not seed that key; it is seeded
+ * here under the group, and the group's key is checked as well, as the menu does.
+ */
+const REPORT_EXPORT = ['UI_Edit_Administration', 'UI_Edit_Administration_ReportExport'] as const;
+/** SelectedWayOfSearching: closing mode <-> the stored Delta enum name. */
+const WAYS: [ClosingMode, string][] = [['document', 'Document'], ['amount', 'Amount'], ['optionalReference', 'OptionalReference']];
+/** Report definitions carry SQL: only an administrator may add or remove them. */
+const requireAdmin: MiddlewareHandler<AppEnv> = async (c, next) => {
+  if (!c.var.user.isAdmin) throw new ApiError(403, 'Нямате права за тази операция.');
+  await next();
+};
 
 export const exchangeRoutes = new Hono<AppEnv>()
   // ------------------------------------------------------------------ XML (04a 3)
@@ -47,12 +60,27 @@ export const exchangeRoutes = new Hono<AppEnv>()
       categories: XML_OPERATION_CATEGORIES,
     });
   })
+  /** Documents closing after the import (IsDocumentsClosingEnabled / SelectedWayOfSearching, 3.5). */
+  .get('/exchange/xml/settings', requirePermission('UI_Operations_Import_XMLImport'), async (c) => {
+    const way = await getConfig(c.var.db, 'SelectedWayOfSearching', c.var.user.id);
+    return c.json({
+      isDocumentsClosingEnabled: (await getConfig(c.var.db, 'IsDocumentsClosingEnabled', c.var.user.id)) === 'True',
+      selectedWayOfSearching: WAYS.find((w) => w[1] === way)?.[0] ?? 'document',
+      ways: CLOSING_MODES.map((m) => ({ id: m.id, label: m.label })),
+    });
+  })
   .post('/exchange/xml/import', requirePermission('UI_Operations_Import_XMLImport'), async (c) => {
     const up = await readUpload(c);
     const categoryMap = toCategoryMap(categoryMapBody.parse(up.fields.categoryMap));
+    const closing = z.object({ isDocumentsClosingEnabled: z.boolean().optional(), selectedWayOfSearching: z.enum(['document', 'amount', 'optionalReference']).optional() }).parse(up.fields);
     const data = await importStep(async () => parseTransferXml(decodeText(up.bytes)), false);
     for (const [k, v] of Object.entries(categoryMap)) if (v) await setConfig(c.var.db, `Category_${k}`, String(v), c.var.user.id);
-    const r = await importStep(() => importTransferData(c.var.db, data, { year: c.var.year, userId: c.var.user.id, today: workingDate(c.var.session) }, categoryMap));
+    if (closing.isDocumentsClosingEnabled !== undefined) await setConfig(c.var.db, 'IsDocumentsClosingEnabled', closing.isDocumentsClosingEnabled ? 'True' : 'False', c.var.user.id);
+    const way = closing.selectedWayOfSearching ?? 'document';
+    if (closing.isDocumentsClosingEnabled) await setConfig(c.var.db, 'SelectedWayOfSearching', WAYS.find((w) => w[0] === way)![1], c.var.user.id);
+    const r = await importStep(() => importTransferData(c.var.db, data, { year: c.var.year, userId: c.var.user.id, today: workingDate(c.var.session) }, categoryMap, {
+      closeDocuments: closing.isDocumentsClosingEnabled ? way : null,
+    }));
     await logActivity(c.var.db, c.var.user.id, 'import', 'xml', null, `Импорт от XML: ${up.fileName}`);
     return c.json({ ...r, message: msg('strTransferCompleted') });
   })
@@ -158,17 +186,17 @@ export const exchangeRoutes = new Hono<AppEnv>()
   })
 
   // ------------------------------------------------------------------ report exports (04a 8.3)
-  .get('/exchange/report-exports', async (c) => c.json(await listExportReports(c.var.db)))
-  .post('/exchange/report-exports', async (c) => {
+  .get('/exchange/report-exports', requirePermission(...REPORT_EXPORT), async (c) => c.json(await listExportReports(c.var.db)))
+  .post('/exchange/report-exports', requirePermission(...REPORT_EXPORT), requireAdmin, async (c) => {
     const up = await readUpload(c);
     const r = await importStep(() => addExportReport(c.var.db, up.fileName, decodeText(up.bytes)), false);
     return c.json(r, 201);
   })
-  .delete('/exchange/report-exports/:id', async (c) => {
+  .delete('/exchange/report-exports/:id', requirePermission(...REPORT_EXPORT), requireAdmin, async (c) => {
     await c.var.db.delete(s.exportReports).where(eq(s.exportReports.id, Number(c.req.param('id'))));
     return c.json({ ok: true });
   })
-  .post('/exchange/report-exports/:id/run', zValidator('json', z.object({ parameters: z.record(z.string(), z.string()).default({}) })), async (c) => {
+  .post('/exchange/report-exports/:id/run', requirePermission(...REPORT_EXPORT), zValidator('json', z.object({ parameters: z.record(z.string(), z.string()).default({}) })), async (c) => {
     const r = await importStep(() => runExportReport(c.var.db, Number(c.req.param('id')), c.req.valid('json').parameters), false);
     if (!r) throw notFound('Отчетът');
     await logActivity(c.var.db, c.var.user.id, 'export', 'report', Number(c.req.param('id')), r.fileName);

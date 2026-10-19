@@ -121,6 +121,32 @@ export function isReadOnlyQuery(sql: string): boolean {
   return /^(select|with)\b/i.test(t);
 }
 
+/**
+ * Names an export query may not reference: the users table and its password
+ * hashes, the stored configuration (it holds service credentials), the
+ * server's role catalogs and the file, large-object, remote-connection and
+ * settings functions. Delta runs these queries with the application's SQL
+ * login (04a 8.3); here the definitions are user content, so they are fenced.
+ */
+export const EXPORT_QUERY_FORBIDDEN = [
+  'users', 'password_hash', 'passwordhash', 'sessions', 'configuration',
+  'pg_shadow', 'pg_authid', 'pg_user', 'pg_user_mapping', 'pg_user_mappings', 'pg_hba_file_rules', 'pg_file_settings',
+  'pg_read_file', 'pg_read_binary_file', 'pg_ls_dir', 'pg_stat_file', 'pg_ls_logdir', 'pg_ls_waldir', 'pg_ls_tmpdir',
+  'lo_import', 'lo_export', 'lo_get', 'lo_open', 'loread', 'dblink', 'dblink_exec', 'dblink_connect',
+  'set_config', 'current_setting', 'pg_reload_conf', 'pg_terminate_backend', 'pg_cancel_backend', 'pg_sleep', 'pg_sleep_for', 'pg_sleep_until',
+] as const;
+
+/** First forbidden name referenced by the query (outside string literals and comments), else null. */
+export function forbiddenQueryReference(query: string): string | null {
+  let s = query.replace(/--[^\n]*/g, ' ').replace(/\/\*[\s\S]*?\*\//g, ' ');
+  s = s.replace(/'(?:[^']|'')*'/g, ' ');
+  // Quoted identifiers count by their content; dollar-quoted strings are refused outright (they could hide anything).
+  if (/\$[A-Za-z_0-9]*\$/.test(s)) return '$$';
+  s = s.replace(/"((?:[^"]|"")*)"/g, (_, x: string) => ` ${x.replace(/""/g, '"')} `);
+  const tokens = new Set(s.toLowerCase().split(/[^a-z0-9_$]+/).filter(Boolean));
+  return EXPORT_QUERY_FORBIDDEN.find((n) => tokens.has(n)) ?? null;
+}
+
 /** Formats a .NET-style date pattern subset (yyyy, yy, MM, dd) of an ISO date. */
 export function formatDatePattern(iso: string, pattern: string): string {
   const [y, m, d] = iso.slice(0, 10).split('-');

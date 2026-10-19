@@ -103,6 +103,7 @@ export function TextImport() {
 /* ------------------------------------------------------------------ */
 
 interface XmlValidate { accounts: number; partners: number; products: number; accountings: number; operations: number; needsCategories: boolean }
+interface XmlSettings { isDocumentsClosingEnabled: boolean; selectedWayOfSearching: 'document' | 'amount' | 'optionalReference'; ways: { id: string; label: string }[] }
 
 export function XmlImport() {
   const invalidate = useInvalidate();
@@ -111,11 +112,16 @@ export function XmlImport() {
   const [info, setInfo] = useState<XmlValidate | null>(null);
   const cats = useQuery({ queryKey: ['exchange', 'xml-categories'], queryFn: () => api.get<CategoryRow[]>('/exchange/xml/categories') });
   const [map, setMap] = useState<Record<number, number | null>>({});
+  const settings = useQuery({ queryKey: ['exchange', 'xml-settings'], queryFn: () => api.get<XmlSettings>('/exchange/xml/settings') });
+  const [closing, setClosing] = useState<{ enabled: boolean; way: XmlSettings['selectedWayOfSearching'] }>({ enabled: false, way: 'document' });
   const [busy, setBusy] = useState(false);
   const res = useResult();
   useEffect(() => {
     if (cats.data) setMap(Object.fromEntries(cats.data.map((c) => [c.categoryId, c.accountId])));
   }, [cats.data]);
+  useEffect(() => {
+    if (settings.data) setClosing({ enabled: settings.data.isDocumentsClosingEnabled, way: settings.data.selectedWayOfSearching });
+  }, [settings.data]);
   const validate = async () => {
     if (!file) return;
     setBusy(true);
@@ -135,10 +141,12 @@ export function XmlImport() {
     setBusy(true);
     res.reset();
     try {
-      const r = await upload<{ accounts: number; partners: number; products: number; accountings: number; warnings: Message[]; message: string }>('/exchange/xml/import', file, { categoryMap: info?.needsCategories ? map : undefined });
+      const r = await upload<{ accounts: number; partners: number; products: number; accountings: number; closedPairs?: number; warnings: Message[]; message: string }>('/exchange/xml/import', file, {
+        categoryMap: info?.needsCategories ? map : undefined, isDocumentsClosingEnabled: closing.enabled, selectedWayOfSearching: closing.way,
+      });
       res.setMessages(r.warnings ?? []);
-      res.setDone(`${r.message} Сметки: ${r.accounts}, партньори: ${r.partners}, СМЗ: ${r.products}, контирания: ${r.accountings}.`);
-      await invalidate('entries', 'reports', 'partners', 'accounts');
+      res.setDone(`${r.message} Сметки: ${r.accounts}, партньори: ${r.partners}, СМЗ: ${r.products}, контирания: ${r.accountings}.${r.closedPairs !== undefined ? ` Закрити двойки документи: ${r.closedPairs}.` : ''}`);
+      await invalidate('entries', 'reports', 'partners', 'accounts', 'payments', 'exchange');
     } catch (e) {
       res.setMessages(errorMessages(e));
     } finally {
@@ -160,7 +168,7 @@ export function XmlImport() {
     >
       <div className="flex max-w-[800px] flex-col gap-3">
         {step === 0 && (
-          <Field label="XML файл (urn:Transfer)"><FileInput file={file} onChange={setFile} accept=".xml" /></Field>
+          <Field label="XML файл (urn:Transfer)"><FileInput file={file} onChange={setFile} accept=".xml" testId="xml-file" /></Field>
         )}
         {step === 1 && <CategoryGrid rows={cats.data ?? []} value={map} onChange={setMap} />}
         {step === 2 && info && (
@@ -173,6 +181,14 @@ export function XmlImport() {
               <tr><td>Операции</td><td className="text-right">{info.operations}</td></tr>
             </tbody>
           </table>
+        )}
+        {step === 2 && info && (
+          <div className="flex flex-wrap items-center gap-3">
+            <Checkbox label="Закриване на документи след импорта" checked={closing.enabled} onChange={(v) => setClosing({ ...closing, enabled: v })} />
+            <Select value={closing.way} disabled={!closing.enabled} onChange={(e) => setClosing({ ...closing, way: e.target.value as XmlSettings['selectedWayOfSearching'] })} className="w-64" aria-label="Начин на търсене">
+              {(settings.data?.ways ?? []).map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
+            </Select>
+          </div>
         )}
         <MessageList messages={res.messages} />
         {res.done && <div className="rounded-sm border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-800">{res.done}</div>}
@@ -269,8 +285,8 @@ export function ExcelImport() {
     setBusy(true);
     res.reset();
     try {
-      const r = await upload<{ rows: number; created: number; message: string }>('/exchange/excel/import', file, { entity, mapping: m });
-      res.setDone(`${r.message} Обработени редове: ${r.rows}, записани: ${r.created}.`);
+      const r = await upload<{ rows: number; created: number; updated: number; message: string }>('/exchange/excel/import', file, { entity, mapping: m });
+      res.setDone(`${r.message} Обработени редове: ${r.rows}, записани: ${r.created}${r.updated ? `, обновени: ${r.updated}` : ''}.`);
       await invalidate('entries', 'reports', 'partners', 'accounts', 'exchange');
     } catch (e) {
       res.setMessages(errorMessages(e));
@@ -300,7 +316,7 @@ export function ExcelImport() {
                 {entities.data?.map((e) => <option key={e.entity} value={e.entity}>{e.title}</option>)}
               </Select>
             </Field>
-            <Field label="Файл на Excel (*.xlsx)"><FileInput file={file} onChange={setFile} accept=".xlsx,.xls" /></Field>
+            <Field label="Файл на Excel (*.xlsx, *.xls)"><FileInput file={file} onChange={setFile} accept=".xlsx,.xls" /></Field>
           </>
         )}
         {step === 1 && def && (
@@ -316,11 +332,9 @@ export function ExcelImport() {
               {entity === 'operations' && <Checkbox label="Колони за ВОП" checked={!!m.hasIcaColumns} onChange={(v) => setM({ ...m, hasIcaColumns: v })} />}
               {entity !== 'operations' && entity !== 'initialBalances' && (
                 <Field label="При съществуващ запис">
-                  <Select value={m.conflictMode ?? 'ignore'} onChange={(e) => setM({ ...m, conflictMode: e.target.value as Mapping['conflictMode'] })} className="w-48">
-                    <option value="ignore">Пропускане</option>
+                  <Select value={m.conflictMode === 'update' ? 'update' : 'error'} onChange={(e) => setM({ ...m, conflictMode: e.target.value as Mapping['conflictMode'] })} className="w-48" aria-label="При съществуващ запис">
+                    <option value="error">{entity === 'chart' ? 'Грешка' : 'Без промяна'}</option>
                     <option value="update">Обновяване</option>
-                    <option value="insert">Добавяне на нов</option>
-                    <option value="error">Грешка</option>
                   </Select>
                 </Field>
               )}
