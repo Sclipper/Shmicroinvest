@@ -29,6 +29,12 @@ const file = (c: { header: (k: string, v: string) => void; body: (b: ArrayBuffer
 const categoryMapBody = z.record(z.string(), z.number().int().nullable()).optional();
 const toCategoryMap = (m?: Record<string, number | null>) => Object.fromEntries(Object.entries(m ?? {}).map(([k, v]) => [Number(k), v]));
 const ENTITIES = ['operations', 'partners', 'chart', 'products', 'initialBalances'] as const;
+/**
+ * "Експорт към външни системи" (04a 8.3) sits under Редакция > Администриране with the key
+ * UI_Edit_Administration_ReportExport (06 1.3). That key is not in the permission seed (an
+ * unknown key is allowed), so the menu group's key is checked as well.
+ */
+const REPORT_EXPORT = ['UI_Edit_Administration', 'UI_Edit_Administration_ReportExport'] as const;
 
 export const exchangeRoutes = new Hono<AppEnv>()
   // ------------------------------------------------------------------ XML (04a 3)
@@ -158,17 +164,17 @@ export const exchangeRoutes = new Hono<AppEnv>()
   })
 
   // ------------------------------------------------------------------ report exports (04a 8.3)
-  .get('/exchange/report-exports', async (c) => c.json(await listExportReports(c.var.db)))
-  .post('/exchange/report-exports', async (c) => {
+  .get('/exchange/report-exports', requirePermission(...REPORT_EXPORT), async (c) => c.json(await listExportReports(c.var.db)))
+  .post('/exchange/report-exports', requirePermission(...REPORT_EXPORT), async (c) => {
     const up = await readUpload(c);
     const r = await importStep(() => addExportReport(c.var.db, up.fileName, decodeText(up.bytes)), false);
     return c.json(r, 201);
   })
-  .delete('/exchange/report-exports/:id', async (c) => {
+  .delete('/exchange/report-exports/:id', requirePermission(...REPORT_EXPORT), async (c) => {
     await c.var.db.delete(s.exportReports).where(eq(s.exportReports.id, Number(c.req.param('id'))));
     return c.json({ ok: true });
   })
-  .post('/exchange/report-exports/:id/run', zValidator('json', z.object({ parameters: z.record(z.string(), z.string()).default({}) })), async (c) => {
+  .post('/exchange/report-exports/:id/run', requirePermission(...REPORT_EXPORT), zValidator('json', z.object({ parameters: z.record(z.string(), z.string()).default({}) })), async (c) => {
     const r = await importStep(() => runExportReport(c.var.db, Number(c.req.param('id')), c.req.valid('json').parameters), false);
     if (!r) throw notFound('Отчетът');
     await logActivity(c.var.db, c.var.user.id, 'export', 'report', Number(c.req.param('id')), r.fileName);

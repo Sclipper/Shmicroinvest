@@ -796,4 +796,23 @@ describe('report exports (04a 8.3)', () => {
     r = await call('POST', `/exchange/report-exports/${bad.body.id}/run`, { parameters: { '@prefix': '4' } });
     expect(keys(r)).toEqual(['strCannotExecuteSQLQuery']);
   });
+
+  it('needs Редакция > Администриране (UI_Edit_Administration_ReportExport, 06 1.3)', async () => {
+    const list = (await call('GET', '/exchange/report-exports')).body as { id: number }[];
+    const role = await call('POST', '/roles', { name: 'Без администриране' });
+    expect(role.status, role.text).toBeLessThan(300);
+    await call('PUT', `/roles/${role.body.id}/permissions`, { 31: false });
+    const u = await call('POST', '/users', { name: 'Без експорт', password: 'secret1', roleId: role.body.id });
+    expect(u.status, u.text).toBe(201);
+    const adminId = (await call('GET', '/session')).body.user.id;
+    expect((await call('POST', '/login', { companyDb: t.companyDb, userId: u.body.id, password: 'secret1' })).status).toBe(200);
+    try {
+      expect((await call('GET', '/exchange/report-exports')).status).toBe(403);
+      expect((await call('POST', `/exchange/report-exports/${list[0]!.id}/run`, { parameters: { '@prefix': '4' } })).status).toBe(403);
+      expect((await call('DELETE', `/exchange/report-exports/${list[0]!.id}`)).status).toBe(403);
+      expect((await call('POST', '/exchange/report-exports', { fileName: 'y.xml', text: '<x/>' })).status).toBe(403);
+    } finally {
+      expect((await call('POST', '/login', { companyDb: t.companyDb, userId: adminId, password: 'secret1' })).status).toBe(200);
+    }
+  });
 });
