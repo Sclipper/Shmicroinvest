@@ -4,12 +4,12 @@ import { requirePermission } from '../session.ts';
 import { readAppLog } from '../services/appLog.ts';
 import { runGdprValidation } from '../services/gdpr.ts';
 import { PRODUCT_VERSION } from '../services/companySetup.ts';
+import { isHttps } from '../lib/http.ts';
 
 export const platformRoutes = new Hono<AppEnv>()
   /** GDPR проверка (Други, UI_Other_GDPRValidator; 06 9). */
   .get('/gdpr/validate', requirePermission('UI_Other_GDPRValidator'), async (c) => {
-    const proto = c.req.header('x-forwarded-proto') ?? new URL(c.req.url).protocol.replace(':', '');
-    return c.json(await runGdprValidation(c.var.db, c.var.driver, { https: proto === 'https' }));
+    return c.json(await runGdprValidation(c.var.db, c.var.driver, { https: isHttps(c) }));
   })
 
   /** Дневник на приложението (Помощ, UI_Help_ApplicationLog; 06 7.2). */

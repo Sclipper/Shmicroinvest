@@ -13,6 +13,18 @@ const g = globalThis as { shmiTestSlot?: Promise<unknown> };
 if (!process.env.TEST_WORKER_INDEX) g.shmiTestSlot ??= acquireTestSlot(`e2e (port ${PORT}, pid ${process.pid})`);
 await g.shmiTestSlot;
 
+/**
+ * Storage of the test server: embedded PGlite in .e2e-data, or with
+ * E2E_DATABASE_URL (an admin URL of a Postgres server, e.g.
+ * postgres://postgres:pw@localhost:5432/postgres) a fresh catalog database
+ * shmi_e2e_<port> on that server, recreated for every run.
+ */
+const PG_ADMIN = process.env.E2E_DATABASE_URL;
+const sq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+const storage = PG_ADMIN
+  ? `DATABASE_URL=$(node ../apps/server/scripts/pg-reset-catalog.ts ${sq(PG_ADMIN)} shmi_e2e_${PORT}) && export DATABASE_URL &&`
+  : 'export DATA_DIR=$PWD/.e2e-data &&';
+
 /** Use the orb's Chrome for Testing when no Playwright browser is installed. */
 function chromePath() {
   if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
@@ -44,7 +56,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command: `rm -rf .e2e-data && pnpm --filter @shmi/web build >/dev/null && DATA_DIR=$PWD/.e2e-data PORT=${PORT} MAIL_TRANSPORT=json node ./server.ts`,
+    command: `rm -rf .e2e-data && pnpm --filter @shmi/web build >/dev/null && ${storage} PORT=${PORT} MAIL_TRANSPORT=json node ./server.ts`,
     url: `${BASE_URL}/api/health`,
     reuseExistingServer: false,
     timeout: 120_000,

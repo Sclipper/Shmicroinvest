@@ -18,9 +18,16 @@ pnpm --filter @shmi/server dev   # API on :3000; data in apps/server/.data
 pnpm --filter @shmi/web dev      # UI on :5173; proxies /api
 ```
 
-The first visit asks you to create the first company and its administrator. After that, only a logged-in user with the "Нова фирма" permission can create more companies.
+The first visit asks you to create the first company and its administrator. After that, only a logged-in user with the "Нова фирма" permission can create more companies. On a public server, creating the first company needs a setup token (`SHMI_SETUP_TOKEN`; in production one is generated and printed in the log when it is not set).
 
-To run in production, build the UI with `pnpm --filter @shmi/web build`, then run `pnpm --filter @shmi/server start`. The server serves `apps/web/dist`.
+## Production
+
+```bash
+pnpm release:bundle          # release/: server.js for Node 22+, web/, migrations, PGlite (~50 MiB)
+cd release && NODE_ENV=production DATA_DIR=/var/lib/shmelta SHMI_SETUP_TOKEN=… PORT=3000 node server.js
+```
+
+`deploy/` has a Dockerfile and a Docker Compose stack (PostgreSQL 17, Caddy with automatic HTTPS, daily backups). [docs/DEPLOY.md](docs/DEPLOY.md) covers a VPS, Amp Apps and generic Node hosting, the first run, backups and restores, upgrades, and every setting (also in [.env.example](.env.example)). Release notes are in [CHANGELOG.md](CHANGELOG.md).
 
 ### Off-site backups
 
@@ -62,9 +69,14 @@ The main menu follows Delta Pro (06 1.3); every item opens a working screen.
 
 ```bash
 pnpm -r test        # core unit tests + API integration tests (in-memory PGlite)
-pnpm -r typecheck
+pnpm typecheck
 pnpm test:e2e       # Playwright: builds the UI and starts a fresh server on :4310 (E2E_PORT)
+TEST_DATABASE_URL=postgres://postgres:pw@localhost:5432/postgres pnpm test:pg      # API tests on PostgreSQL
+E2E_DATABASE_URL=postgres://postgres:pw@localhost:5432/postgres pnpm test:e2e:pg  # e2e on PostgreSQL
+pnpm ci:all         # everything CI runs (.github/workflows/ci.yml), including the release bundle
 ```
+
+Database migrations are frozen since 1.0.0: a schema change adds a new migration (`pnpm --filter @shmi/server db:generate`), and `src/db/migrations.lock.json` makes the tests fail if a released one is edited.
 
 The e2e suite includes a smoke test that opens every menu screen and runs every report with its default filter.
 
@@ -77,3 +89,4 @@ The Microinvest Delta conversion has a pilot (`apps/server/test/deltaPilot.test.
 - The Fibank movements XML and the payment intermediaries' IBAN lists aren't included. The default per-bank import rules were rebuilt from the spec.
 - Bank-statement import binds payments only to open documents of the active year. Unpaid invoices of the previous year are offered once its balances are carried into the new year as openings per document.
 - The commercial and ЮЛНЦ chart templates were renumbered to match Delta's statement formulas (203 сгради, 206 машини, 241/n = depreciation of 20n). Each company stores the template version of its chart (`ChartTemplateVersion`; older companies are recognised by their accounts): F4 and "Избор на сметкоплан" offer the accounts of that version, and an older company's 2026 EUR chart is a copy of its BGN chart, so balances are converted to accounts of the same meaning. The statement formulas follow the new numbering, so an older company's balance-sheet rows for groups 20, 21 and 24 need their formulas adjusted in "Отчети и баланс".
+- The login screen lists the companies and their users before login, as Delta does. On a public address, restrict access in the reverse proxy if that matters (docs/DEPLOY.md, "Security notes").

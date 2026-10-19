@@ -14,6 +14,8 @@ import { logActivity } from '../services/audit.ts';
 import { applyLoginYear } from '../services/years.ts';
 import { logApp } from '../services/appLog.ts';
 import { transferEntities } from '../services/transfer.ts';
+import { setupToken, setupTokenMatches } from '../services/setup.ts';
+import { clientIp } from '../lib/http.ts';
 
 /** Physical name of a new company database: delta_<yyMMddHHmmss><random>. */
 function newDatabaseName() {
@@ -26,6 +28,13 @@ function newDatabaseName() {
 const failedLogins = new Map<string, { count: number; until: number }>();
 
 export const authRoutes = new Hono<AppEnv>()
+  /** First run: no company yet; the UI then asks for the setup token when one is required. */
+  .get('/setup', async (c) => {
+    const catalog = await c.var.driver.catalog();
+    const [any] = await catalog.select({ name: cat.companiesCatalog.name }).from(cat.companiesCatalog).limit(1);
+    return c.json({ firstRun: !any, setupTokenRequired: !any && !!setupToken() });
+  })
+
   /** Company list for the login screen ("Избор на фирма"). */
   .get('/companies', async (c) => {
     const catalog = await c.var.driver.catalog();
@@ -44,8 +53,9 @@ export const authRoutes = new Hono<AppEnv>()
   })
 
   /**
-   * New company (Нова фирма). Allowed for anybody while the server has no
-   * company yet (first run); afterwards only for a logged-in user with
+   * New company (Нова фирма). Allowed while the server has no company yet
+   * (first run) to whoever gives the setup token (when one is required,
+   * services/setup.ts); afterwards only for a logged-in user with
    * UI_File_NewCompany.
    */
   .post('/companies', zValidator('json', z.object({
@@ -55,6 +65,8 @@ export const authRoutes = new Hono<AppEnv>()
     year: z.number().int().min(1901).max(2078),
     bulstat: z.string().trim().max(50).optional(),
     chartTemplate: z.enum(['commercial', 'nonProfit', 'budget']).nullable().optional(),
+    /** First run on a server with SHMI_SETUP_TOKEN (or in production). */
+    setupToken: z.string().max(500).optional(),
     /** Data carried over from the active company (01b 1.2 TransferEntities). */
     transfer: z.object({
       chartOfAccounts: z.boolean().optional(), users: z.boolean().optional(), partners: z.boolean().optional(), accountings: z.boolean().optional(),
@@ -72,6 +84,14 @@ export const authRoutes = new Hono<AppEnv>()
       const [u] = await db.select().from(s.users).where(eq(s.users.id, session.userId));
       if (!u || !(await permissionResolver(db, u.userRoleId))('UI_File_NewCompany')) throw new ApiError(403, 'Нямате права за тази операция.');
       sourceDb = session.companyDb;
+    } else if (setupToken()) {
+      const ip = clientIp(c);
+      c.var.loginLimiter.check(ip);
+      if (!setupTokenMatches(body.setupToken)) {
+        c.var.loginLimiter.fail(ip);
+        await logApp({ level: 'warning', message: `Неуспешен опит за създаване на първата фирма от ${ip}: грешен ключ за инсталация` });
+        throw new ApiError(403, body.setupToken ? 'Невалиден ключ за инсталация.' : 'Въведете ключа за инсталация (SHMI_SETUP_TOKEN).', undefined, 'setupToken');
+      }
     }
     const transfer = body.transfer && Object.values(body.transfer).some(Boolean) ? body.transfer : null;
     if (transfer && !sourceDb) throw new ApiError(400, 'Няма активна фирма, от която да се прехвърлят данни.');
@@ -100,6 +120,8 @@ export const authRoutes = new Hono<AppEnv>()
     password: z.string(),
   })), async (c) => {
     const { companyDb, userId, password } = c.req.valid('json');
+    const ip = clientIp(c);
+    c.var.loginLimiter.check(ip);
     const key = `${companyDb}:${userId}`;
     const f = failedLogins.get(key);
     if (f && f.until > Date.now()) throw new ApiError(429, 'Твърде много неуспешни опити. Опитайте отново след малко.');
@@ -114,7 +136,8 @@ export const authRoutes = new Hono<AppEnv>()
       const count = (f?.count ?? 0) + 1;
       const pause = count % 3 === 0 ? Math.min(5000 * 2 ** (count / 3 - 1), 15 * 60_000) : 0;
       failedLogins.set(key, { count, until: pause ? Date.now() + pause : 0 });
-      await logApp({ level: 'warning', message: `Неуспешно вписване на потребител ${u?.name ?? userId}`, company: companyDb, user: u?.name ?? null });
+      c.var.loginLimiter.fail(ip);
+      await logApp({ level: 'warning', message: `Неуспешно вписване на потребител ${u?.name ?? userId}`, details: `IP ${ip}`, company: companyDb, user: u?.name ?? null });
       throw new ApiError(401, 'Въведено е грешно потребителско име или парола!');
     }
     failedLogins.delete(key);

@@ -1,4 +1,5 @@
 import type { CompanyDb, DbDriver } from './db/provider.ts';
+import type { FailureLimiter } from './lib/rateLimit.ts';
 
 export interface SessionInfo {
   id: string;
@@ -26,6 +27,8 @@ export interface ActiveYear {
 export type AppEnv = {
   Variables: {
     driver: DbDriver;
+    /** Failed logins / setup tokens by client IP (one per app). */
+    loginLimiter: FailureLimiter;
     session: SessionInfo;
     db: CompanyDb;
     user: ActiveUser;

@@ -1,9 +1,11 @@
 {
   "name": "@shmi/e2e",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:pg": "node -e \"if(!process.env.E2E_DATABASE_URL){console.error('Set E2E_DATABASE_URL=postgres://user:pass@host:5432/postgres');process.exit(1)}\" && playwright test"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",
