@@ -188,7 +188,7 @@ describe('Delta conversion: operations, chart and partners', () => {
     expect(by('504/1')!.currency).toBe('EUR');
     expect(by('504')!.currency).toBe('BGN');
     // The EUR chart of the active year is untouched.
-    const [{ n }] = await rows<{ n: number }>(db, sql`SELECT count(*)::int AS n FROM accounts WHERE is_euro AND number = '411/1'`);
+    const [{ n }] = (await rows<{ n: number }>(db, sql`SELECT count(*)::int AS n FROM accounts WHERE is_euro AND number = '411/1'`)) as [{ n: number }];
     expect(n).toBe(0);
   });
 
@@ -270,7 +270,7 @@ describe('Delta conversion: import types, Jet 3 and failures', () => {
     expect(r.body).toMatchObject({ type: 'partners', accounts: 0, partners: 2, partnersMatched: 1, accountings: 0 });
     const names = await rows<{ name: string }>(db, sql`SELECT name FROM companies ORDER BY id`);
     expect(names.map((n) => n.name)).toEqual(['Клиент АД', 'Доставчик ООД']);
-    const [{ n }] = await rows<{ n: number }>(db, sql`SELECT count(*)::int AS n FROM accountings`);
+    const [{ n }] = (await rows<{ n: number }>(db, sql`SELECT count(*)::int AS n FROM accountings`)) as [{ n: number }];
     expect(n).toBe(0);
   });
 
@@ -286,7 +286,7 @@ describe('Delta conversion: import types, Jet 3 and failures', () => {
     const r = await upload(writeJet(deltaTables()), 'chartAndPartners');
     expect(r.status, r.text).toBe(200);
     expect(r.body).toMatchObject({ accounts: 12, partners: 2, accountings: 0, years: [] });
-    const [{ n }] = await rows<{ n: number }>(db, sql`SELECT count(*)::int AS n FROM financial_years`);
+    const [{ n }] = (await rows<{ n: number }>(db, sql`SELECT count(*)::int AS n FROM financial_years`)) as [{ n: number }];
     expect(n).toBe(1);
   });
 

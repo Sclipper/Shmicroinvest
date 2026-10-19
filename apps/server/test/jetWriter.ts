@@ -1,5 +1,3 @@
-import { dec } from '@shmi/core';
-
 /**
  * Minimal Microsoft Jet (Access .mdb) writer for tests: Jet 3 (Access 97,
  * text in windows-1251) and Jet 4 (UCS-2 text). It writes what a reader
@@ -9,6 +7,7 @@ import { dec } from '@shmi/core';
  * long-value pages; records stay small (Jet 3: under 256 bytes).
  *
  * Layout and offsets follow mdbtools' HACKING notes, as read by mdb-reader.
+ * Self-contained (no workspace imports) so the e2e specs can use it too.
  */
 
 export type JetType = 'boolean' | 'byte' | 'integer' | 'long' | 'currency' | 'double' | 'datetime' | 'text';
@@ -76,6 +75,14 @@ function layout(t: JetTable, v: 3 | 4): Layout[] {
   });
 }
 
+/** Currency is a 64-bit integer of 1/10000 units. */
+function currencyUnits(value: unknown): bigint {
+  const m = /^([-+])?(\d*)(?:\.(\d*))?$/.exec(String(value).trim());
+  if (!m) throw new Error(`Not a currency value: ${String(value)}`);
+  const units = BigInt(`${m[2] || '0'}${(m[3] ?? '').padEnd(4, '0').slice(0, 4)}`);
+  return m[1] === '-' ? -units : units;
+}
+
 function fixedValue(type: Exclude<JetType, 'text' | 'boolean'>, value: unknown): Buffer {
   const b = Buffer.alloc(FIXED_SIZE[type]);
   switch (type) {
@@ -83,7 +90,7 @@ function fixedValue(type: Exclude<JetType, 'text' | 'boolean'>, value: unknown):
     case 'integer': b.writeInt16LE(Number(value)); break;
     case 'long': b.writeInt32LE(Number(value)); break;
     case 'double': b.writeDoubleLE(Number(value)); break;
-    case 'currency': b.writeBigInt64LE(BigInt(dec(String(value)).times(10000).toFixed(0))); break;
+    case 'currency': b.writeBigInt64LE(currencyUnits(value)); break;
     case 'datetime': {
       const d = value instanceof Date ? value : new Date(String(value));
       b.writeDoubleLE(d.getTime() / 86400000 + 25569);
@@ -152,7 +159,7 @@ function dataPage(records: Buffer[], tdefPage: number, f: Format): Buffer {
   p[1] = 0x01;
   p.writeUInt32LE(tdefPage, 4);
   p.writeUInt16LE(records.length, f.rco);
-  let end = f.pageSize;
+  let end: number = f.pageSize;
   records.forEach((r, i) => {
     const start = end - r.length;
     r.copy(p, start);
