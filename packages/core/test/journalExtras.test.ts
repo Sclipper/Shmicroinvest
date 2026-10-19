@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  amountFromCurrency, buildLegs, currencyLine, currencyShares, DEFAULT_SHORTCUTS, distributeExpenses, defaultDistributionSide,
+  amountFromCurrency, buildLegs, massEditConfirmations, currencyLine, currencyShares, DEFAULT_SHORTCUTS, distributeExpenses, defaultDistributionSide,
   documentNumberWarnings, duplicateShortcutWarnings, effectiveShortcuts, fastRowAccountMessages, fastRowDuplicates,
   fastRowTransactionType, formatMessage, group60ClosingDrafts, isAllowedEditableGesture, JOURNAL_EXTRA_MESSAGES as M, materialLine,
   preSaveConfirmations, reorderNumbers, sequenceEditorValues, sequencePreview, sequenceStorage, splitByWeights, validateAttachment,
@@ -235,5 +235,15 @@ describe('06 2.6 shortcuts', () => {
     expect(isAllowedEditableGesture('Ctrl+F5')).toBe(true);
     expect(isAllowedEditableGesture('Alt+D')).toBe(true);
     expect(isAllowedEditableGesture('Ctrl+Space')).toBe(false);
+  });
+});
+
+describe('massEditConfirmations (02b 12)', () => {
+  it('asks once per kind: more than one VAT regime, bread/flour ICA protocol', () => {
+    expect(massEditConfirmations([{ vatTermIds: [2, 2, null], icaType: 0 }])).toEqual([]);
+    expect(massEditConfirmations([{ vatTermIds: [2, 3], icaType: 0 }, { vatTermIds: [7, 1], icaType: 0 }]).map((m) => m.key)).toEqual(['strDifferentVATEditWarning']);
+    // ВОП - хляб и брашно is type 8; domestic bread/flour (9) is not asked.
+    expect(massEditConfirmations([{ vatTermIds: [2], icaType: 9 }])).toEqual([]);
+    expect(massEditConfirmations([{ vatTermIds: [2, 3], icaType: 8 }]).map((m) => [m.key, m.severity])).toEqual([['strDifferentVATEditWarning', 'warning'], ['strICATypeDefaultBreadFlourEditWarning', 'warning']]);
   });
 });

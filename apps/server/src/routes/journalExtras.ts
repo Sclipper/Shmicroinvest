@@ -57,6 +57,7 @@ const massBody = z.object({
   fromDebitAccount: z.string().max(30).nullable().optional(),
   fromCreditAccount: z.string().max(30).nullable().optional(),
   newAccount: z.string().max(30).nullable().optional(),
+  force: z.boolean().optional(),
 });
 
 const correspondenceBody = z.object({

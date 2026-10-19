@@ -1,6 +1,7 @@
 import { dec, round, round2, sum, ZERO, type Dec, type DecInput } from './money.ts';
 import { DOCUMENT_TYPE, TRANSACTION_TYPE } from './seeds/lookups.ts';
 import type { ValidationMessage } from './journal.ts';
+import { ICA_TYPE } from './vat/constants.ts';
 
 /**
  * Journal extras (spec 02a sections 2-8): row calculations beyond the basic
@@ -43,6 +44,8 @@ export const JOURNAL_EXTRA_MESSAGES = {
   strCreatingExpensesDistribution: 'Създаване на разпределение на допълнителни разходи...',
   // 6 mass edit
   strEditAccountings: 'Редакция на контировки',
+  strDifferentVATEditWarning: 'В избраното за редакция контиране има повече от един режим по ДДС. Желаете ли продължение?',
+  strICATypeDefaultBreadFlourEditWarning: 'Към избраното за редакция контиране има операция ВОП - хляб и брашно. Желаете ли продължение?',
   strHeaderEditAccountingData: 'Данни за редакция на контировки',
   strWrongStartDate: '"От дата" е различна от текущата счетоводна година.',
   strWrongEndDate: '"До дата" е различна от текущата счетоводна година.',
@@ -367,6 +370,17 @@ export interface MassEditChanges {
 }
 
 const filled = (v: unknown) => v !== null && v !== undefined && String(v).trim() !== '';
+
+/**
+ * Yes/No questions before a mass edit (02b 12): an entry with more than one
+ * VAT regime, or with a bread/flour ICA protocol (ВОП - хляб и брашно).
+ */
+export function massEditConfirmations(entries: { vatTermIds: (number | null)[]; icaType: number }[]): Message[] {
+  const out: Message[] = [];
+  if (entries.some((e) => new Set(e.vatTermIds.filter((v) => v != null)).size > 1)) out.push(msg('strDifferentVATEditWarning', 'warning'));
+  if (entries.some((e) => e.icaType === ICA_TYPE.BreadFlourAcquisition)) out.push(msg('strICATypeDefaultBreadFlourEditWarning', 'warning'));
+  return out;
+}
 
 /** Mass edit validation in the documented order (02a 6.2); all critical. */
 export function validateMassEdit(

@@ -201,12 +201,13 @@ describe('entry editor: automatic payment and binding (02a 4.3, 8.2)', () => {
 
   it('a failing auto payment leaves no entry behind', async () => {
     const cli = await t.partner('Неуспешно разплащане ООД', ['411']);
-    const before = (await t.call('GET', '/entries?limit=1000')).body.length;
+    const before = (await t.call('GET', '/entries?limit=1000')).body.rows.length;
     // A bank account needs a document number for the payment: the save fails as a whole.
     const r = await t.tryPost({ date: '2026-07-01', partner: cli, dr: [['411', 50]], cr: [['702', 50]], payment: { paymentAccountId: t.acc('503'), documentTypeId: 11, documentNumber: '' } });
     expect(r.status).toBe(422);
     expect(keys(r)).toEqual(['strMissingDocumentNumberInPayment']);
-    expect((await t.call('GET', '/entries?limit=1000')).body.length).toBe(before);
+    expect((await t.call('GET', '/entries?limit=1000')).body.rows.length).toBe(before);
+    expect(before).toBeGreaterThan(0);
     expect((await openOf(cli)).liabilities).toHaveLength(0);
   });
 

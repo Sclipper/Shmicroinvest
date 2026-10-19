@@ -243,6 +243,27 @@ describe('02a 6 mass edit', () => {
   });
 });
 
+describe('02b 12 mass edit VAT questions', () => {
+  it('asks before editing an entry with two VAT regimes or a bread/flour protocol; Yes (force) edits', async () => {
+    const mixed = await t.post({
+      date: '2026-06-12', docType: 1, partner: supplierA, transactionTypeId: 2, term: 'Доставка',
+      dr: [['602', '50', { vatTermId: 3 }], ['602', '100', { vatTermId: 2 }], ['453/1', '20', { vatTermId: 2 }]], cr: [['401', '170', { vatTermId: 2, companyId: supplierA }]],
+    });
+    const plain = await t.post({ date: '2026-06-12', docType: 10, partner: supplierA, term: 'Плащане', dr: [['401', '5', { companyId: supplierA }]], cr: [['503', '5']] });
+    expect((await call('POST', '/journal/mass-edit', { ids: [plain.id], newReference: 'без въпрос' })).status).toBe(200);
+    const asked = await call('POST', '/journal/mass-edit', { ids: [mixed.id, plain.id], newReference: 'ДДС' });
+    expect(asked.status).toBe(409);
+    expect(keys(asked.body)).toEqual(['strDifferentVATEditWarning']);
+    expect((await call('GET', `/entries/${mixed.id}`)).body.reference).not.toBe('ДДС');
+    const db = await t.driver.company(t.companyDb);
+    await db.execute(`UPDATE accountings SET ica_type = 8 WHERE id = ${plain.id}`);
+    expect(keys((await call('POST', '/journal/mass-edit', { ids: [plain.id], newReference: 'ДДС' })).body)).toEqual(['strICATypeDefaultBreadFlourEditWarning']);
+    const yes = await call('POST', '/journal/mass-edit', { ids: [mixed.id, plain.id], newReference: 'ДДС', force: true });
+    expect(yes.status, yes.text).toBe(200);
+    expect((await call('GET', `/entries/${mixed.id}`)).body.reference).toBe('ДДС');
+  });
+});
+
 describe('02a 7 list filter', () => {
   it('filters by number range, accounts, amount and document number', async () => {
     const e = await t.post({ date: '2026-07-01', docType: 5, docNumber: 'PR-1', term: 'Филтър', dr: [['602', '123.45']], cr: [['503', '123.45']] });

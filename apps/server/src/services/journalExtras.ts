@@ -2,7 +2,7 @@ import { and, asc, eq, inArray, ne, sql, type SQL } from 'drizzle-orm';
 import {
   CHANNEL, dec, distributeExpenses, fastRowAccountMessages, fastRowDuplicates, fastRowTransactionType, formatMessage,
   group60ClosingDrafts, hasCritical, isCompanyCategory, isMonthLocked, JOURNAL_EXTRA_MESSAGES as X, JOURNAL_MESSAGES,
-  reorderNumbers, round2, TRANSACTION_TYPE, validateEntry, validateAttachment, validateMassEdit, isClientCategory, PAYMENT_ACCOUNT_CATEGORIES, PAYMENT_CATEGORIES,
+  reorderNumbers, round2, TRANSACTION_TYPE, validateEntry, validateAttachment, validateMassEdit, massEditConfirmations, isClientCategory, PAYMENT_ACCOUNT_CATEGORIES, PAYMENT_CATEGORIES,
   type FastRow, type MassEditAccount, type MassEditChanges, type MassEditEntry, type ValidationMessage,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
@@ -176,6 +176,7 @@ export async function addAttachment(db: DbOrTx, accountingId: number, a: { fileN
 
 export interface MassEditInput extends MassEditChanges {
   ids: number[];
+  force?: boolean;
 }
 
 async function attachedNumbers(db: DbOrTx, ids: number[]) {
@@ -229,6 +230,10 @@ export async function massEdit(db: DbOrTx, input: MassEditInput, year: ActiveYea
   }
   const messages = validateMassEdit(entries, input, { activeYear: year.year, accounts });
   if (messages.length) throw new ApiError(422, X.strEditAccountings, messages);
+  if (!input.force) {
+    const questions = massEditConfirmations(heads.map((h) => ({ icaType: h.icaType, vatTermIds: details.filter((d) => d.accountingId === h.id).map((d) => d.vatTermId) })));
+    if (questions.length) throw new ApiError(409, X.strEditAccountings, questions, 'confirm');
+  }
 
   const termId = await resolveText(db, s.terms, input.newTerm);
   const referenceId = await resolveText(db, s.referenceTexts, input.newReference);

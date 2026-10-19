@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Eraser, Save, X } from 'lucide-react';
 import { JOURNAL_EXTRA_MESSAGES as XM } from '@shmi/core';
-import { api, qs } from '../../api.ts';
+import { api, ApiError, qs } from '../../api.ts';
 import { useDialogs } from '../../components/dialogs.tsx';
 import { DictionaryInput } from '../../components/DictionaryInput.tsx';
 import { PartnerPicker } from '../../components/pickers.tsx';
@@ -56,7 +56,7 @@ export function MassEdit({ tab }: ScreenProps) {
   const save = async () => {
     setSaving(true);
     try {
-      const r = await api.post<{ updated: number }>('/journal/mass-edit', {
+      const send = (force?: boolean) => api.post<{ updated: number }>('/journal/mass-edit', {
         ids: checked,
         newAccountingDate: v.newAccountingDate || null,
         newDocumentDate: v.newDocumentDate || null,
@@ -68,7 +68,17 @@ export function MassEdit({ tab }: ScreenProps) {
         fromDebitAccount: v.fromDebitAccount || null,
         fromCreditAccount: v.fromCreditAccount || null,
         newAccount: v.newAccount || null,
+        force,
       });
+      // 02b 12: Yes/No questions (more than one VAT regime, bread/flour protocol) come back as 409.
+      let r: { updated: number };
+      try {
+        r = await send();
+      } catch (e) {
+        if (!(e instanceof ApiError) || e.status !== 409) throw e;
+        for (const m of e.messages ?? []) if (!(await dialogs.confirm(m.text))) return;
+        r = await send(true);
+      }
       await invalidate('entries', 'reports', 'accounts', 'dictionary');
       await dialogs.alert(`Редактирани контировки: ${r.updated}.`, XM.strEditAccountings);
       // 6.3: the grid, the filter and the new values are cleared, all rows unchecked.
