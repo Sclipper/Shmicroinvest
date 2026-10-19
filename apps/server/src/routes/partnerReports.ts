@@ -1,8 +1,9 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../context.ts';
-import { requirePermission } from '../session.ts';
+import { badRequest } from '../lib/errors.ts';
+import { requireAnyPermission, requirePermission } from '../session.ts';
 import {
-  confirmationLetters, overdues, partnerDebts, partnerMovement, paymentsReport, receivedIssued, type DebtLevel,
+  COMPANIES_FILTER_COLUMNS, companiesReport, confirmationLetters, overdues, partnerDebts, partnerMovement, paymentsReport, receivedIssued, type DebtLevel,
 } from '../services/partnerReports.ts';
 import { cashAndReceivables, cashBook, cashOrders } from '../services/cashReports.ts';
 
@@ -19,6 +20,15 @@ const yearStart = (y: number) => `${y}-01-01`;
 const LEVELS: DebtLevel[] = ['partner', 'document', 'accounting'];
 
 export const partnerReportsRoutes = new Hono<AppEnv>()
+  /** Справка партньори (spCompaniesReport): groupId (subtree), account (substring), filterColumn + filterText. Also printed from the partners list. */
+  .get('/reports/companies', requireAnyPermission('UI_Reporting_Companies', 'UI_Edit_Companies'), async (c) => {
+    const q = c.req.query();
+    const column = q.filterColumn || '';
+    if (column && !(COMPANIES_FILTER_COLUMNS as readonly string[]).includes(column)) throw badRequest('Невалидна колона за филтър.');
+    return c.json(await companiesReport(c.var.db, {
+      groupId: num(q.groupId), account: q.account || undefined, filterColumn: column as (typeof COMPANIES_FILTER_COLUMNS)[number] | '', filterText: q.filterText || undefined,
+    }));
+  })
   .get('/reports/partner-debts', requirePermission('UI_Reporting_Companies_PartnersDebtReport'), async (c) => {
     const q = c.req.query();
     const level = LEVELS.includes(q.level as DebtLevel) ? (q.level as DebtLevel) : 'partner';

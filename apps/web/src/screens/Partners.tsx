@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { Plus, Save, Search, Trash2, UserPlus } from 'lucide-react';
+import { Plus, Printer, Save, Search, Trash2, UserPlus } from 'lucide-react';
 import { isCompanyCategory, isValidIban } from '@shmi/core';
 import { api, qs } from '../api.ts';
 import { useDialogs } from '../components/dialogs.tsx';
 import { AccountPicker } from '../components/pickers.tsx';
 import { Button, Checkbox, CommandBar, Empty, Field, Select, Spinner, TextInput, cx } from '../components/ui.tsx';
 import { useAccounts, useCan, useInvalidate, useLookups } from '../session.tsx';
+import { useWorkspace } from '../shell/workspace.tsx';
 import type { PartnerRow } from '../types.ts';
 
 interface Address { addressTypeId: number | null; countryId: number | null; city: string; postalCode: string; address: string; phone: string }
@@ -26,6 +27,7 @@ export function Partners() {
   const dialogs = useDialogs();
   const invalidate = useInvalidate();
   const lookups = useLookups();
+  const ws = useWorkspace();
   const { data: accounts = [] } = useAccounts();
   const [q, setQ] = useState('');
   const [showUnused, setShowUnused] = useState(false);
@@ -133,6 +135,15 @@ export function Partners() {
         <TextInput className="ml-3 w-72" placeholder="Търсене по име, ЕИК, ДДС номер, код" value={q} onChange={(e) => setQ(e.target.value)} />
         <AccountPicker className="w-56" value={accountFilter} leafOnly={false} filter={(a) => isCompanyCategory(a.categoryId)} onChange={(a) => setAccountFilter(a?.id ?? null)} />
         <Checkbox label="Показване и на неизползваните" checked={showUnused} onChange={setShowUnused} />
+        {/* The list's print: Справка партньори for the selected group and account (05 7.7). */}
+        <Button
+          className="ml-auto"
+          icon={<Printer className="size-3.5" />}
+          disabled={!can('UI_Reporting_Companies')}
+          onClick={() => ws.open('companiesReport', { params: { groupId, account: accounts.find((a) => a.id === accountFilter)?.number ?? '' } })}
+        >
+          Справка партньори
+        </Button>
       </CommandBar>
       <div className="flex min-h-0 flex-1">
         <GroupTree selected={groupId} onSelect={setGroupId} editable={editable} />

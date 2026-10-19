@@ -8,6 +8,7 @@ import { Reevaluation } from './payments/Reevaluation.tsx';
 import { CashAndReceivables } from './reports/payments/CashAndReceivables.tsx';
 import { CashBook } from './reports/payments/CashBook.tsx';
 import { CashOrder } from './reports/payments/CashOrder.tsx';
+import { CompaniesReport } from './reports/payments/CompaniesReport.tsx';
 import { ConfirmationLetter } from './reports/payments/ConfirmationLetter.tsx';
 import { Overdues } from './reports/payments/Overdues.tsx';
 import { PartnerDebts } from './reports/payments/PartnerDebts.tsx';
@@ -43,6 +44,7 @@ export const PAYMENT_SCREENS: ScreenDef[] = [
   { id: 'paymentsReport', title: 'Разплащания и обвързани документи', component: PaymentsReport, permission: 'UI_Reporting_Companies_PaymentsReport' },
   { id: 'confirmationLetter', title: 'Потвърдително писмо за задължения/вземания', component: ConfirmationLetter, permission: 'UI_Reporting_Companies_LiabilitiesLetterReport' },
   { id: 'overdues', title: 'Просрочени задължения', component: Overdues, permission: 'UI_Reporting_Companies_Overdues' },
+  { id: 'companiesReport', title: 'Справка партньори', component: CompaniesReport, permission: 'UI_Reporting_Companies' },
   { id: 'cashAndReceivables', title: 'Касова наличност и вземания', component: CashAndReceivables, permission: 'UI_Reporting_CashReports_CashAndReceivables' },
   { id: 'cashBook', title: 'Касова книга', component: CashBook, permission: 'UI_Reporting_CashReports_CashBook' },
   { id: 'cashOrder', title: 'Касов ордер', component: CashOrder, permission: 'UI_Reporting_CashReports_CashOrder' },
