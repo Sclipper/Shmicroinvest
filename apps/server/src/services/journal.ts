@@ -1,8 +1,8 @@
-import { asc, eq, inArray, or, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, or, sql } from 'drizzle-orm';
 import {
   buildLegs, dec, hasCritical, isCompanyCategory, isLeaf, isMonthLocked, JOURNAL_MESSAGES, linesFromLegs,
   reverseLines, round2, validateEntry, type AccountInfo, type EntryLine, type ValidationMessage, CHANNEL,
-  exchangeRateOf, priceOf, INVOICE_LIKE_TYPES, documentNumberWarnings,
+  exchangeRateOf, priceOf, INVOICE_LIKE_TYPES, documentNumberWarnings, ENTRY_FOLLOW_UP_MESSAGES, formatMessage, missingPartnerAccounts,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import type { DbOrTx } from '../db/provider.ts';
@@ -23,6 +23,8 @@ export interface LineInput {
   exchangeRate?: string | null;
   quantity?: string | null;
   price?: string | null;
+  /** Фиксинг of the line (02a 1.3); empty = the stored rate of the accounting date. */
+  fixedRate?: string | null;
 }
 
 export interface EntryInput {
@@ -63,6 +65,12 @@ export interface SaveContext {
   ignoreKeys?: string[];
   /** Importers (04a): term and document are optional, as in Delta's import providers. */
   skipHeaderChecks?: boolean;
+  /**
+   * Interactive editor save (03a 2.9): partner lines on accounts the partner is
+   * not linked to ask strAddAccountToCompanyConfirmation (409 unless `force`);
+   * with `force` the accounts are linked in the same transaction.
+   */
+  confirmAccountLinks?: boolean;
 }
 
 async function resolveDictionary(db: DbOrTx, table: typeof s.terms | typeof s.referenceTexts | typeof s.paragraphs, text: string | null | undefined) {
@@ -100,7 +108,8 @@ function toEntryLine(l: LineInput, headerCompanyId: number | null | undefined, i
   if (info?.isForeignCurrency) {
     const ca = dec(l.currencyAmount || '0');
     const rate = l.exchangeRate ? dec(l.exchangeRate) : exchangeRateOf(amount, ca);
-    currency = { currencyId: info.currencyId, currencyAmount: ca.toFixed(2), exchangeRate: rate.toString(), fixedRate: currencyRates.get(info.currencyId) ?? '1' };
+    const fixed = l.fixedRate && !dec(l.fixedRate).isZero() ? dec(l.fixedRate).toString() : currencyRates.get(info.currencyId) ?? '1';
+    currency = { currencyId: info.currencyId, currencyAmount: ca.toFixed(2), exchangeRate: rate.toString(), fixedRate: fixed };
   }
   let material: EntryLine['material'] = null;
   if (info?.isMaterial && info.productId) {
@@ -115,6 +124,35 @@ function toEntryLine(l: LineInput, headerCompanyId: number | null | undefined, i
     currency,
     material,
   };
+}
+
+/**
+ * Fixing of each currency for a date (02a 2, 03a 5.4): the stored rate of the
+ * date (currency_rates, entered or downloaded); without one, the currency's
+ * static fixed rate.
+ */
+export async function fixingsOfDate(db: DbOrTx, date: string, year: number, currencyIds: number[]): Promise<Map<number, string>> {
+  const ids = [...new Set(currencyIds)];
+  const out = new Map<number, string>();
+  if (!ids.length) return out;
+  const curRows = await db.select({ id: s.currencies.id, fixedRate: s.currencies.fixedRate }).from(s.currencies).where(inArray(s.currencies.id, ids));
+  for (const c of curRows) out.set(c.id, c.fixedRate);
+  const stored = await db.select({ id: s.currencyRates.currencyId, rate: s.currencyRates.rate }).from(s.currencyRates)
+    .where(and(eq(s.currencyRates.date, date), eq(s.currencyRates.baseIso, year >= 2026 ? 'EUR' : 'BGN'), inArray(s.currencyRates.currencyId, ids)));
+  for (const r of stored) if (!dec(r.rate).isZero()) out.set(r.id, r.rate);
+  return out;
+}
+
+/** strAddAccountToCompanyConfirmation (03a 2.9): partner lines whose account is not among the partner's accounts. */
+async function missingAccountLinks(db: DbOrTx, lines: EntryLine[], infos: Map<number, AccountInfo & { number: string }>) {
+  const partnerLines = lines.filter((l) => l.companyId).map((l) => ({
+    accountId: l.accountId, accountNumber: infos.get(l.accountId)?.number ?? '', companyId: l.companyId ?? null, isCompany: isCompanyCategory(infos.get(l.accountId)?.categoryId),
+  }));
+  if (!partnerLines.length) return [];
+  const companyIds = [...new Set(partnerLines.map((l) => l.companyId!))];
+  const links = await db.select({ companyId: s.companyAccounts.companyId, accountId: s.companyAccounts.accountId }).from(s.companyAccounts)
+    .where(inArray(s.companyAccounts.companyId, companyIds));
+  return missingPartnerAccounts(partnerLines, new Set(links.map((x) => `${x.companyId}:${x.accountId}`)));
 }
 
 export interface SaveResult {
@@ -155,8 +193,7 @@ export async function saveEntry(db: DbOrTx, input: EntryInput, ctx: SaveContext,
   const baseCur = await baseCurrencyId(db, fy.year);
   const ids = [...new Set([...input.debits, ...input.credits].map((l) => l.accountId))];
   const infos = await loadAccountInfos(db, ids, baseCur);
-  const curRows = await db.select({ id: s.currencies.id, fixedRate: s.currencies.fixedRate }).from(s.currencies);
-  const rates = new Map(curRows.map((c) => [c.id, c.fixedRate]));
+  const rates = await fixingsOfDate(db, input.accountingDate, fy.year, [...infos.values()].filter((a) => a.isForeignCurrency).map((a) => a.currencyId));
   const debits = input.debits.filter((l) => l.accountId).map((l) => toEntryLine(l, input.companyId, infos.get(l.accountId), rates));
   const credits = input.credits.filter((l) => l.accountId).map((l) => toEntryLine(l, input.companyId, infos.get(l.accountId), rates));
 
@@ -182,7 +219,13 @@ export async function saveEntry(db: DbOrTx, input: EntryInput, ctx: SaveContext,
     const docSeq = await findSequence(db, CHANNEL.Invoice, fy.id, ctx.userId);
     messages.push(...documentNumberWarnings(input.documentTypeId, input.documentNumber ?? '', docSeq?.numericLength ?? 10));
   }
-  if (ctx.confirm && !ctx.force && vatChecks.confirm.length) throw new ApiError(409, 'Потвърждение', vatChecks.confirm, 'confirm');
+  const linksToAdd = ctx.confirmAccountLinks && !input.isInitialBalance ? await missingAccountLinks(db, [...debits, ...credits], infos) : [];
+  const linkQuestions: ValidationMessage[] = linksToAdd.map((l) => ({
+    key: 'strAddAccountToCompanyConfirmation', text: formatMessage(ENTRY_FOLLOW_UP_MESSAGES.strAddAccountToCompanyConfirmation, l.accountNumber), severity: 'warning',
+  }));
+  const questions = [...(ctx.confirm ? vatChecks.confirm : []), ...linkQuestions];
+  if ((ctx.confirm || ctx.confirmAccountLinks) && !ctx.force && questions.length) throw new ApiError(409, 'Потвърждение', questions, 'confirm');
+  if (linksToAdd.length) await db.insert(s.companyAccounts).values(linksToAdd.map((l) => ({ companyId: l.companyId, accountId: l.accountId })));
 
   const termId = await resolveDictionary(db, s.terms, input.term);
   const referenceId = await resolveDictionary(db, s.referenceTexts, input.reference);
@@ -328,6 +371,7 @@ export async function loadEntry(db: DbOrTx, id: number) {
       currencyId: first.currencyId,
       currencyAmount: first.currencyId ? currencyAmount.toFixed(2) : null,
       exchangeRate: first.exchangeRate,
+      fixedRate: first.fixedRate,
       quantity: first.productId ? quantity.toString() : null,
       price: first.price,
     };

@@ -34,6 +34,7 @@ export const BASIC_SETTINGS: Record<string, { default: string; label: string }> 
   IsBindingDocumentsEnabled: { default: 'True', label: 'Обвързване на документи в контиране' },
   IsAutomaticOpenBindingDocumentsEnabled: { default: 'False', label: 'Автоматично отваряне на обвързване на документи' },
   IsBindingBySumEnabled: { default: 'True', label: 'Обвързване по сума' },
+  IsBindingDocumentsInFastAccountingEnabled: { default: 'True', label: 'Обвързване на документи в бързо контиране' },
   IsAllowAccountingAutomaticEnd: { default: 'False', label: 'Приключване на гр. 60 при контиране' },
   IsShowSeperateAccountingsForeachAccountGroup60: { default: 'False', label: 'Отделно контиране за всяка сметка от гр. 60' },
   IsVisualizeDateTimeOnReportingEnabled: { default: 'False', label: 'Визуализиране на дата и час в справки' },

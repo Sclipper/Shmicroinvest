@@ -151,3 +151,219 @@ test.describe('journal extras', () => {
     expect(Number(sale.credits[0]!.quantity)).toBe(4);
   });
 });
+
+/** Entry editor follow-ups: fixing, Ctrl+F10, after-save questions, asset-linked postings, printouts, fast-entry binding. */
+test.describe('entry editor follow-ups', () => {
+  const uid = () => Math.random().toString(36).slice(2, 7);
+  const partner = async (page: Page, name: string, accounts: string[]) =>
+    (await api<{ id: number }>(page, 'POST', '/partners', { name, accountIds: await Promise.all(accounts.map((a) => accountId(page, a))) })).id;
+  const yes = async (page: Page, text: string) => {
+    const dlg = page.getByRole('dialog').filter({ hasText: text });
+    await expect(dlg).toBeVisible();
+    await dlg.getByRole('button', { name: 'Да' }).click();
+    await expect(dlg).toHaveCount(0);
+  };
+  /** Body of the last printout (the hidden print frame). */
+  const printed = (page: Page) => page.frameLocator('iframe[data-testid="print-frame"]').locator('body');
+
+  test('fixing of the accounting date fills Фиксинг and Курс; Ctrl+F12 recalculates; a holiday is reported (02a 2)', async ({ page }) => {
+    await openApp(page);
+    const id = uid();
+    const acc = await api<{ id: number; number: string }>(page, 'POST', '/accounts', { parentId: await accountId(page, '504'), description: `Банка USD ${id}`, accountCategoryId: 27, currencyId: 3 });
+    await api(page, 'PUT', '/revaluation/rates', { date: '2026-03-10', rates: [{ currencyId: 3, rate: '0.92' }] });
+    await api(page, 'PUT', '/settings', { AutomaticFillExchangeRate: 'True' });
+    try {
+      await openApp(page);
+      await page.keyboard.press('F2');
+      const tab = activeTab(page);
+      await tab.getByLabel('Дата на контиране').fill('2026-03-10');
+      await tab.getByLabel('Документ №').fill(`FX-${id}`);
+      await tab.getByLabel('Основание').fill('Фиксинг E2E');
+      await pickAccount(page, 0, acc.number);
+      await expect(tab.getByLabel('Фиксинг Дебит 1')).toHaveValue('0,92');
+      const debit = tab.locator('table.grid-table').first();
+      await debit.locator('td input.num').nth(1).fill('1000'); // Вал. сума
+      await expect(debit.locator('td input.num').nth(0)).toHaveValue('920,00');
+      await pickAccount(page, 1, '703');
+      await tab.getByRole('button', { name: 'Изравняване' }).click();
+      // Ctrl+F12 asks strCalculateFixingExchangeConfirmationPrompt and keeps the rate of the date.
+      await tab.getByLabel('Основание').press('Control+F12');
+      await yes(page, 'Ще бъде преизчислен фиксингът/валутният курс за всички сметки в операцията.');
+      await expect(tab.getByLabel('Фиксинг Дебит 1')).toHaveValue('0,92');
+      await tab.getByRole('button', { name: 'Запис', exact: true }).click();
+      await expect.poll(async () => (await entries(page, { documentNumber: `FX-${id}` })).length).toBe(1);
+      const saved = await api<{ debits: { fixedRate: string; exchangeRate: string; amount: string }[] }>(page, 'GET', `/entries/${(await entries(page, { documentNumber: `FX-${id}` }))[0]!.id}`);
+      expect(saved.debits[0]).toMatchObject({ fixedRate: '0.920000', exchangeRate: '0.920000', amount: '920.00' });
+
+      // A Sunday has no fixing (stored or published): the holiday / service message.
+      await page.keyboard.press('F2');
+      const sunday = activeTab(page);
+      await sunday.getByLabel('Дата на контиране').fill('2026-03-15');
+      await pickAccount(page, 0, acc.number);
+      await expect(page.getByRole('dialog')).toContainText('Избраната дата на осчетоводяване е почивен ден или услугата за валутни справки е временно неактивна.');
+      await page.getByRole('dialog').getByRole('button', { name: 'OK' }).click();
+      await expect(sunday.getByLabel('Фиксинг Дебит 1')).toHaveValue('');
+    } finally {
+      await api(page, 'PUT', '/settings', { AutomaticFillExchangeRate: 'False' });
+    }
+  });
+
+  test('Ctrl+F10 balances, saves and opens the payments of the partner (02a 4.1)', async ({ page }) => {
+    await openApp(page);
+    const name = `Е2Е Плащане ${uid()}`;
+    await partner(page, name, ['411']);
+    await page.keyboard.press('F2');
+    const tab = activeTab(page);
+    await tab.getByLabel('Документ №').fill(`BP-${uid()}`);
+    await tab.getByLabel('Основание').fill('Изравняване, запис и разплащане E2E');
+    const picker = tab.getByPlaceholder('Партньор (F4)');
+    await picker.fill(name);
+    await expect(page.getByText(name).last()).toBeVisible();
+    await picker.press('Enter');
+    await pickAccount(page, 0, '411');
+    await pickAccount(page, 1, '703');
+    await tab.locator('td input.num').nth(0).fill('45');
+    await tab.getByLabel('Основание').press('Control+F10');
+    await expect(page.getByRole('button', { name: 'Разплащания' }).first()).toBeVisible();
+    await expect(activeTab(page).locator('tr[aria-selected="true"]', { hasText: name })).toBeVisible();
+    expect(await entries(page, { term: 'Изравняване, запис и разплащане E2E' })).toHaveLength(1);
+  });
+
+  test('a partner line on an unlinked account asks strAddAccountToCompanyConfirmation and links it (03a 2.9)', async ({ page }) => {
+    await openApp(page);
+    const name = `Е2Е Без 411 ${uid()}`;
+    const id = await partner(page, name, ['401']);
+    await page.keyboard.press('F2');
+    const tab = activeTab(page);
+    await tab.getByLabel('Документ №').fill(`LK-${uid()}`);
+    await tab.getByLabel('Основание').fill('Свързване на сметка E2E');
+    const picker = tab.getByPlaceholder('Партньор (F4)');
+    await picker.fill(name);
+    await expect(page.getByText(name).last()).toBeVisible();
+    await picker.press('Enter');
+    await pickAccount(page, 0, '411');
+    await pickAccount(page, 1, '703');
+    await tab.locator('td input.num').nth(0).fill('12');
+    await tab.getByRole('button', { name: 'Изравняване' }).click();
+    await tab.getByRole('button', { name: 'Запис', exact: true }).click();
+    await yes(page, 'Избраният партньор не съдържа сметка 411! Сметката ще бъде добавена към партньора!');
+    await expect.poll(async () => (await entries(page, { term: 'Свързване на сметка E2E' })).length).toBe(1);
+    const p = await api<{ accountIds: number[] }>(page, 'GET', `/partners/${id}`);
+    expect(p.accountIds).toContain(await accountId(page, '411'));
+  });
+
+  test('a 2xx debit offers a new asset prefilled from the posting (strAddFixedAssetData, 03b 14.1)', async ({ page }) => {
+    await openApp(page);
+    const term = `Лаптоп E2E ${uid()}`;
+    await page.keyboard.press('F2');
+    const tab = activeTab(page);
+    await tab.getByLabel('Документ №').fill(`FA-${uid()}`);
+    await tab.getByLabel('Основание').fill(term);
+    await pickAccount(page, 0, '203');
+    await pickAccount(page, 1, '503');
+    await tab.locator('td input.num').nth(0).fill('1500');
+    await tab.getByRole('button', { name: 'Изравняване' }).click();
+    await tab.getByRole('button', { name: 'Запис', exact: true }).click();
+    await yes(page, 'Желаете ли да въведете допълнителни данни за амортизационния план на актива?');
+    const asset = activeTab(page);
+    await expect(asset.getByLabel('Наименование')).toHaveValue(term);
+    await expect(asset.locator('input[name="sap-amount"]')).toHaveValue('1500,00');
+  });
+
+  test('a depreciation posting warns when opened and when voided (03b 12.3)', async ({ page }) => {
+    await openApp(page);
+    const plan = { depreciationAmount: '1200', nonDepreciableAmount: '0', acquisitionDate: '2026-01-15', startDate: '2026-01-15', calcType: 'period', activePeriodLength: 12, annualRate: null, conservation: null, note: '', serialNumber: '' };
+    const asset = await api<{ id: number }>(page, 'POST', '/assets', {
+      inventoryNumber: `J${uid()}`, name: 'Е2Е амортизация', personInCharge: null, categoryId: 2, inventoryAccountId: await accountId(page, '203'),
+      debitAccountId: await accountId(page, '241/2'), creditAccountId: await accountId(page, '603'), locationId: null, synchronized: false,
+      accounting: plan, tax: { ...plan, calcType: 'rate', annualRate: '30', activePeriodLength: null },
+    });
+    const pending = await api<{ rows: { id: number; assetId: number }[] }>(page, 'GET', '/accounting-requests?from=2026-02-01&to=2026-02-28');
+    const posted = await api<{ posted: { accountingId: number; number: string }[] }>(page, 'POST', '/accounting-requests/post', { ids: pending.rows.filter((r) => r.assetId === asset.id).map((r) => r.id) });
+    const dep = posted.posted[0]!;
+    await page.keyboard.press('Control+F2');
+    const list = activeTab(page);
+    await list.getByLabel('От номер').fill(dep.number);
+    await list.getByLabel('До номер').fill(dep.number);
+    await list.getByRole('button', { name: 'Филтрирай' }).click();
+    await list.locator('tbody tr', { has: page.locator(`input[aria-label="Избор ${dep.number}"]`) }).dblclick();
+    const warning = 'Избраният документ е генериран от амортизационен план. Моля, коригирайте амортизационния план. Желаете ли продължение?';
+    await expect(page.getByRole('dialog')).toContainText(warning);
+    await page.getByRole('dialog').getByRole('button', { name: 'Не' }).click();
+    await expect(page.getByRole('button', { name: new RegExp(`^Контиране ${dep.number}`) })).toHaveCount(0);
+    // Void from the list: confirm, then the depreciation-plan warning.
+    await list.getByLabel(`Избор ${dep.number}`, { exact: true }).check();
+    await list.getByRole('button', { name: 'Изтриване' }).click();
+    await yes(page, 'Желаете ли да изтриете избрания документ?');
+    await expect(page.getByRole('dialog')).toContainText(warning);
+    await page.getByRole('dialog').getByRole('button', { name: 'Не' }).click();
+    expect((await api<unknown>(page, 'GET', `/entries/${dep.accountingId}`))).toBeTruthy();
+  });
+
+  test('Печат prints the entry card from the editor and the selected entries from the list (05 7.11)', async ({ page }) => {
+    await openApp(page);
+    const doc = `PRN-${uid()}`;
+    const e = await postEntry(page, doc, 'Печат E2E', '602', '503', '77.50');
+    await page.keyboard.press('Control+F2');
+    const list = activeTab(page);
+    await list.getByLabel('№ документ').fill(doc);
+    await list.getByRole('button', { name: 'Филтрирай' }).click();
+    await list.getByLabel(`Избор ${e.number}`, { exact: true }).check();
+    await list.getByRole('button', { name: 'Печат', exact: true }).click();
+    await expect(printed(page)).toContainText(`Мемориален ордер № ${e.number} от 10.04.2026`);
+    await expect(printed(page)).toContainText('Общо дебит');
+    await expect(printed(page).locator('tr.t').first()).toContainText('77,50');
+    // The VAT protocol commands answer for an entry without a protocol.
+    await list.getByRole('button', { name: 'Печат на протокол по ЗДДС' }).click();
+    await expect(page.getByRole('dialog')).toContainText('Към избраното контиране няма протокол по ЗДДС.');
+    await page.getByRole('dialog').getByRole('button', { name: 'OK' }).click();
+    // From the editor.
+    await list.locator('tbody tr', { has: page.locator(`input[aria-label="Избор ${e.number}"]`) }).dblclick();
+    const editor = activeTab(page);
+    await editor.getByRole('button', { name: 'Печат', exact: true }).click();
+    await expect(printed(page)).toContainText('Печат E2E');
+    await expect(printed(page)).toContainText('Кредит');
+  });
+
+  test('Обновяване на фиксингите от БНБ answers with the result or the service message (03a 5.4)', async ({ page }) => {
+    await openApp(page);
+    await menu(page, 'Редакция', 'Валути');
+    await activeTab(page).getByRole('button', { name: 'Обновяване на фиксингите от БНБ' }).click();
+    // Offline (or on a holiday) the service message, online the update count.
+    await expect(page.getByRole('dialog')).toContainText(/Фиксингите са обновени|почивен ден или услугата за валутни справки е временно неактивна/);
+  });
+
+  test('fast entry binds a row with an open document in the same save (В-ка, 02a 8.1)', async ({ page }) => {
+    await openApp(page);
+    const name = `Е2Е Бързо обвързване ${uid()}`;
+    const sup = await partner(page, name, ['401']);
+    const inv = await api<{ id: number }>(page, 'POST', '/entries', {
+      accountingDate: '2026-04-02', documentTypeId: 1, documentNumber: `FBI-${uid()}`, term: 'Фактура за обвързване', companyId: sup,
+      debits: [{ accountId: await accountId(page, '602'), amount: '33' }], credits: [{ accountId: await accountId(page, '401'), amount: '33', companyId: sup }],
+    });
+    await page.keyboard.press('F12');
+    const tab = activeTab(page);
+    await tab.getByLabel('Тип док. 1').selectOption({ label: 'РКО' });
+    await tab.getByLabel('Документ № 1').fill(`FB-${uid()}`);
+    await tab.getByLabel('Дата 1').fill('2026-04-05');
+    await pickAccount(page, 0, '401');
+    await pickAccount(page, 1, '501');
+    await tab.getByLabel('Ст-ст 1').fill('33');
+    const picker = tab.getByPlaceholder('Партньор (F4)');
+    await picker.fill(name);
+    await expect(page.getByText(name).last()).toBeVisible();
+    await picker.press('Enter');
+    await tab.getByPlaceholder('Основание').first().fill('Бързо обвързване E2E');
+    await tab.getByLabel('Обвързване 1').click();
+    const dlg = page.getByRole('dialog');
+    await dlg.getByTestId('binding-grid').locator('input[type="checkbox"]').first().check();
+    await dlg.getByRole('button', { name: 'ОК' }).click();
+    await expect(tab.getByLabel('Обвързване 1')).toHaveText('(1)');
+    await tab.getByRole('button', { name: 'Контиране' }).click();
+    await expect(page.getByRole('dialog')).toContainText('Записани са 1 контировки');
+    await page.getByRole('dialog').getByRole('button', { name: 'OK' }).click();
+    const open = await api<{ liabilities: { accountingId: number }[]; payments: unknown[] }>(page, 'GET', `/payments/open-items?companyId=${sup}`);
+    expect(open.liabilities.map((l) => l.accountingId)).not.toContain(inv.id);
+    expect(open.payments).toHaveLength(0);
+  });
+});

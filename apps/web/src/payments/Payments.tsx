@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { HandCoins, Link2, Pencil, RefreshCw, Trash2, Unlink, X } from 'lucide-react';
 import { dec } from '@shmi/core';
@@ -7,7 +7,7 @@ import { bgDate, money } from '../format.ts';
 import { useDialogs } from '../components/dialogs.tsx';
 import { Button, Checkbox, CommandBar, Dialog, Empty, Field, Spinner, TextInput, cx } from '../components/ui.tsx';
 import { useInvalidate, useSession } from '../session.tsx';
-import { useWorkspace } from '../shell/workspace.tsx';
+import { useWorkspace, type ScreenProps } from '../shell/workspace.tsx';
 import { NewPaymentDialog } from './PaymentsNewDialog.tsx';
 import { OpenItemsGrid, sum, toggleIn, toRows, type Allocation, type OpenItemRow, type PartnerOpenItems, type PaymentLink } from './PaymentsShared.tsx';
 
@@ -20,7 +20,7 @@ const TABS = [
 ] as const;
 
 /** Разплащания (F3, spec 07 3.3): partners, open liabilities/claims and existing payments. */
-export function Payments() {
+export function Payments({ tab: screenTab }: Partial<ScreenProps> = {}) {
   const s = useSession();
   const ws = useWorkspace();
   const dialogs = useDialogs();
@@ -29,7 +29,12 @@ export function Payments() {
   const [account, setAccount] = useState('');
   const [inCurrency, setInCurrency] = useState(false);
   const [search, setSearch] = useState('');
-  const [companyId, setCompanyId] = useState<number | null>(null);
+  const [companyId, setCompanyId] = useState<number | null>((screenTab?.params?.companyId as number | undefined) ?? null);
+  // Opened for a partner (Ctrl+F10 in the entry editor, 02a 4.1): that partner's documents.
+  const paramCompany = screenTab?.params?.companyId as number | undefined;
+  useEffect(() => {
+    if (paramCompany) setCompanyId(paramCompany);
+  }, [paramCompany, screenTab?.params]);
   const [docFilter, setDocFilter] = useState({ from: `${s.year.year}-01-01`, to: `${s.year.year}-12-31`, number: '' });
   const [liab, setLiab] = useState(new Map<number, Allocation>());
   const [pays, setPays] = useState(new Map<number, Allocation>());

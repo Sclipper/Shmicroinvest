@@ -113,6 +113,8 @@ const SCHEDULE_KEYS: (keyof PlanForm)[] = ['depreciationAmount', 'nonDepreciable
 
 type PlanTab = 'accounting' | 'tax';
 
+interface FromPosting { accountingId: number; accountingNumber: string; inventoryAccountId: number; name: string; acquisitionDate: string; startDate: string; depreciationAmount: string }
+
 /** Дълготраен актив: header, both plans (САП / ДАП) and their schedules (spec 03b 6, 07 FixedAssetView / DepreciationView). */
 export function AssetEditor({ tab }: ScreenProps) {
   const session = useSession();
@@ -129,7 +131,14 @@ export function AssetEditor({ tab }: ScreenProps) {
   const [improvement, setImprovement] = useState<PlanTab | null>(null);
 
   const view = useQuery({ queryKey: ['asset', id], queryFn: () => api.get<AssetView>(`/assets/${id}`), enabled: !!id, staleTime: 0 });
-  const defaults = useQuery({ queryKey: ['assetNew', tab.key], queryFn: () => api.get<{ inventoryNumber: string; acquisitionDate: string; startDate: string; isEuro: boolean }>('/assets/new'), enabled: !id, staleTime: Infinity });
+  // Created from a posting (strAddFixedAssetData, 03b 14.1): the server prefills it from the entry.
+  const fromAccountingId = tab.params?.fromAccountingId as number | undefined;
+  const defaults = useQuery({
+    queryKey: ['assetNew', tab.key, fromAccountingId],
+    queryFn: () => api.get<{ inventoryNumber: string; acquisitionDate: string; startDate: string; isEuro: boolean; fromPosting: FromPosting | null }>(`/assets/new${fromAccountingId ? `?accountingId=${fromAccountingId}` : ''}`),
+    enabled: !id,
+    staleTime: Infinity,
+  });
 
   useEffect(() => {
     if (id && view.data) setForm(formFromView(view.data));
@@ -137,11 +146,16 @@ export function AssetEditor({ tab }: ScreenProps) {
   useEffect(() => {
     if (!id && defaults.data && !form) {
       const d = defaults.data;
+      const fp = d.fromPosting;
+      const plan = (calcType: 'period' | 'rate'): PlanForm => (fp
+        ? { ...emptyPlan(fp.startDate, calcType), acquisitionDate: fp.acquisitionDate, depreciationAmount: fp.depreciationAmount.replace('.', ',') }
+        : emptyPlan(d.startDate, calcType));
       setForm({
-        inventoryNumber: d.inventoryNumber, name: '', personInCharge: '', categoryId: null, inventoryAccountId: null, debitAccountId: null, creditAccountId: null,
+        inventoryNumber: d.inventoryNumber, name: fp?.name ?? '', personInCharge: '', categoryId: null, inventoryAccountId: fp?.inventoryAccountId ?? null, debitAccountId: null, creditAccountId: null,
         locationId: (tab.params?.locationId as number | undefined) ?? null, synchronized: false, note: '', serialNumber: '',
-        accounting: emptyPlan(d.startDate, 'period'), tax: emptyPlan(d.startDate, 'rate'),
+        accounting: plan('period'), tax: plan('rate'),
       });
+      if (fp) setDirty(true);
     }
   }, [id, defaults.data, form, tab.params]);
 

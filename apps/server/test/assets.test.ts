@@ -849,3 +849,39 @@ describe('reconciliation, reports, protocols, bulk change (03b 14-15, 05 7.10)',
     expect(list).toHaveLength(1);
   });
 });
+
+describe('asset-linked postings in the journal (03b 12.3, 14.1)', () => {
+  const h = harness();
+  beforeAll(async () => {
+    await h.init(2025);
+    await h.setDate('2025-06-15');
+  }, 60_000);
+  afterAll(() => h.t.close());
+
+  it('strAddFixedAssetData: a 2xx debit without a partner credit prefills the new asset from the posting (6.1)', async () => {
+    const e = await h.t.post({ date: '2025-06-10', term: 'Лаптоп Dell', dr: [['203', 1200]], cr: [['503', 1200]] });
+    const r = await h.call('GET', `/assets/new?accountingId=${e.id}`);
+    expect(r.status, r.text).toBe(200);
+    expect(r.body.fromPosting).toEqual({
+      accountingId: e.id, accountingNumber: e.number, inventoryAccountId: h.acc('203'), name: 'Лаптоп Dell', acquisitionDate: '2025-06-10', startDate: '2025-06-10', depreciationAmount: '1200.00',
+    });
+    expect(r.body.inventoryNumber).toMatch(/^\d{10}$/);
+    const supplier = await h.t.partner('Доставчик ДА ООД', ['401']);
+    const onCredit = await h.t.post({ date: '2025-06-10', partner: supplier, dr: [['203', 500]], cr: [['401', 500]] });
+    expect((await h.call('GET', `/assets/new?accountingId=${onCredit.id}`)).body.fromPosting).toBeNull();
+    expect((await h.call('GET', '/assets/new')).body.fromPosting).toBeNull();
+  });
+
+  it('void-check flags monthly depreciation and write-off postings', async () => {
+    const { id } = await h.create();
+    const posted = await h.postMonths(id, '2025-04-01', '2025-04-30');
+    const dep = posted.posted[0]!.accountingId;
+    const w = await h.call('POST', `/assets/${id}/terminate`, { type: 3, sapDate: '2025-06-15', dapDate: '2025-06-15', operationAccountId: h.acc('609') });
+    expect(w.status, w.text).toBe(200);
+    const r = await h.call('POST', '/journal/void-check', { ids: [dep, w.body.accountingId] });
+    const flags = Object.fromEntries(r.body.rows.map((x: { id: number; depreciation: boolean; writeOff: boolean }) => [x.id, [x.depreciation, x.writeOff]]));
+    expect(flags[dep]).toEqual([true, false]);
+    expect(flags[w.body.accountingId]).toEqual([false, true]);
+    expect((await h.call('GET', `/entries/${w.body.accountingId}`)).body.source).toBe('asset-writeoff');
+  });
+});

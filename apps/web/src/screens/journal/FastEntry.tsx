@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
-import { ClipboardCopy, ClipboardPaste, Copy, Eraser, FileDown, Plus, Save, Trash2 } from 'lucide-react';
-import { dec, formatMoney, isCompanyCategory, JOURNAL_EXTRA_MESSAGES as XM, PAYMENT_ACCOUNT_CATEGORIES, PAYMENT_CATEGORIES, parseAmount } from '@shmi/core';
+import { ClipboardCopy, ClipboardPaste, Copy, Eraser, FileDown, Link2, Plus, Save, Trash2 } from 'lucide-react';
+import { dec, formatMoney, isCompanyCategory, JOURNAL_EXTRA_MESSAGES as XM, PAYMENT_ACCOUNT_CATEGORIES, PAYMENT_CATEGORIES, PAYMENT_MESSAGES, parseAmount } from '@shmi/core';
 import { api, ApiError, type Message } from '../../api.ts';
 import { useDialogs } from '../../components/dialogs.tsx';
 import { DictionaryInput } from '../../components/DictionaryInput.tsx';
@@ -12,6 +12,7 @@ import type { Account } from '../../types.ts';
 import { toInput } from '../entry/commands.ts';
 import { memorizer } from '../entry/memorizer.ts';
 import { SaveTemplateDialog, useTemplates, type TemplatePayload } from '../templates/TemplateDialogs.tsx';
+import { BindingDocumentsDialog } from '../../payments/PaymentsShared.tsx';
 
 interface Row {
   key: number;
@@ -28,12 +29,14 @@ interface Row {
   companyName: string | null;
   term: string;
   paymentAccountId: number | null;
+  /** В-ка (02a 8.1): open documents the row's entry is bound with on save. */
+  bindDocuments: { accountingId: number; amount: string | null }[] | null;
 }
 
 let seq = 0;
 const blankRow = (date: string, from?: Partial<Row>): Row => ({
   templateId: null, documentTypeId: 1, documentNumber: '', date, debitAccountId: null, creditAccountId: null, amount: '', debitVatTermId: null,
-  creditVatTermId: null, companyId: null, companyName: null, term: '', paymentAccountId: null, ...from, key: ++seq,
+  creditVatTermId: null, companyId: null, companyName: null, term: '', paymentAccountId: null, bindDocuments: null, ...from, key: ++seq,
 });
 
 const isPaymentAccount = (a: Account) => a.isLeaf && ([...PAYMENT_CATEGORIES, ...PAYMENT_ACCOUNT_CATEGORIES] as number[]).includes(a.categoryId ?? -1) && !a.isForeignCurrency;
@@ -56,6 +59,10 @@ export function FastEntry({ tab }: ScreenProps) {
   const [messages, setMessages] = useState<(Message & { row?: number })[]>([]);
   const [saving, setSaving] = useState(false);
   const [templateFor, setTemplateFor] = useState<TemplatePayload | null>(null);
+  const [bindingFor, setBindingFor] = useState<number | null>(null);
+  const bindingEnabled = s.settings.IsBindingDocumentsInFastAccountingEnabled !== 'False';
+  /** The row's partner account: the debit one when it is a partner account, else the credit one. */
+  const partnerAccountOf = (r: Row) => [r.debitAccountId, r.creditAccountId].find((a) => a && isCompanyCategory(byId.get(a)?.categoryId)) ?? null;
 
   const setDirty = (dirty: boolean) => tab.dirty !== dirty && ws.update(tab.key, { dirty });
   const update = (next: Row[]) => {
@@ -87,10 +94,11 @@ export function FastEntry({ tab }: ScreenProps) {
     setCur(Math.max(0, cur - 1));
   };
   const copyRow = () => setClip({ ...rows[cur]! });
-  const pasteRow = () => clip && update(rows.map((r, j) => (j === cur ? { ...clip, key: r.key } : r)));
+  // A copied row does not take the binding: an open document is bound once.
+  const pasteRow = () => clip && update(rows.map((r, j) => (j === cur ? { ...clip, bindDocuments: null, key: r.key } : r)));
   const copyToNew = () => {
     const r = rows[cur]!;
-    update([...rows.slice(0, cur + 1), blankRow(r.date, { ...r }), ...rows.slice(cur + 1)]);
+    update([...rows.slice(0, cur + 1), blankRow(r.date, { ...r, bindDocuments: null }), ...rows.slice(cur + 1)]);
     setCur(cur + 1);
   };
   const saveAsTemplate = () => {
@@ -110,12 +118,18 @@ export function FastEntry({ tab }: ScreenProps) {
       templateId: r.templateId, documentTypeId: r.documentTypeId, documentNumber: r.documentNumber, date: r.date, debitAccountId: r.debitAccountId,
       creditAccountId: r.creditAccountId, amount: parseAmount(r.amount)?.toString() ?? '0', debitVatTermId: r.debitVatTermId, creditVatTermId: r.creditVatTermId,
       companyId: r.companyId, term: r.term, paymentAccountId: r.paymentAccountId,
+      bindDocuments: bindingEnabled && r.bindDocuments?.length ? r.bindDocuments : null,
     }));
 
   /** Контиране: validate, confirm database duplicates, save all rows in one transaction. */
   const save = async () => {
-    const payload = body();
+    let payload = body();
     if (!payload.length || saving) return;
+    // As in the entry editor: an automatic payment pays the whole document, nothing is left to bind.
+    if (payload.some((r) => r.bindDocuments && r.paymentAccountId)) {
+      if (!(await dialogs.confirm(PAYMENT_MESSAGES.strDifferentAmountInPaymentAndBindingDoc))) return;
+      payload = payload.map((r) => (r.paymentAccountId ? { ...r, bindDocuments: null } : r));
+    }
     setSaving(true);
     setMessages([]);
     try {
@@ -194,6 +208,7 @@ export function FastEntry({ tab }: ScreenProps) {
               <th className="w-28">Дт ДДС</th>
               <th className="w-28">Кт ДДС</th>
               <th className="w-48">Фирма</th>
+              {bindingEnabled && <th className="w-24" title="Обвързване на документи">В-ка</th>}
               <th className="w-48">Основание</th>
               <th className="w-36">Плащане</th>
             </tr>
@@ -259,7 +274,14 @@ export function FastEntry({ tab }: ScreenProps) {
                       ))}
                     </Select>
                   </td>
-                  <td className="p-0.5">{needsPartner ? <PartnerPicker value={r.companyId} valueName={r.companyName} onChange={(p) => patch(i, { companyId: p?.id ?? null, companyName: p?.name ?? null })} /> : null}</td>
+                  <td className="p-0.5">{needsPartner ? <PartnerPicker value={r.companyId} valueName={r.companyName} onChange={(p) => patch(i, { companyId: p?.id ?? null, companyName: p?.name ?? null, bindDocuments: null })} /> : null}</td>
+                  {bindingEnabled && (
+                    <td className="p-0.5">
+                      <Button className="h-6 w-full px-1" icon={<Link2 className="size-3.5" />} disabled={!needsPartner || !r.companyId} onClick={() => setBindingFor(i)} aria-label={`Обвързване ${i + 1}`}>
+                        {r.bindDocuments?.length ? `(${r.bindDocuments.length})` : ''}
+                      </Button>
+                    </td>
+                  )}
                   <td className="p-0.5">
                     <DictionaryInput type="terms" value={r.term} placeholder="Основание" onChange={(v) => patch(i, { term: v })} />
                   </td>
@@ -288,6 +310,17 @@ export function FastEntry({ tab }: ScreenProps) {
           </ul>
         )}
       </div>
+      {bindingFor !== null && rows[bindingFor] && partnerAccountOf(rows[bindingFor]!) && rows[bindingFor]!.companyId && (
+        <BindingDocumentsDialog
+          accountId={partnerAccountOf(rows[bindingFor]!)!}
+          companyId={rows[bindingFor]!.companyId!}
+          onClose={() => setBindingFor(null)}
+          onOk={(docs) => {
+            patch(bindingFor, { bindDocuments: docs });
+            setBindingFor(null);
+          }}
+        />
+      )}
       {templateFor && <SaveTemplateDialog payload={templateFor} onClose={() => setTemplateFor(null)} onSaved={() => setTemplateFor(null)} />}
     </div>
   );

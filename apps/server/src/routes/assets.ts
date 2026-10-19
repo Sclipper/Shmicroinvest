@@ -94,7 +94,11 @@ export const assetRoutes = new Hono<AppEnv>()
     };
     return c.json(await listAssets(c.var.db, ctxOf(c), f));
   })
-  .get('/assets/new', requirePermission(ASSETS), async (c) => c.json(await newAssetDefaults(c.var.db, ctxOf(c))))
+  .get('/assets/new', requirePermission(ASSETS), async (c) => {
+    // ?accountingId=: the asset is created from a posting (strAddFixedAssetData, 03b 14.1).
+    const from = Number(c.req.query('accountingId') ?? '') || undefined;
+    return c.json(await newAssetDefaults(c.var.db, ctxOf(c), from));
+  })
   .post('/assets/preview', requirePermission(ASSETS), zValidator('json', assetBody.extend({ id: z.number().int().nullable().optional() })), async (c) => {
     const { id, ...input } = c.req.valid('json');
     return c.json(await previewAsset(c.var.db, ctxOf(c), input, id ?? undefined));

@@ -1,4 +1,4 @@
-import { amountFromCurrency, currencyLine, dec, materialLine, parseAmount, type Dec } from '@shmi/core';
+import { amountFromCurrency, currencyLine, dec, lineWithFixing, materialLine, parseAmount, type Dec } from '@shmi/core';
 import type { Account } from '../../types.ts';
 import type { MaterialLine } from '../stock/MaterialDetailsDialog.tsx';
 import type { TemplatePayload } from '../templates/TemplateDialogs.tsx';
@@ -17,6 +17,8 @@ export interface LineLike {
   companyName?: string | null;
   currencyAmount: string;
   exchangeRate: string;
+  /** Фиксинг (02a 1.3): the BNB/ECB rate of the accounting date; empty = filled by the server. */
+  fixedRate?: string;
   quantity: string;
   price: string;
   description: string;
@@ -113,8 +115,24 @@ export function lineToApi(l: LineLike) {
     vatTermId: l.vatTermId,
     currencyAmount: toApi(l.currencyAmount),
     exchangeRate: toApi(l.exchangeRate),
+    fixedRate: l.fixedRate ? toApi(l.fixedRate) : null,
     quantity: toApi(l.quantity),
     price: toApi(l.price),
+  };
+}
+
+/**
+ * Fixing (Ctrl+F12, AutomaticFillExchangeRate, 02a 2): the rate of the date
+ * becomes the line's fixing; with `asRate` also its rate, and the amount (or
+ * the currency amount) is recalculated.
+ */
+export function withFixing<L extends LineLike>(l: L, rate: string, asRate: boolean): L {
+  if (!asRate) return { ...l, fixedRate: toInput(rate) };
+  const r = lineWithFixing({ amount: parseAmount(l.amount)?.toString() ?? null, currencyAmount: parseAmount(l.currencyAmount)?.toString() ?? null }, rate);
+  return {
+    ...l, fixedRate: toInput(rate), exchangeRate: toInput(rate),
+    amount: r.amount ? toAmountInput(r.amount.toFixed(2)) : l.amount,
+    currencyAmount: r.currencyAmount ? toInput(r.currencyAmount.toFixed(2)) : l.currencyAmount,
   };
 }
 
