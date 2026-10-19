@@ -4,7 +4,7 @@ import { badRequest } from '../lib/errors.ts';
 import { requirePermission } from '../session.ts';
 import { accountBalances, type PeriodFilter, type TrialBalanceOptions } from '../services/reports.ts';
 import {
-  TRIAL_BALANCE_FILTER_COLUMNS, trialBalanceByMonths, trialBalanceExtended, trialBalanceFiltered, type TrialBalanceFilterColumn,
+  TRIAL_BALANCE_ANY_COLUMNS, TRIAL_BALANCE_FILTER_COLUMNS, filterTrialRows, trialBalanceByMonths, trialBalanceExtended, trialBalanceFiltered, trialFilterColumn, trialTotals, type TrialBalanceFilterColumn,
 } from '../services/reportVariants.ts';
 
 /** Trial-balance variants (spec 05 3.5) and the balances report (4.3). */
@@ -29,18 +29,26 @@ function trialOptions(q: Record<string, string>, year: number, defaultLevel = 0)
 
 const TB = 'UI_Reporting_TurnoverReport';
 
+/** The FC / MT layouts with their own "Филтър по" columns; the totals are those of the remaining rows. */
+async function extendedFiltered(c: { var: AppEnv['Variables'] }, q: Record<string, string>, family: 'currency' | 'quantity', defaultLevel: number) {
+  const column = trialFilterColumn(q.filterColumn, family);
+  const data = await trialBalanceExtended(c.var.db, { ...trialOptions(q, c.var.year.year, defaultLevel), family });
+  if (!q.filter?.trim()) return data;
+  const rows = filterTrialRows(data.rows, column, q.filter, TRIAL_BALANCE_ANY_COLUMNS[family]);
+  return { rows, totals: await trialTotals(c.var.db, rows) };
+}
+
 export const reportVariantRoutes = new Hono<AppEnv>()
   /** Standard layout with the free-text filter (Филтър по / Филтър / Търсене във всички нива). */
   .get('/reports/trial-balance-filtered', requirePermission(TB), async (c) => {
     const q = c.req.query();
-    const column = (q.filterColumn ?? '') as TrialBalanceFilterColumn;
-    if (column && !TRIAL_BALANCE_FILTER_COLUMNS.includes(column as never)) throw badRequest('Невалидна колона за филтър.');
+    const column = trialFilterColumn(q.filterColumn, 'standard');
     return c.json(await trialBalanceFiltered(c.var.db, { ...trialOptions(q, c.var.year.year), filterColumn: column, filterText: q.filter, searchAllLevels: q.allLevels === '1' }));
   })
   /** Валутна: default level 5 (spTurnoverReportFC). */
-  .get('/reports/trial-balance-fc', requirePermission(TB), async (c) => c.json(await trialBalanceExtended(c.var.db, { ...trialOptions(c.req.query(), c.var.year.year, 5), family: 'currency' })))
+  .get('/reports/trial-balance-fc', requirePermission(TB), async (c) => c.json(await extendedFiltered(c, c.req.query(), 'currency', 5)))
   /** Материална (spTurnoverReportMT). */
-  .get('/reports/trial-balance-mt', requirePermission(TB), async (c) => c.json(await trialBalanceExtended(c.var.db, { ...trialOptions(c.req.query(), c.var.year.year), family: 'quantity' })))
+  .get('/reports/trial-balance-mt', requirePermission(TB), async (c) => c.json(await extendedFiltered(c, c.req.query(), 'quantity', 0)))
   /** По периоди (spTurnoverReportM): no partner filter, no off-balance switch. */
   .get('/reports/trial-balance-months', requirePermission(TB), async (c) => {
     const o = trialOptions(c.req.query(), c.var.year.year);

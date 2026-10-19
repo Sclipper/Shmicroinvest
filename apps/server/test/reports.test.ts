@@ -214,3 +214,37 @@ describe('report settings (05 1.2, 06 3.4)', () => {
     expect((await get('/session')).settings.IsVisualizeDateTimeOnReportingEnabled).toBe('True');
   });
 });
+
+describe('trial balance filters (05 3.2, 3.8)', () => {
+  it('"Втора забележка" splits the rows per matching optional reference', async () => {
+    await t.post({ date: '2026-04-02', docNumber: 'OR-1', dr: [['422', 30]], cr: [['501/1', 30]], optionalReference: 'Обект София' });
+    await t.post({ date: '2026-04-03', docNumber: 'OR-2', dr: [['422', 12]], cr: [['501/1', 12]], optionalReference: 'Обект Варна' });
+    await t.post({ date: '2026-04-04', docNumber: 'OR-3', dr: [['422', 5]], cr: [['501/1', 5]], optionalReference: 'Друго' });
+    const d = await get('/reports/trial-balance-filtered?from=2026-04-01&to=2026-04-30&level=2&filterColumn=OptionalReference&filter=обект');
+    const r422 = d.rows.filter((r: { number: string }) => r.number === '422');
+    expect(r422.map((r: { optionalReference: string; debitTurnover: string }) => [r.optionalReference, r.debitTurnover])).toEqual([['Обект Варна', '12.00'], ['Обект София', '30.00']]);
+    expect(d.totals.debitTurnover).toBe('42.00');
+    expect(d.totals.creditTurnover).toBe('42.00');
+  });
+
+  it('currency, materials and partner layouts filter on their own columns; the totals follow the rows', async () => {
+    const fc = await get('/reports/trial-balance-fc?from=2026-01-01&to=2026-12-31&filterColumn=ISOCode&filter=usd');
+    expect(fc.rows.map((r: { number: string }) => r.number)).toContain(usd);
+    expect(fc.rows.every((r: { isoCode: string }) => r.isoCode === 'USD')).toBe(true);
+    const byAmount = await get('/reports/trial-balance-fc?from=2026-01-01&to=2026-12-31&filterColumn=CurrencyDebitTurnover&filter=1000');
+    expect(byAmount.rows.find((r: { number: string }) => r.number === usd)?.extra.debitTurnover).toBe('1000.00');
+    expect((await t.call('GET', '/reports/trial-balance-fc?filterColumn=CompanyName&filter=x')).status).toBe(400);
+    expect((await t.call('GET', '/reports/trial-balance-mt?filterColumn=ISOCode&filter=x')).status).toBe(400);
+    const none = await get('/reports/trial-balance-mt?from=2026-01-01&to=2026-12-31&filterColumn=MaterialDebitTurnover&filter=999999');
+    expect(none.rows).toEqual([]);
+    expect(none.totals.debitTurnover).toBe('0.00');
+    const second = await t.partner('Друг клиент ЕООД', ['411']);
+    await t.post({ date: '2026-04-10', docNumber: 'F-101', dr: [['411', 60, { companyId: second }]], cr: [['702', 60]] });
+    const both = await get(`/reports/partner-turnover?account=411&from=2026-01-01&to=2026-12-31&companyId=${client},${second}`);
+    expect(both.map((r: { companyName: string }) => r.companyName).sort()).toEqual(['Друг клиент ЕООД', 'Клиент Справки ООД']);
+    const filtered = await get('/reports/partner-turnover?account=411&from=2026-01-01&to=2026-12-31&filterColumn=CompanyName&filter=друг');
+    expect(filtered.map((r: { companyName: string }) => r.companyName)).toEqual(['Друг клиент ЕООД']);
+    const byTurnover = await get('/reports/partner-turnover?account=411&from=2026-01-01&to=2026-12-31&filterColumn=DebitTurnover&filter=120');
+    expect(byTurnover.map((r: { companyName: string }) => r.companyName)).toEqual(['Клиент Справки ООД']);
+  });
+});

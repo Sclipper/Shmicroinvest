@@ -91,6 +91,8 @@ export interface TrialBalanceOptions extends PeriodFilter {
   subAccountLevel?: number;
   showZeroRows?: boolean;
   withoutOffBalance?: boolean;
+  /** Extra condition on the postings (alias a = accountings), e.g. one optional reference. */
+  postingFilter?: SQL;
 }
 
 export interface TrialBalanceRow {
@@ -122,7 +124,7 @@ export async function trialBalance(db: DbOrTx, o: TrialBalanceOptions) {
     FROM accounting_details d JOIN accountings a ON a.id = d.accounting_id
     WHERE ${yearFilter} AND ${dateCol} <= ${o.endDate}
       AND NOT (a.is_initial_balance AND a.is_initial_correspondence)
-      ${companyFilter}
+      ${companyFilter} ${o.postingFilter ? sql`AND ${o.postingFilter}` : sql``}
     GROUP BY d.account_id`);
   const sums = (res.rows as { account_id: number; od: string; oc: string; dt: string; ct: string }[]);
 

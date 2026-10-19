@@ -6,7 +6,7 @@ import {
   JOURNAL_FILTER_COLUMNS, JOURNAL_SORT_COLUMNS, analyticalRegister, chartReport, compareAccountNumbers, generalLedger, partnerTurnover, trialBalance,
   type JournalFilterColumn, type JournalLineFilter, type JournalSortColumn, type PeriodFilter,
 } from '../services/reports.ts';
-import { ledgerZeroTurnoverAccounts } from '../services/reportVariants.ts';
+import { TRIAL_BALANCE_ANY_COLUMNS, filterTrialRows, ledgerZeroTurnoverAccounts, trialFilterColumn } from '../services/reportVariants.ts';
 
 /** Common query parameters: from, to, byExportMonth=1, companyId (comma list). */
 function period(q: Record<string, string>, year: number): PeriodFilter {
@@ -96,7 +96,9 @@ export const reportRoutes = new Hono<AppEnv>()
     requireAnyPermission('UI_Reporting_TurnoverReport', 'UI_Reporting_Companies_PartnersDebtReport'), async (c) => {
       const q = c.req.query();
       if (!q.account) return c.json({ error: 'Не е избрана сметка.' }, 400);
-      return c.json(await partnerTurnover(c.var.db, { ...period(q, c.var.year.year), accountNumber: q.account, showZeroRows: q.zero === '1' }));
+      const column = trialFilterColumn(q.filterColumn, 'partners');
+      const rows = await partnerTurnover(c.var.db, { ...period(q, c.var.year.year), accountNumber: q.account, showZeroRows: q.zero === '1' });
+      return c.json(filterTrialRows(rows, column, q.filter, TRIAL_BALANCE_ANY_COLUMNS.partners));
     })
   .get('/reports/chart', requirePermission('UI_Reporting_ChartOfAccountsReport'), async (c) => {
     const q = c.req.query();
