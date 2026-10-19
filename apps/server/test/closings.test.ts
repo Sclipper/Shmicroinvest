@@ -43,6 +43,13 @@ describe('FX revaluation (02c 2)', () => {
     const r = await t.call('POST', '/revaluation', body({ accountId: t.acc(usd1), rates: [{ currencyId: 3, rate: '0.9250' }] }));
     expect(r.status, r.text).toBe(201);
     expect(r.body.entries).toHaveLength(1);
+    // "Валутни разлики" printout (05 6.11): the account on the debit side, 724 credited, the net total.
+    expect(r.body.differences).toMatchObject({
+      lines: [{ accountNumber: usd1, debit: '10.00', credit: '0.00' }],
+      differences: [{ accountNumber: '724', debit: '0.00', credit: '10.00' }],
+      totals: { debit: '10.00', credit: '0.00' }, differencesTotal: '10.00',
+    });
+    expect(r.body.differences.lines[0].accountName).toContain('USD');
     const e = await entry(t, r.body.entries[0].id);
     expect(e).toMatchObject({ documentTypeId: 10, term: 'Преоценка', accountingDate: '2026-03-31' });
     expect(e.debits).toEqual([expect.objectContaining({ accountId: t.acc(usd1), amount: '10.00', currencyAmount: '0.00' })]);
@@ -58,6 +65,7 @@ describe('FX revaluation (02c 2)', () => {
     await t.post({ date: '2026-03-12', dr: [[usd2, 1500, { currencyAmount: '1000' }]], cr: [['702', 1500]] });
     const r = await t.call('POST', '/revaluation', body({ accountId: t.acc(usd2), rates: [{ currencyId: 3, rate: '1.4999' }] }));
     expect(r.status, r.text).toBe(201);
+    expect(r.body.differences).toMatchObject({ lines: [{ accountNumber: usd2, debit: '0.00', credit: '0.10' }], differences: [{ accountNumber: '624', debit: '0.10' }], differencesTotal: '-0.10' });
     const e = await entry(t, r.body.entries[0].id);
     expect(lines(e.debits)).toEqual([[t.acc('624'), '0.10']]);
     expect(e.credits).toEqual([expect.objectContaining({ accountId: t.acc(usd2), amount: '0.10', currencyAmount: '0.00' })]);

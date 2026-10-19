@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canSaveRevaluation, isListedRevaluation, partnerRevaluationCheck, rateFromEcb, revaluationLegs, revalue, roundRate } from '../src/index.ts';
+import { canSaveRevaluation, currencyDifferencesReport, isListedRevaluation, partnerRevaluationCheck, rateFromEcb, revaluationLegs, revalue, roundRate } from '../src/index.ts';
 
 describe('FX revaluation (02c 2.3)', () => {
   it('worked example 2.5: rate 0.9250 -> Positive 10.00, rate 0.9100 -> Negative 8.00', () => {
@@ -73,5 +73,26 @@ describe('FX revaluation (02c 2.3)', () => {
     expect(rateFromEcb('1.0810', 'EUR', 'USD').toString()).toBe('0.92507');
     expect(rateFromEcb('1.0810', 'BGN', 'USD').toString()).toBe('1.80928');
     expect(rateFromEcb('0', 'BGN', 'EUR').toString()).toBe('1.95583');
+  });
+});
+
+describe('"Валутни разлики" printout (05 6.11)', () => {
+  it('positive differences on the debit, negative on the credit; 724 / 624 lines and the net total', () => {
+    const fx = { income: { number: '724', description: 'Приходи от операции с валута' }, expense: { number: '624', description: 'Разходи по операции с валута' } };
+    const r = currencyDifferencesReport([
+      { accountNumber: '504/1', accountDescription: 'Банка USD', currencyIso: 'USD', direction: 'positive', sum: '12.345' },
+      { accountNumber: '401', accountDescription: 'Доставчици', currencyIso: 'GBP', companyName: 'UK Ltd', direction: 'negative', sum: '5' },
+      { accountNumber: '504/2', accountDescription: 'Банка CHF', direction: 'neutral', sum: '0' },
+    ], fx);
+    expect(r.lines).toEqual([
+      { accountNumber: '504/1', accountName: 'Банка USD, USD', debit: '12.35', credit: '0.00' },
+      { accountNumber: '401', accountName: 'Доставчици, GBP, UK Ltd', debit: '0.00', credit: '5.00' },
+    ]);
+    expect(r.differences).toEqual([
+      { accountNumber: '724', accountName: 'Приходи от операции с валута', debit: '0.00', credit: '12.35' },
+      { accountNumber: '624', accountName: 'Разходи по операции с валута', debit: '5.00', credit: '0.00' },
+    ]);
+    expect(r.totals).toEqual({ debit: '12.35', credit: '5.00' });
+    expect(r.differencesTotal).toBe('7.35');
   });
 });

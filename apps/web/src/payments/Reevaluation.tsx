@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Download, Save } from 'lucide-react';
+import { Download, Printer, Save } from 'lucide-react';
 import { REVALUATION_MESSAGES, canSaveRevaluation, isCompanyCategory, isListedRevaluation, revaluationLegs, revalue, roundRate } from '@shmi/core';
 import { api, qs } from '../api.ts';
 import { money } from '../format.ts';
 import { AccountPicker, PartnerPicker } from '../components/pickers.tsx';
 import { useDialogs } from '../components/dialogs.tsx';
-import { Button, Checkbox, CommandBar, Empty, Field, Panel, Spinner, TextInput, cx } from '../components/ui.tsx';
+import { Button, Checkbox, CommandBar, Dialog, Empty, Field, Panel, Spinner, TextInput, cx } from '../components/ui.tsx';
+import { PrintPortal, usePrinting } from '../reports/common.tsx';
 import { useAccounts, useCan, useInvalidate, useSession } from '../session.tsx';
 import { TabStrip, normDecimal } from '../screens/admin/common.tsx';
 import type { Account } from '../types.ts';
@@ -66,6 +67,7 @@ export function Reevaluation() {
   const [rates, setRates] = useState<Record<number, string>>({});
   const [partnerRate, setPartnerRate] = useState('');
   const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState<{ count: number; date: string; differences: CurrencyDifferences } | null>(null);
   const currencyFilter = useForeignFilter(false);
   const partnerFilter = useForeignFilter(true);
 
@@ -126,14 +128,15 @@ export function Reevaluation() {
   const save = async () => {
     setBusy(true);
     try {
-      const res = await api.post<{ entries: unknown[] }>('/revaluation', {
+      const res = await api.post<{ entries: unknown[]; differences: CurrencyDifferences }>('/revaluation', {
         tab, date, accountId: tab === 'currency' && all ? null : accountId, all: tab === 'currency' && all,
         companyId: tab === 'partner' ? company?.id ?? null : null, term, reference: reference || null,
         rates: Object.entries(rates).filter(([, v]) => cleanRate(v)).map(([k, v]) => ({ currencyId: Number(k), rate: cleanRate(v) })),
         rate: tab === 'partner' ? cleanRate(partnerRate) || null : null,
       });
       await invalidate('revaluation', 'journal', 'entries', 'reports');
-      await dialogs.alert(`Записани са ${res.entries.length} мемориални ордера.`, 'Преоценка');
+      // The posted differences open as the "Валутни разлики" printout (05 6.11).
+      setSaved({ count: res.entries.length, date, differences: res.differences });
     } catch (e) {
       await dialogs.error(e, 'Преоценка');
     } finally {
@@ -266,6 +269,89 @@ export function Reevaluation() {
           {missingRate && <div className="border-t border-slate-200 px-3 py-1.5 text-[12px] text-red-700">{REVALUATION_MESSAGES.strExchangeRateNotSetError}</div>}
         </Panel>
       </div>
+      {saved && <CurrencyDifferencesDialog {...saved} onClose={() => setSaved(null)} />}
     </div>
+  );
+}
+
+interface DifferenceLine {
+  accountNumber: string;
+  accountName: string;
+  debit: string;
+  credit: string;
+}
+interface CurrencyDifferences {
+  lines: DifferenceLine[];
+  differences: DifferenceLine[];
+  totals: { debit: string; credit: string };
+  differencesTotal: string;
+}
+
+function DifferencesTable({ d }: { d: CurrencyDifferences }) {
+  const row = (l: DifferenceLine, i: number, cls?: string) => (
+    <tr key={`${l.accountNumber}:${i}`} className={cls}>
+      <td className="nowrap">{l.accountNumber}</td>
+      <td>{l.accountName}</td>
+      <td className="num">{Number(l.debit) ? money(l.debit) : ''}</td>
+      <td className="num">{Number(l.credit) ? money(l.credit) : ''}</td>
+    </tr>
+  );
+  return (
+    <table className="grid-table w-full">
+      <thead>
+        <tr>
+          <th className="w-24">Сметка</th>
+          <th>Наименование</th>
+          <th className="w-28 text-right">Дебит</th>
+          <th className="w-28 text-right">Кредит</th>
+        </tr>
+      </thead>
+      <tbody>
+        {d.lines.map((l, i) => row(l, i))}
+        {d.differences.map((l, i) => row(l, i, 'font-semibold'))}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colSpan={2}>Общо валутни разлики: {money(d.differencesTotal)}</td>
+          <td className="num">{money(d.totals.debit)}</td>
+          <td className="num">{money(d.totals.credit)}</td>
+        </tr>
+      </tfoot>
+    </table>
+  );
+}
+
+/** "Валутни разлики" (strCurrencyDifferences) after a saved revaluation, with its printout. */
+function CurrencyDifferencesDialog({ count, date, differences, onClose }: { count: number; date: string; differences: CurrencyDifferences; onClose: () => void }) {
+  const [printing, print] = usePrinting();
+  const subtitle = `Преоценка към ${date.split('-').reverse().join('.')}`;
+  return (
+    <Dialog
+      title="Валутни разлики"
+      width={720}
+      onClose={onClose}
+      footer={
+        <>
+          <Button icon={<Printer className="size-3.5" />} onClick={print}>
+            Печат
+          </Button>
+          <Button variant="primary" data-autofocus onClick={onClose}>
+            OK
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-2">
+        <div>Записани са {count} мемориални ордера.</div>
+        <div className="max-h-[50vh] overflow-auto border border-slate-200">
+          <DifferencesTable d={differences} />
+        </div>
+      </div>
+      {printing && (
+        <PrintPortal title="Валутни разлики" subtitle={subtitle}>
+          <DifferencesTable d={differences} />
+        </PrintPortal>
+      )}
+    </Dialog>
   );
 }
