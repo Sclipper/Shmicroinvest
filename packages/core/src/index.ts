@@ -39,3 +39,6 @@ export * from './exchange/euro.ts';
 export * from './exchange/backup.ts';
 export * from './exchange/exportReports.ts';
 export * from './reportFilters.ts';
+export * from './email.ts';
+export * from './userActivities.ts';
+export * from './notices.ts';

@@ -574,7 +574,23 @@ export const DEFAULT_SHORTCUTS: ShortcutDef[] = [
   { id: 'SelectFirstCellOfRow', label: 'Първа клетка на реда', type: 'WindowReadOnly', gesture: 'Home' },
   { id: 'SelectLastCellOfRow', label: 'Последна клетка на реда', type: 'WindowReadOnly', gesture: 'End' },
   { id: 'SearchCompanyByBulstat', label: 'Търсене на партньор по ЕИК', type: 'WindowReadOnly', gesture: 'Ctrl+S' },
+  { id: 'PaymentsAndConnectedDocuments', label: 'Разплащания и обвързани документи', type: 'WindowReadOnly', gesture: 'Alt+R' },
+  { id: 'ExportPaymentsDocument', label: 'Експорт на платежни документи', type: 'WindowReadOnly', gesture: 'F6' },
 ];
+
+/** Captions of the shortcut types, in the order of the printout (06 2.6 "Print builds a FlowDocument grouped by type"). */
+export const SHORTCUT_TYPE_LABELS: Record<ShortcutType, string> = {
+  WindowEditable: 'Прозорец (редакция)',
+  WindowReadOnly: 'Прозорец',
+  MainMenu: 'Главно меню',
+};
+
+/** Rows grouped by shortcut type for the printout; empty groups are left out, rows keep their order. */
+export function shortcutsByType<R extends { type: string }>(rows: R[]): { type: ShortcutType; label: string; rows: R[] }[] {
+  return (Object.keys(SHORTCUT_TYPE_LABELS) as ShortcutType[])
+    .map((type) => ({ type, label: SHORTCUT_TYPE_LABELS[type], rows: rows.filter((r) => r.type === type) }))
+    .filter((g) => g.rows.length > 0);
+}
 
 /** Keys an editable row may use (06 2.6): letters/digits, Home/End/arrows, F1-F12, with modifiers. */
 export function isAllowedEditableGesture(gesture: string): boolean {

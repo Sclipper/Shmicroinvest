@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { and, asc, desc, eq, ilike, inArray, ne, or, sql } from 'drizzle-orm';
 import {
   BULSTAT_PLACEHOLDER, isCompanyCategory, isEmail, isValidEgn, isValidEik, isValidIban, isValidPartnerIdentifier, normalizeIban,
-  bankCodeFromIban, detectIdentifier, turnoverWindow, vatRegistrationTurnover, type ValidationMessage,
+  bankCodeFromIban, detectIdentifier, type ValidationMessage,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import { exec } from '../db/provider.ts';
@@ -14,6 +14,7 @@ import type { DbOrTx } from '../db/provider.ts';
 import { ApiError, badRequest, notFound } from '../lib/errors.ts';
 import { requirePermission, workingDate } from '../session.ts';
 import { logActivity } from '../services/audit.ts';
+import { vatRegistrationTurnoverFor } from '../services/notices.ts';
 
 const addressBody = z.object({
   id: z.number().int().optional(),
@@ -476,20 +477,7 @@ export const nomenclatureRoutes = new Hono<AppEnv>()
   /** Оборот за регистрация по ЗДДС (03a 3.3): the 12 months up to the working date. */
   .get('/my-company/vat-turnover', async (c) => {
     const { db, year, session } = c.var;
-    const end = workingDate(session).slice(0, 7);
-    const months = turnoverWindow(end);
-    const rows = (await exec(db, sql`
-      SELECT to_char(a.accounting_date, 'YYYY-MM') AS month,
-        sum(CASE WHEN ra.number LIKE '70%' OR ra.number LIKE '412%' THEN d.amount ELSE 0 END)
-        - sum(CASE WHEN da.number LIKE '123%' AND ra.number LIKE '70%' THEN d.amount ELSE 0 END) AS amount
-      FROM accounting_details d
-      JOIN accountings a ON a.id = d.accounting_id
-      JOIN accounts da ON da.id = d.account_id
-      JOIN accounts ra ON ra.id = d.ref_account_id
-      WHERE d.sign = 1 AND NOT a.is_initial_balance
-        AND a.accounting_date >= ${`${months[0]}-01`}::date AND a.accounting_date < (${`${end}-01`}::date + interval '1 month')
-      GROUP BY 1`)).rows as { month: string; amount: string }[];
-    return c.json(vatRegistrationTurnover(rows, end, year.year));
+    return c.json(await vatRegistrationTurnoverFor(db, year.year, workingDate(session)));
   })
   /** Информация tab (MyCompanyInfoView): counts by financial year. */
   .get('/my-company/info', async (c) => {
