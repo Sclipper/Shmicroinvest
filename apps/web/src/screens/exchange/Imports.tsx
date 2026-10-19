@@ -168,7 +168,7 @@ export function XmlImport() {
     >
       <div className="flex max-w-[800px] flex-col gap-3">
         {step === 0 && (
-          <Field label="XML файл (urn:Transfer)"><FileInput file={file} onChange={setFile} accept=".xml" /></Field>
+          <Field label="XML файл (urn:Transfer)"><FileInput file={file} onChange={setFile} accept=".xml" testId="xml-file" /></Field>
         )}
         {step === 1 && <CategoryGrid rows={cats.data ?? []} value={map} onChange={setMap} />}
         {step === 2 && info && (
