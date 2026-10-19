@@ -13,6 +13,7 @@ import { zValidator } from '../lib/validate.ts';
 import { ApiError, badRequest, notFound } from '../lib/errors.ts';
 import { requirePermission } from '../session.ts';
 import { getConfig, setConfig } from '../services/config.ts';
+import { readLocalSettings, saveLocalSettings } from '../services/localSettings.ts';
 import { findSequence, formatSequenceNumber } from '../services/sequences.ts';
 import { logActivity } from '../services/audit.ts';
 
@@ -249,11 +250,13 @@ export const settingsExtraRoutes = new Hono<AppEnv>()
   .get('/settings/user', async (c) => {
     const out: Record<string, string> = {};
     for (const [k, d] of Object.entries(USER_SETTINGS)) out[k] = (await getConfig(c.var.db, k, c.var.user.id)) ?? d;
-    return c.json(out);
+    return c.json({ ...out, ...(await readLocalSettings(c.var.db, c.var.user.id)) });
   })
 
   .put('/settings/user', zValidator('json', z.record(z.string(), z.string())), async (c) => {
-    for (const [k, v] of Object.entries(c.req.valid('json'))) {
+    // Local keys of 06 3.2 (ZIP password, e-mail sender and signature) first; then the screen options.
+    const rest = await c.var.db.transaction((tx) => saveLocalSettings(tx, c.var.user.id, c.req.valid('json')));
+    for (const [k, v] of Object.entries(rest)) {
       if (!(k in USER_SETTINGS)) throw badRequest(`Непозната настройка ${k}.`);
       await setConfig(c.var.db, k, v, c.var.user.id);
     }

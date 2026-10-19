@@ -279,5 +279,7 @@ export function useSettingsPages() {
     { id: 'documents', label: 'Документи', visible: can('UI_Other_Settings_DocumentTypes') },
     // SmtpConfigurationView: Delta shows it only for TRZ Pro (06 3.5); the web rebuild needs it to e-mail reports.
     { id: 'smtp', label: 'E-mail', visible: can('UI_Other_Settings') },
+    // Delta's local keys (06 3.2), per user: e-mail sender and signature, archive password.
+    { id: 'local', label: 'Лични', visible: true },
   ].filter((p) => p.visible);
 }

@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { drizzle as drizzlePglite } from 'drizzle-orm/pglite';
 import { and, desc, eq, or, sql } from 'drizzle-orm';
 import {
-  BACKUP_FORMAT_VERSION, BACKUP_PRODUCT_NAME, backupFileName, compareVersions, critical, DataImportError, msg, type BackupHeader,
+  BACKUP_FORMAT_VERSION, BACKUP_PRODUCT_NAME, backupFileName, compareVersions, critical, DataImportError, msg, unzipStore, ZipPasswordError, type BackupHeader,
 } from '@shmi/core';
 import * as cat from '../../db/catalog/schema.ts';
 import * as s from '../../db/company/schema/index.ts';
@@ -40,6 +40,24 @@ export function decodeBackup(bytes: Uint8Array): { header: BackupHeader; payload
   }
   if (!header || header.format > BACKUP_FORMAT_VERSION || !['pglite-datadir', 'logical-json'].includes(header.kind)) throw new DataImportError(critical('strInvalidChoosenFilePathError'));
   return { header, payload: bytes.slice(nl + 1) };
+}
+
+/**
+ * The backup file inside a downloaded backup ZIP (password-protected when
+ * IsZipPasswordEnabled, 06 3.2): its first entry. A missing or wrong
+ * password is strInvalidZipPassword.
+ */
+export function backupFromZip(bytes: Uint8Array, password: string | null): Uint8Array {
+  let entries: Map<string, Uint8Array>;
+  try {
+    entries = unzipStore(bytes, password);
+  } catch (e) {
+    if (e instanceof ZipPasswordError) throw new DataImportError(critical('strInvalidZipPassword'));
+    throw new DataImportError(critical('strInvalidChoosenFilePathError'));
+  }
+  const first = [...entries.values()][0];
+  if (!first) throw new DataImportError(critical('strInvalidChoosenFilePathError'));
+  return first;
 }
 
 /** Physical name of a restored company: delta_<yyMMddHHmmss><random> (same shape as a new company). */

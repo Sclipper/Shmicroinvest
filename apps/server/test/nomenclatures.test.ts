@@ -1,4 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { sql } from 'drizzle-orm';
+import { queryRows } from '../src/db/provider.ts';
+import { deletePartnerGroup } from '../src/routes/nomenclatures.ts';
 import { createTestCompany, type TestCompany } from './helpers.ts';
 
 let t: TestCompany;
@@ -117,6 +120,22 @@ describe('partner groups', () => {
     const notEmpty = await t.call('DELETE', `/partner-groups/${g2.body.id}`);
     expect(notEmpty.body.error).toBe('Избраната група не може да бъде изтрита, тъй като не е празна!');
     expect((await t.call('DELETE', '/partner-groups/1')).status).toBe(400);
+  });
+
+  it('moves deleted partners to the root and fails with strDeletePartnerGroupFailed when a partner got in meanwhile (03a 2.7)', async () => {
+    const g = await t.call('POST', '/partner-groups', { parentId: 1, name: 'За изтриване' });
+    const p = await t.call('POST', '/partners', { name: 'Изтрит член', groupId: g.body.id, accountIds: [t.acc('411')] });
+    expect((await t.call('DELETE', `/partners/${p.body.id}`)).status).toBe(200);
+    expect((await t.call('DELETE', `/partner-groups/${g.body.id}`)).status).toBe(200);
+    const db = await t.driver.company(t.companyDb);
+    const [row] = await queryRows<{ group_id: number }>(db, sql`select group_id from companies where id = ${p.body.id}`);
+    expect(row!.group_id).toBe(1);
+    // The service itself (spDeleteCompanyGroup) re-checks: a partner added after the route's checks fails the delete.
+    const g2 = await t.call('POST', '/partner-groups', { parentId: 1, name: 'Заета' });
+    await t.call('POST', '/partners', { name: 'Нов член', groupId: g2.body.id, accountIds: [t.acc('411')] });
+    const err = await db.transaction((tx) => deletePartnerGroup(tx, g2.body.id)).catch((e) => e);
+    expect(err.messages.map((m: { key: string }) => m.key)).toEqual(['strDeletePartnerGroupFailed']);
+    expect(err.message).toBe('Изтриването на група Заета беше неуспешно. Вероятно в тази група или в нейна подгрупа се съдържат един или повече партньори!');
   });
 });
 

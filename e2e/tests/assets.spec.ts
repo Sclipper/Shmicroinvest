@@ -34,6 +34,13 @@ test.describe('fixed assets', () => {
     await expect(schedule.locator('td[data-month="2026-04-01"] input')).toHaveValue('200,00');
     await expect(schedule.getByRole('row', { name: /^2026/ })).toContainText('1 800,00');
     await expect(schedule.locator('td[data-month="2031-03-01"] input')).toHaveValue('200,00');
+    // Month cell states (03b 6.1): March 2026 (commissioning month, САП) and April 2031 have no charge.
+    for (const m of ['2026-03-01', '2031-04-01']) {
+      await expect(schedule.locator(`td[data-month="${m}"]`)).toHaveAttribute('data-status', 'disabled');
+      await expect(schedule.locator(`td[data-month="${m}"]`)).toHaveAttribute('title', 'Няма амортизационно отчисление за този месец');
+      await expect(schedule.locator(`td[data-month="${m}"] input`)).toHaveCount(0);
+    }
+    await expect(schedule.locator('td[data-month="2026-04-01"]')).toHaveAttribute('title', 'Нормално');
     await expect(schedule).toContainText('Общо (60 мес.)');
     await expect(tab.getByRole('table', { name: 'Амортизационни планове' })).toContainText('01.03.2031');
 
@@ -58,7 +65,7 @@ test.describe('fixed assets', () => {
     await page.getByRole('button', { name: 'ДА E2E-0001' }).click();
     tab = activeTab(page);
     await expect(tab.getByRole('table', { name: 'Амортизационни планове' }).getByRole('row', { name: /Счетоводен/ })).toContainText('1 400,00');
-    await expect(tab.locator('td[data-month="2026-04-01"]')).toHaveAttribute('title', /Контиране №/);
+    await expect(tab.locator('td[data-month="2026-04-01"]')).toHaveAttribute('title', /^Осчетоводено с контиране №\d+ от дата \d{2}\.\d{2}\.\d{4}$/);
 
     // Report: Справки > Дълготрайни активи > Инвентарна книга (Alt+I).
     await page.keyboard.press('Alt+i');

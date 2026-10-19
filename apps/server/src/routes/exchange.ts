@@ -13,7 +13,7 @@ import { requirePermission, workingDate } from '../session.ts';
 import { logActivity } from '../services/audit.ts';
 import { getConfig, setConfig } from '../services/config.ts';
 import { importStep, readUpload, throwIf } from '../services/exchange/common.ts';
-import { convertDelta, deltaPreconditions, readDeltaMdb } from '../services/exchange/deltaConversion.ts';
+import { deltaPreconditions, readDeltaMdb, runDeltaConversion } from '../services/exchange/deltaConversion.ts';
 import { excelTemplateRows, importExcel } from '../services/exchange/excelImport.ts';
 import { addExportReport, listExportReports, runExportReport } from '../services/exchange/reportExports.ts';
 import { importTextFile, textCategoryDefaults } from '../services/exchange/textImport.ts';
@@ -203,14 +203,9 @@ export const exchangeRoutes = new Hono<AppEnv>()
     await importStep(async () => throwIf(await deltaPreconditions(c.var.db, type)), false);
     const src = await importStep(async () => readDeltaMdb(up.bytes, type), false);
     const ctx = { year: c.var.year, userId: c.var.user.id, today: workingDate(c.var.session) };
-    const r = await importStep(async () => {
-      try {
-        return await c.var.db.transaction((tx) => convertDelta(tx, src, type, ctx));
-      } catch (e) {
-        if (e instanceof DataImportError) throw new DataImportError([critical('strImportFromDeltaFailed'), ...e.messages], e.details);
-        throw e;
-      }
-    }, false);
+    const r = await importStep(() => runDeltaConversion(c.var.db, src, type, ctx, {
+      signal: c.req.raw.signal, fileName: up.fileName, company: c.var.session.companyDb ?? null, user: c.var.user.name,
+    }), false);
     await logActivity(c.var.db, c.var.user.id, 'import', 'delta', null, `Импорт от Microinvest Делта: ${up.fileName}`);
     return c.json({ ...r, message: msg('strTransferCompleted') });
   })

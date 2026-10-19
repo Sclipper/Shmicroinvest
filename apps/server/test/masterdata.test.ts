@@ -34,7 +34,8 @@ describe('own company (03a 3)', () => {
       { account: 'BG80BNBG96611020345678', bankStatementAccountId: acc },
       { account: 'BG18RZBB91550123456789', bankStatementAccountId: acc },
     ] });
-    expect(keys(r)).toContain('strErrorAccountWithMultipleBankAccounts');
+    expect(keys(r)).toEqual(['strErrorAccountWithMultipleBankAccounts', 'strBankAccountChangesNotSaved']);
+    expect(r.body.messages[1].text).toBe("Промените в 'Банкови сметки' не са запазени.");
   });
 });
 
@@ -97,5 +98,26 @@ describe('terms and references (03a 8.1)', () => {
     const sale = ((await call('GET', '/dictionary/terms?all=1')).body as { id: number; description: string }[]).find((x) => x.description === 'Продажба на стоки')!;
     const blocked = await call('DELETE', `/dictionary/terms/${sale.id}`);
     expect([blocked.status, blocked.body.error]).toEqual([400, 'Избраните основания не могат да бъдат изтрити, защото участват в операции от тип Покупка/Продажба.']);
+  });
+
+  it('asks before adding a new term, reference or paragraph to its list; a declined one is used but hidden (03a 8.1)', async () => {
+    const entry = (extra: Record<string, unknown>) => t.tryPost({ date: '2026-02-10', dr: [['501', '5']], cr: [['101', '5']], confirmTerms: true, ...extra });
+    const q = await entry({ term: 'Ново основание', reference: 'Нова забележка', optionalReference: 'нова забележка ' });
+    expect([q.status, q.body.code]).toEqual([409, 'confirm']);
+    expect(q.body.messages.map((m: { key: string; field: string }) => [m.key, m.field])).toEqual([['strAddTermConfirmation', 'term'], ['strAddReferenceConfirmation', 'reference']]);
+    expect(q.body.messages[0].text).toBe('Прибавяне на основанието към списъка с основания към контирания?');
+    // Yes for the term, No for the reference: both are stored, the reference hidden from the list.
+    const saved = await entry({ term: 'Ново основание', reference: 'Нова забележка', force: true, hiddenTerms: ['reference'] });
+    expect(saved.status, saved.text).toBe(201);
+    const visible = async (type: string) => ((await call('GET', `/dictionary/${type}?limit=500`)).body as { description: string }[]).map((x) => x.description);
+    expect(await visible('terms')).toContain('Ново основание');
+    expect(await visible('references')).not.toContain('Нова забележка');
+    expect(((await call('GET', '/dictionary/references?all=1&limit=500')).body as { description: string; isHidden: boolean }[]).find((x) => x.description === 'Нова забележка')!.isHidden).toBe(true);
+    expect((await call('GET', `/entries/${saved.body.id}`)).body).toMatchObject({ term: 'Ново основание', reference: 'Нова забележка' });
+    // Texts already in a list (case-insensitive, hidden ones too) ask nothing; without confirmTerms nothing is asked.
+    expect((await entry({ term: 'НОВО ОСНОВАНИЕ', reference: 'Нова забележка' })).status).toBe(201);
+    expect((await entry({ term: 'Друго ново', confirmTerms: undefined })).status).toBe(201);
+    const p = await entry({ term: 'Ново основание', paragraph: 'Параграф 10-00' });
+    expect(p.body.messages.map((m: { key: string }) => m.key)).toEqual(['strAddParagraphConfirmation']);
   });
 });

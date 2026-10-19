@@ -53,3 +53,4 @@ export * from './entryFollowUps.ts';
 export * from './email.ts';
 export * from './userActivities.ts';
 export * from './notices.ts';
+export * from './users.ts';

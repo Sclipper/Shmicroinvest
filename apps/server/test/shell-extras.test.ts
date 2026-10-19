@@ -181,6 +181,13 @@ describe('04b 3 e-mail of reports', { timeout: 30_000 }, () => {
     const log = (await t.call('GET', '/activity?activity=export&entityType=turnoverReport')).body as { description: string }[];
     expect(log[0]!.description).toBe('Оборотна ведомост: e-mail до boss@firma.bg; acc@firma.bg');
 
+    // EmailUserName / EmailSignature (06 3.2): the sender's display name and the signature under the text.
+    expect((await t.call('PUT', '/settings/user', { EmailUserName: 'Мария Иванова', EmailSignature: 'Поздрави,\nМария\nТест ООД' })).status).toBe(200);
+    r = await t.call('POST', '/email/report', { to: 'boss@firma.bg', subject: 'Оборотна ведомост', body: 'Приложено', report: 'Оборотна ведомост', entityType: 'turnoverReport', attachment });
+    expect(r.status, r.text).toBe(200);
+    expect(MAIL_OUTBOX.at(-1)).toMatchObject({ from: '"Мария Иванова" <office@firma.bg>', text: 'Приложено\n\nПоздрави,\nМария\nТест ООД' });
+    await t.call('PUT', '/settings/user', { EmailUserName: '', EmailSignature: '' });
+
     // A failing server gives strEmailSendingFailed.
     setMailTransportFactory(() => ({ sendMail: async () => { throw new Error('ECONNREFUSED'); } }) as never);
     r = await t.call('POST', '/email/report', { to: 'boss@firma.bg', subject: 'x', attachment });

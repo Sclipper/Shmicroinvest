@@ -4,7 +4,7 @@ import { parseAmount } from '@shmi/core';
 import { api, ApiError, type Message } from '../api.ts';
 import { useDialogs } from '../components/dialogs.tsx';
 import { AccountPicker } from '../components/pickers.tsx';
-import { Button, Checkbox, Dialog, Field, Select, Spinner, TextInput } from '../components/ui.tsx';
+import { Button, Dialog, Field, Select, Spinner, TextInput } from '../components/ui.tsx';
 import { bgDate, money, monthLabel } from '../format.ts';
 import { download, FileInput, MessageList, upload } from '../screens/exchange/common.tsx';
 import { DocHeader, PrintableDoc, Signatures, useAssetLookups, type AssetRow, type Location } from './common.tsx';
@@ -202,8 +202,9 @@ export function IasDialog({ asset, onClose, onDone }: { asset: AssetRow; onClose
           {d.isLand && <div className="rounded-sm bg-amber-50 px-2 py-1 text-[12px] text-amber-800">Активът е земя/гора: преоценката се извършва към избрана дата.</div>}
           {!d.accountsDefined && <div className="rounded-sm bg-red-50 px-2 py-1 text-[12px] text-red-800">Няма дефинирани сметки за разходи и приходи от преоценки.</div>}
           <div className="flex gap-4">
-            <label className="flex items-center gap-1.5"><input type="radio" checked={mode === 'revaluation'} onChange={() => setMode('revaluation')} /> Преоценка / обезценка</label>
-            <label className="flex items-center gap-1.5"><input type="radio" checked={mode === 'improvement'} onChange={() => setMode('improvement')} /> Подобрение (по цена на придобиване)</label>
+            {/* strAccountingRevaluationReserve / strAssetImprovement (03b 9) */}
+            <label className="flex items-center gap-1.5"><input type="radio" name="ias-mode" checked={mode === 'revaluation'} onChange={() => setMode('revaluation')} /> Операция за преоценка</label>
+            <label className="flex items-center gap-1.5"><input type="radio" name="ias-mode" checked={mode === 'improvement'} onChange={() => setMode('improvement')} /> Подобрение по МСС</label>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <Field label={mode === 'improvement' ? 'Нова отчетна стойност' : 'Нова балансова стойност'}>
@@ -217,9 +218,12 @@ export function IasDialog({ asset, onClose, onDone }: { asset: AssetRow; onClose
           </div>
           {mode === 'revaluation' && (
             <>
-              <Checkbox label="С контиране" checked={withPosting} onChange={setWithPosting} />
+              <div className="flex gap-4">
+                <label className="flex items-center gap-1.5"><input type="radio" name="ias-posting" checked={withPosting} onChange={() => setWithPosting(true)} /> По цена на придобиване</label>
+                <label className="flex items-center gap-1.5"><input type="radio" name="ias-posting" checked={!withPosting} onChange={() => setWithPosting(false)} /> Без операция</label>
+              </div>
               {withPosting && (
-                <Field label="Сметка за преоценъчния резерв">
+                <Field label="Сметка за преоценки">
                   <AccountPicker value={accountId} onChange={(a) => setAccountId(a?.id ?? null)} />
                 </Field>
               )}

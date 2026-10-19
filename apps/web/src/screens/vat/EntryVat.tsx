@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { FileText, Percent } from 'lucide-react';
-import { CATEGORY, calculateVatAmounts, dec, parseAmount, parseVatTermConfig, round2, VAT_MESSAGES, vatTermsFor } from '@shmi/core';
+import { CATEGORY, calculateVatAmounts, dec, dictionaryCancelText, parseAmount, parseVatTermConfig, round2, VAT_MESSAGES, vatTermsFor, type DictionaryField } from '@shmi/core';
 import { ApiError } from '../../api.ts';
 import { useDialogs } from '../../components/dialogs.tsx';
 import { Button, Field, Select } from '../../components/ui.tsx';
@@ -121,13 +121,21 @@ export function useEntryVat<D extends VatDraft>(d: D | null, patch: (p: Partial<
    * Save with the VAT Yes/No questions: a 409 "confirm" answer shows the
    * question(s); Yes repeats the save with force, No aborts (returns null).
    */
-  const confirmSave = async <T,>(send: (force?: boolean) => Promise<T>): Promise<T | null> => {
+  const confirmSave = async <T,>(send: (force?: boolean, hiddenTerms?: DictionaryField[]) => Promise<T>): Promise<T | null> => {
     try {
       return await send();
     } catch (e) {
       if (!(e instanceof ApiError) || e.status !== 409 || e.code !== 'confirm') throw e;
-      for (const m of e.messages ?? []) if (!(await dialogs.confirm(m.text))) return null;
-      return send(true);
+      const hidden: DictionaryField[] = [];
+      for (const m of e.messages ?? []) {
+        if (m.field) {
+          // strAdd...Confirmation (03a 8.1): No asks strCancelAdd...Confirmation; then the text is used but not listed.
+          if (await dialogs.confirm(m.text)) continue;
+          if (!(await dialogs.confirm(dictionaryCancelText(m.field)))) return null;
+          hidden.push(m.field);
+        } else if (!(await dialogs.confirm(m.text))) return null;
+      }
+      return send(true, hidden);
     }
   };
 

@@ -4,6 +4,7 @@ import type { AppEnv } from '../context.ts';
 import { zValidator } from '../lib/validate.ts';
 import { ApiError } from '../lib/errors.ts';
 import { requirePermission, workingDate } from '../session.ts';
+import { zipPasswordOf } from '../services/localSettings.ts';
 import { NAP_FILES, napFiles, napZip, vatDeclarationReport, vatDiaries, vatReport, vatReportDefaults, viesReport, type VatReportParams } from '../services/vat/reports.ts';
 import { calculateVatClosing, saveVatClosing } from '../services/vat/closing.ts';
 import { annualAdjustmentDefaults, calculateArticle73, getArticle73, postAnnualAdjustment, saveArticle73, validateArticle73 } from '../services/vat/article73.ts';
@@ -91,7 +92,8 @@ export const vatRoutes = new Hono<AppEnv>()
   .get('/vat/files.zip', requirePermission(REPORT), async (c) => {
     const p = reportQuery(c.req.query());
     const db = c.var.db;
-    const r = await db.transaction((tx) => napZip(tx, p));
+    const password = await zipPasswordOf(db, c.var.user.id);
+    const r = await db.transaction((tx) => napZip(tx, p, password));
     return download(c, `NAP_${r.folder}.zip`, r.data, 'application/zip');
   })
   .get('/vat/files/:name', requirePermission(REPORT), async (c) => {

@@ -3,6 +3,7 @@ import {
   buildLegs, dec, hasCritical, isCompanyCategory, isLeaf, isMonthLocked, JOURNAL_MESSAGES, linesFromLegs,
   reverseLines, round2, validateEntry, type AccountInfo, type EntryLine, type ValidationMessage, CHANNEL,
   exchangeRateOf, priceOf, INVOICE_LIKE_TYPES, documentNumberWarnings, ENTRY_FOLLOW_UP_MESSAGES, formatMessage, missingPartnerAccounts,
+  dictionaryAddQuestions, dictionaryKey, type DictionaryField,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import type { DbOrTx } from '../db/provider.ts';
@@ -66,6 +67,13 @@ export interface SaveContext {
   /** Importers (04a): term and document are optional, as in Delta's import providers. */
   skipHeaderChecks?: boolean;
   /**
+   * Interactive editor save (03a 8.1): a term, reference or paragraph that is
+   * not in its list asks strAdd...Confirmation (409 unless `force`).
+   */
+  confirmTerms?: boolean;
+  /** Texts the user declined to add to their list: stored hidden (used by the entry, not offered in the list). */
+  hiddenTerms?: DictionaryField[];
+  /**
    * Interactive editor save (03a 2.9): partner lines on accounts the partner is
    * not linked to ask strAddAccountToCompanyConfirmation (409 unless `force`);
    * with `force` the accounts are linked in the same transaction.
@@ -73,13 +81,36 @@ export interface SaveContext {
   confirmAccountLinks?: boolean;
 }
 
-async function resolveDictionary(db: DbOrTx, table: typeof s.terms | typeof s.referenceTexts | typeof s.paragraphs, text: string | null | undefined) {
+type DictionaryTable = typeof s.terms | typeof s.referenceTexts | typeof s.paragraphs;
+
+/** The list row of a text: lookups compare lower-cased, trimmed text, an exact match first (03a 8.1). */
+async function findDictionary(db: DbOrTx, table: DictionaryTable, t: string) {
+  const rows = await db.select({ id: table.id, description: table.description }).from(table).where(sql`lower(${table.description}) = lower(${t.trim()})`).limit(20);
+  return (rows.find((r) => r.description === t) ?? rows[0])?.id ?? null;
+}
+
+/** Id of the text's row; a new text is added (hidden when the user declined adding it to the list, 03a 8.1). */
+async function resolveDictionary(db: DbOrTx, table: DictionaryTable, text: string | null | undefined, hidden = false) {
   const t = text?.trim();
   if (!t) return null;
-  const [found] = await db.select({ id: table.id }).from(table).where(eq(table.description, t)).limit(1);
-  if (found) return found.id;
-  const [row] = await db.insert(table).values({ description: t.slice(0, 255) }).returning({ id: table.id });
+  const found = await findDictionary(db, table, t);
+  if (found) return found;
+  const [row] = await db.insert(table).values({ description: t.slice(0, 255), isHidden: hidden }).returning({ id: table.id });
   return row!.id;
+}
+
+const DICTIONARY_TABLES: Record<DictionaryField, DictionaryTable> = { term: s.terms, reference: s.referenceTexts, optionalReference: s.referenceTexts, paragraph: s.paragraphs };
+
+/** Header texts that are not in their list yet (an optional reference equal to the reference is asked once). */
+async function newDictionaryFields(db: DbOrTx, input: EntryInput): Promise<DictionaryField[]> {
+  const out: DictionaryField[] = [];
+  for (const field of ['term', 'reference', 'optionalReference', 'paragraph'] as const) {
+    const t = input[field]?.trim();
+    if (!t) continue;
+    if (field === 'optionalReference' && dictionaryKey(t) === dictionaryKey(input.reference)) continue;
+    if (!(await findDictionary(db, DICTIONARY_TABLES[field], t))) out.push(field);
+  }
+  return out;
 }
 
 export async function loadAccountInfos(db: DbOrTx, ids: number[], baseCurrencyId: number) {
@@ -223,14 +254,16 @@ export async function saveEntry(db: DbOrTx, input: EntryInput, ctx: SaveContext,
   const linkQuestions: ValidationMessage[] = linksToAdd.map((l) => ({
     key: 'strAddAccountToCompanyConfirmation', text: formatMessage(ENTRY_FOLLOW_UP_MESSAGES.strAddAccountToCompanyConfirmation, l.accountNumber), severity: 'warning',
   }));
-  const questions = [...(ctx.confirm ? vatChecks.confirm : []), ...linkQuestions];
-  if ((ctx.confirm || ctx.confirmAccountLinks) && !ctx.force && questions.length) throw new ApiError(409, 'Потвърждение', questions, 'confirm');
+  const termQuestions = ctx.confirmTerms && !ctx.force ? dictionaryAddQuestions(await newDictionaryFields(db, input)) : [];
+  const questions = [...(ctx.confirm ? vatChecks.confirm : []), ...linkQuestions, ...termQuestions];
+  if ((ctx.confirm || ctx.confirmAccountLinks || ctx.confirmTerms) && !ctx.force && questions.length) throw new ApiError(409, 'Потвърждение', questions, 'confirm');
   if (linksToAdd.length) await db.insert(s.companyAccounts).values(linksToAdd.map((l) => ({ companyId: l.companyId, accountId: l.accountId })));
 
-  const termId = await resolveDictionary(db, s.terms, input.term);
-  const referenceId = await resolveDictionary(db, s.referenceTexts, input.reference);
-  const optionalReferenceId = await resolveDictionary(db, s.referenceTexts, input.optionalReference);
-  const paragraphId = await resolveDictionary(db, s.paragraphs, input.paragraph);
+  const hidden = new Set(ctx.hiddenTerms ?? []);
+  const termId = await resolveDictionary(db, s.terms, input.term, hidden.has('term'));
+  const referenceId = await resolveDictionary(db, s.referenceTexts, input.reference, hidden.has('reference'));
+  const optionalReferenceId = await resolveDictionary(db, s.referenceTexts, input.optionalReference, hidden.has('optionalReference'));
+  const paragraphId = await resolveDictionary(db, s.paragraphs, input.paragraph, hidden.has('paragraph'));
 
   // Document row: shared by every entry with the same type/number/date.
   let documentId: number | null = null;

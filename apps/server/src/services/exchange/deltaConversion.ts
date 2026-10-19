@@ -7,9 +7,10 @@ import {
   type Dec, type ExchangeMessage,
 } from '@shmi/core';
 import * as s from '../../db/company/schema/index.ts';
-import type { DbOrTx } from '../../db/provider.ts';
+import type { CompanyDb, DbOrTx } from '../../db/provider.ts';
 import type { ActiveYear } from '../../context.ts';
 import { ApiError } from '../../lib/errors.ts';
+import { logApp } from '../appLog.ts';
 import { documentNumberUsed } from '../autoEntries.ts';
 import { accountSeparator, rebuildAccountsTree } from '../chart.ts';
 import { saveInitialBalances, type BalanceRowInput } from '../initialBalances.ts';
@@ -122,7 +123,12 @@ export async function deltaPreconditions(db: DbOrTx, type: DeltaImportType): Pro
 /** The legacy amounts are in leva: the BGN chart (any year up to 2025). */
 const BGN_YEAR = 2025;
 
-export async function convertDelta(tx: DbOrTx, src: DeltaSource, type: DeltaImportType, ctx: ImportCtx): Promise<DeltaConversionResult> {
+/** The run stops (and its transaction rolls back) once the client cancelled it (strCancelTransferWarning, 7). */
+function checkCancelled(signal?: AbortSignal) {
+  if (signal?.aborted) throw new DataImportError(critical('strTransferCancelled'));
+}
+
+export async function convertDelta(tx: DbOrTx, src: DeltaSource, type: DeltaImportType, ctx: ImportCtx, signal?: AbortSignal): Promise<DeltaConversionResult> {
   throwIf(await deltaPreconditions(tx, type));
   const result: DeltaConversionResult = { type, myCompany: false, accounts: 0, partners: 0, partnersMatched: 0, accountings: 0, openingBalances: 0, years: [], warnings: [] };
   const sep = await accountSeparator(tx);
@@ -136,6 +142,7 @@ export async function convertDelta(tx: DbOrTx, src: DeltaSource, type: DeltaImpo
     const fail = (number: string) => (key: 'currency' | 'category' | 'parent' | 'synthetic', value: string) =>
       new DataImportError(key === 'parent' ? critical('strAccountParentNotFound', number) : key === 'currency' ? critical('strXMLImportInvalidCurrencyForAccount', value, number) : critical('strXMLImportInvalidCategory', value, number));
     for (const a of chartRows) {
+      checkCancelled(signal);
       // Foreign-currency flag: the account gets the non-base currency (EUR); a synthetic account stays in leva.
       const r = await importChartAccount(tx, chart, {
         number: a.number, description: a.description || a.number, englishDescription: '', categoryId: a.categoryId, parentNumber: a.parentNumber,
@@ -150,6 +157,7 @@ export async function convertDelta(tx: DbOrTx, src: DeltaSource, type: DeltaImpo
   const partners = new Map<number, number>();
   const cache = new Map<string, number>();
   for (const row of src.part) {
+    checkCancelled(signal);
     const p = mapDeltaPartner(row);
     const r = await findOrCreatePartner(tx, {
       name: p.name, contactName: p.contactName, bulstat: p.bulstat, vatNumber: p.vatNumber, address: { city: p.city, address: p.address, phone: p.phone },
@@ -195,13 +203,34 @@ export async function convertDelta(tx: DbOrTx, src: DeltaSource, type: DeltaImpo
     const mapped = mapDeltaYear(t, features, { sep, accountsById, isValidAccount: (n) => chart.byNumber.has(n) });
     if (!mapped.accountings.length && !mapped.openings.length) continue;
     const fy = await ensureYear(tx, t.year);
-    for (const a of mapped.accountings) await saveDeltaAccounting(tx, a, fy, w);
+    for (const a of mapped.accountings) {
+      checkCancelled(signal);
+      await saveDeltaAccounting(tx, a, fy, w);
+    }
     const openings = await saveDeltaOpenings(tx, t.table, t.year, mapped.openings, fy, w);
     result.accountings += mapped.accountings.length;
     result.openingBalances += openings;
     result.years.push({ year: t.year, table: t.table, accountings: mapped.accountings.length, openingBalances: openings, skipped: mapped.skipped });
   }
   return result;
+}
+
+/**
+ * The conversion in one transaction. Known failures carry strImportFromDeltaFailed
+ * with their details; an unexpected one is written to the application log
+ * (06 7.2) and reported as strImportFromDeltaFailedSeeErrLog. A cancelled run
+ * (the client aborted the request after strCancelTransferWarning) rolls back.
+ */
+export async function runDeltaConversion(db: CompanyDb, src: DeltaSource, type: DeltaImportType, ctx: ImportCtx,
+  opts: { signal?: AbortSignal; fileName?: string; company?: string | null; user?: string | null } = {}): Promise<DeltaConversionResult> {
+  try {
+    return await db.transaction((tx) => convertDelta(tx, src, type, ctx, opts.signal));
+  } catch (e) {
+    if (e instanceof DataImportError) throw new DataImportError([critical('strImportFromDeltaFailed'), ...e.messages], e.details);
+    const err = e as Error;
+    await logApp({ level: 'error', message: `${msg('strImportFromDeltaFailed')} ${opts.fileName ?? ''}: ${err?.message ?? String(e)}`, details: err?.stack, company: opts.company ?? null, user: opts.user ?? null });
+    throw new DataImportError(critical('strImportFromDeltaFailedSeeErrLog'));
+  }
 }
 
 interface Writer {

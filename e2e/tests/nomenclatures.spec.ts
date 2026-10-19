@@ -83,6 +83,55 @@ test('change active user (Ctrl+0)', async ({ page }) => {
   await expect(page.getByRole('button', { name: /^Потребители/ })).toHaveCount(0);
 });
 
+test('users: the base group warns, a weak password asks strPasswordNotSecure and saves on Да (01b 3.4)', async ({ page }) => {
+  await openApp(page);
+  await menu(page, 'Редакция', 'Администриране', 'Потребители');
+  const tab = activeTab(page);
+  // The base group "Потребителски групи" is selected: users are added in a group (strSelectBaseUserRoleToAddUserOrRole).
+  await tab.getByRole('button', { name: 'Нов потребител' }).click();
+  const warn = page.getByRole('dialog');
+  await expect(warn).toContainText('Не може да създавате подгрупи в тази група');
+  await warn.getByRole('button', { name: 'OK' }).click();
+  await tab.getByRole('cell', { name: /^Оперативни счетоводители\(\d+\)$/ }).click();
+  await tab.getByRole('button', { name: 'Нов потребител' }).click();
+  const name = `Оператор с кратък ключ ${Date.now()}`;
+  await tab.getByLabel('Потребителско име').fill(name);
+  await tab.getByLabel('Парола', { exact: true }).fill('123');
+  await tab.getByLabel('Повторете паролата').fill('123');
+  await tab.getByRole('button', { name: 'Запис' }).click();
+  const ask = page.getByRole('dialog');
+  await expect(ask).toContainText('Въведената парола не отговаря на изискванията за "силна" парола. Желаете ли продължение?');
+  // Не keeps the form; Да saves.
+  await ask.getByRole('button', { name: 'Не', exact: true }).click();
+  await expect(tab.getByRole('cell', { name, exact: true })).toHaveCount(0);
+  await tab.getByRole('button', { name: 'Запис' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Да', exact: true }).click();
+  await expect(tab.getByRole('cell', { name, exact: true })).toBeVisible();
+});
+
+test('status-bar year without the year right tells the year (strCurrentFinancialYearInfo, 01b 5)', async ({ page }) => {
+  await loginFresh(page);
+  const role = await api<{ id: number }>(page, 'POST', '/roles', { name: `Без смяна на година ${Date.now()}` });
+  const perms = await api<{ id: number; key: string }[]>(page, 'GET', `/roles/${role.id}/permissions`);
+  await api(page, 'PUT', `/roles/${role.id}/permissions`, { [perms.find((p) => p.key === 'UI_Edit_ChangeActiveFinancialYear')!.id]: false });
+  const userName = `Без година ${Date.now()}`;
+  await api(page, 'POST', '/users', { name: userName, password: 'parola1', roleId: role.id });
+  await page.keyboard.press('Control+0');
+  const dlg = page.getByRole('dialog');
+  await dlg.locator('select').selectOption({ label: userName });
+  await dlg.getByLabel('Парола').fill('parola1');
+  await dlg.getByRole('button', { name: 'OK' }).click();
+  await page.getByRole('button', { name: 'Да', exact: true }).click();
+  await expect(page.locator('footer')).toContainText(userName);
+  const yearCell = page.locator('footer').getByRole('button', { name: /^Година:/ });
+  const year = (await yearCell.innerText()).match(/\d{4}/)![0];
+  await yearCell.click();
+  const info = page.getByRole('dialog');
+  await expect(info).toContainText(`Текущата счетоводна година е ${year}!`);
+  await info.getByRole('button', { name: 'OK' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
 test('new company: duplicate name asks, partners are carried over', async ({ page }) => {
   // Own session: creating a company switches the session to it.
   await loginFresh(page);

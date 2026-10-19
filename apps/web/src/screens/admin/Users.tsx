@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Check, ChevronDown, ChevronRight, FolderPlus, Pencil, Save, Trash2, UserPlus, X } from 'lucide-react';
-import { api } from '../../api.ts';
+import { USER_SCREEN_MESSAGES as UM } from '@shmi/core';
+import { api, ApiError } from '../../api.ts';
 import { useDialogs } from '../../components/dialogs.tsx';
 import { Button, Checkbox, CommandBar, Empty, Field, Select, Spinner, TextInput, cx } from '../../components/ui.tsx';
 import { useInvalidate, useSession } from '../../session.tsx';
@@ -72,7 +73,9 @@ export function Users() {
   const visibleUsers = (users.data ?? []).filter((u) => roleId === ROOT_ROLE || u.roleId === roleId);
   const roleName = (id: number) => roles.data?.find((r) => r.id === id)?.name ?? '';
   const newUser = () => {
-    setForm({ name: '', roleId: roleId === ROOT_ROLE ? null : roleId, email: '', password: '', password2: '' });
+    // strSelectBaseUserRoleToAddUserOrRole (01b 3.4): users are added in a group, not in the base group.
+    if (roleId === ROOT_ROLE) return void dialogs.messages('Нов потребител', [{ key: 'strSelectBaseUserRoleToAddUserOrRole', text: UM.strSelectBaseUserRoleToAddUserOrRole, severity: 'warning' }]);
+    setForm({ name: '', roleId, email: '', password: '', password2: '' });
     setTab('users');
   };
   const editUser = (u: User) => setForm({ id: u.id, name: u.name, roleId: u.roleId, email: u.email ?? '', password: '', password2: '' });
@@ -80,22 +83,35 @@ export function Users() {
   const saveUser = async () => {
     if (!form) return;
     const errs: string[] = [];
-    if (!form.name.trim()) errs.push('Попълнете потребителско име');
-    if (!form.roleId || form.roleId === ROOT_ROLE) errs.push('Изберете потребителска група.');
+    if (!form.name.trim()) errs.push(UM.strUserNameIsEmpty);
+    if (!form.roleId) errs.push('Изберете потребителска група.');
+    else if (form.roleId === ROOT_ROLE) errs.push(UM.strSelectBaseUserRoleToAddUserOrRole);
     const changingPw = !form.id || form.password !== '' || form.password2 !== '';
-    if (changingPw) {
-      if (form.password !== form.password2) errs.push('Паролите не съвпадат');
-      else if (form.password.length < 6) errs.push('Паролата трябва да е поне 6 символа.');
-    }
-    if ((users.data ?? []).some((u) => u.id !== form.id && u.name.toLowerCase() === form.name.trim().toLowerCase())) errs.push('Вече съществува потребител с такова име.');
+    if (changingPw && form.password !== form.password2) errs.push(UM.strUserPasswordsDontMatch);
+    if ((users.data ?? []).some((u) => u.id !== form.id && u.name.toLowerCase() === form.name.trim().toLowerCase())) errs.push(UM.strUserNameExists);
     if (errs.length) {
       await dialogs.messages('Потребителят не може да бъде записан', errs.map((text, i) => ({ key: String(i), text, severity: 'critical' })));
       return;
     }
     const body = { name: form.name.trim(), roleId: form.roleId!, email: form.email.trim() || null, ...(changingPw ? { password: form.password } : {}) };
+    const send = async (force?: boolean): Promise<number> => {
+      if (!form.id) return (await api.post<{ id: number }>('/users', { ...body, force })).id;
+      await api.put(`/users/${form.id}`, { ...body, force });
+      return form.id;
+    };
     try {
-      const id = form.id ?? (await api.post<{ id: number }>('/users', body)).id;
-      if (form.id) await api.put(`/users/${form.id}`, body);
+      let id: number;
+      try {
+        id = await send();
+      } catch (e) {
+        // strUserPasswordMissing warns, strPasswordNotSecure asks (01b 3.4); both may continue.
+        if (!(e instanceof ApiError) || e.status !== 409 || e.code !== 'confirm') throw e;
+        for (const m of e.messages ?? []) {
+          const go = m.key === 'strPasswordNotSecure' ? await dialogs.confirm(m.text, 'Потребители') : await dialogs.messages('Потребители', [m], true);
+          if (!go) return;
+        }
+        id = await send(true);
+      }
       await invalidate('users');
       if (id === session.user.id) await invalidate('session');
       setForm({ ...form, id, password: '', password2: '' });
@@ -104,7 +120,9 @@ export function Users() {
     }
   };
   const removeUser = async () => {
-    if (!form?.id || !(await dialogs.confirm('Желаете ли изтриване на избрания потребител?'))) return;
+    if (!form?.id) return;
+    if ((users.data ?? []).length <= 1) return void dialogs.alert(UM.strUserCountValidation, 'Потребители');
+    if (!(await dialogs.confirm(UM.strDeleteUserConfirmation))) return;
     try {
       await api.del(`/users/${form.id}`);
       await invalidate('users');
@@ -161,6 +179,9 @@ export function Users() {
           {tab === 'users' ? (
             <div className="flex min-h-0 flex-1">
               <div className="min-w-0 flex-1 overflow-auto border-r border-slate-300">
+                {(users.data ?? []).length === 1 && (
+                  <div className="border-b border-sky-200 bg-sky-50 px-3 py-1.5 text-[12px] text-sky-800" data-testid="user-count-info">{UM.strUserCountValidation}</div>
+                )}
                 {!visibleUsers.length ? (
                   <Empty>Няма потребители в групата.</Empty>
                 ) : (
@@ -214,11 +235,11 @@ export function Users() {
                     <Field label="E-mail">
                       <TextInput type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} maxLength={255} />
                     </Field>
-                    <Field label="Парола" hint={form.id ? 'Оставете празно, за да не се променя паролата.' : 'Поне 6 символа.'}>
-                      <TextInput type="password" autoComplete="new-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+                    <Field label="Парола" hint={form.id ? 'Оставете празно, за да не се променя паролата.' : 'Силна парола: поне 6 символа.'}>
+                      <TextInput type="password" aria-label="Парола" autoComplete="new-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
                     </Field>
                     <Field label="Повторете паролата" hint={form.password2 && form.password !== form.password2 ? <span className="text-red-700">Паролите не съвпадат</span> : undefined}>
-                      <TextInput type="password" autoComplete="new-password" value={form.password2} onChange={(e) => setForm({ ...form, password2: e.target.value })} />
+                      <TextInput type="password" aria-label="Повторете паролата" autoComplete="new-password" value={form.password2} onChange={(e) => setForm({ ...form, password2: e.target.value })} />
                     </Field>
                     {form.id === session.user.id && <div className="text-[12px] text-slate-500">Това е активният потребител – не може да бъде изтрит.</div>}
                   </div>

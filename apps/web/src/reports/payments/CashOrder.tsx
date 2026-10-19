@@ -46,7 +46,7 @@ export function CashOrder() {
       report={report}
       isEmpty={(d) => d.orders.length === 0}
       status={(d) => `${d.orders.length} ордера`}
-      csvName={`${short}_${a.from}_${a.to}`}
+      csvName={`${short}${fc ? ' валутен' : ''}_${a.from}_${a.to}`}
       csv={csv}
       filters={
         <>

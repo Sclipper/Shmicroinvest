@@ -38,7 +38,7 @@ export function ConfirmationLetter() {
       // One letter: the e-mail goes to that partner.
       emailPartnerId={(d) => (d.letters.length === 1 ? d.letters[0]!.company.id : null)}
       status={(d) => `${d.letters.length} писма`}
-      csvName={`Потвърдително писмо_${a.to}`}
+      csvName={`${fc ? 'Потвърдително писмо валута' : 'Потвърдително писмо'}_${a.to}`}
       csv={csv}
       filters={
         <>

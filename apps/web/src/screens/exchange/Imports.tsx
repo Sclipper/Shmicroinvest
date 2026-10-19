@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { FileDown } from 'lucide-react';
+import { msg } from '@shmi/core';
 import { api, type Message } from '../../api.ts';
 import { AccountPicker } from '../../components/pickers.tsx';
 import { useDialogs } from '../../components/dialogs.tsx';
@@ -183,7 +184,7 @@ export function XmlImport() {
         )}
         {step === 2 && info && (
           <div className="flex flex-wrap items-center gap-3">
-            <Checkbox label="Закриване на документи след импорта" checked={closing.enabled} onChange={(v) => setClosing({ ...closing, enabled: v })} />
+            <Checkbox label="Автоматично обвързване на разплащания след импорт" checked={closing.enabled} onChange={(v) => setClosing({ ...closing, enabled: v })} />
             <Select value={closing.way} disabled={!closing.enabled} onChange={(e) => setClosing({ ...closing, way: e.target.value as XmlSettings['selectedWayOfSearching'] })} className="w-64" aria-label="Начин на търсене">
               {(settings.data?.ways ?? []).map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
             </Select>
@@ -503,21 +504,31 @@ export function DeltaConversion() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [result, setResult] = useState<DeltaResult | null>(null);
   const blockers = info.data?.blockers[type] ?? [];
+  const abort = useRef<AbortController | null>(null);
   const run = async () => {
     if (!file || !info.data) return;
     if (!(await dialogs.confirm(info.data.warning, 'Импорт от Microinvest Делта'))) return;
     setBusy(true);
     setMessages([]);
     setResult(null);
+    const ctrl = new AbortController();
+    abort.current = ctrl;
     try {
-      const r = await upload<DeltaResult>('/exchange/delta/import', file, { type });
+      const r = await upload<DeltaResult>('/exchange/delta/import', file, { type }, ctrl.signal);
       setResult(r);
       await invalidate('entries', 'reports', 'partners', 'accounts', 'years', 'my-company', 'exchange');
     } catch (e) {
-      setMessages(errorMessages(e));
+      // A cancelled run rolls back on the server (the request is aborted).
+      if (ctrl.signal.aborted) setMessages([{ key: 'strTransferCancelled', text: msg('strTransferCancelled'), severity: 'warning' }]);
+      else setMessages(errorMessages(e));
     } finally {
+      abort.current = null;
       setBusy(false);
     }
+  };
+  /** Отказ during the run (04a 7): strCancelTransferWarning. */
+  const cancel = async () => {
+    if (abort.current && (await dialogs.confirm(msg('strCancelTransferWarning'), 'Импорт от Microinvest Делта'))) abort.current?.abort();
   };
   return (
     <div className="h-full overflow-auto p-3" data-testid="delta-conversion">
@@ -563,7 +574,10 @@ export function DeltaConversion() {
             </div>
           </Panel>
         )}
-        <div className="flex justify-end"><Button variant="primary" disabled={!file || busy || blockers.length > 0} onClick={run} data-testid="delta-run">{busy ? 'Прехвърляне...' : 'Импорт'}</Button></div>
+        <div className="flex justify-end gap-1.5">
+          <Button variant="primary" disabled={!file || busy || blockers.length > 0} onClick={run} data-testid="delta-run">{busy ? 'Прехвърляне...' : 'Импорт'}</Button>
+          {busy && <Button onClick={() => void cancel()} data-testid="delta-cancel">Отказ</Button>}
+        </div>
       </div>
     </div>
   );

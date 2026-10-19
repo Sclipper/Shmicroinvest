@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { queryRows } from '../src/db/provider.ts';
-import { readDeltaMdb } from '../src/services/exchange/deltaConversion.ts';
+import { DataImportError, type DeltaSource } from '@shmi/core';
+import { readAppLog } from '../src/services/appLog.ts';
+import { readDeltaMdb, runDeltaConversion } from '../src/services/exchange/deltaConversion.ts';
 import { createTestCompany, type TestCompany } from './helpers.ts';
 import { writeJet, type JetColumn, type JetTable } from './jetWriter.ts';
 
@@ -326,5 +328,35 @@ describe('Delta conversion: import types, Jet 3 and failures', () => {
     expect(a!.description).toBe('Клиенти в страната');
     const [term] = await rows<{ description: string }>(db, sql`SELECT description FROM terms WHERE description = 'Продажба на стоки'`);
     expect(term).toBeTruthy();
+  });
+
+  it('a cancelled run (strCancelTransferWarning) saves nothing', async () => {
+    const db = await freshCompany(2025);
+    const ctrl = new AbortController();
+    ctrl.abort();
+    const res = await t.app.request('/api/exchange/delta/import', {
+      method: 'POST', signal: ctrl.signal, headers: { 'content-type': 'application/json', cookie: t.session.get() },
+      body: JSON.stringify({ fileName: 'MAINACCT.MDB', contentBase64: b64(writeJet(deltaTables())), type: 'partners' }),
+    });
+    const body = (await res.json()) as { messages: { key: string }[] };
+    expect([res.status, body.messages.map((m) => m.key)]).toEqual([422, ['strImportFromDeltaFailed', 'strTransferCancelled']]);
+    const [{ n }] = (await rows<{ n: number }>(db, sql`SELECT count(*)::int AS n FROM companies`)) as [{ n: number }];
+    expect(n).toBe(0);
+  });
+
+  it('an unexpected failure is logged and reported as strImportFromDeltaFailedSeeErrLog', async () => {
+    const db = await freshCompany(2025);
+    const [fy] = await rows<{ id: number; year: number; start_date: string }>(db, sql`SELECT id, year, start_date FROM financial_years ORDER BY year LIMIT 1`);
+    const year = { id: fy!.id, year: fy!.year, startDate: fy!.start_date, isLocked: false, lockedMonths: 0, isConcluded: false };
+    // A broken source (no partner table) fails outside the known checks.
+    const src = { system: null, accts: [], priznaci: [], part: null, years: [] } as unknown as DeltaSource;
+    const err = await runDeltaConversion(db, src, 'partners', { year, userId: 1, today: '2025-06-30' }, { fileName: 'BROKEN.MDB', company: 'delta-test', user: 'Администратор' }).catch((e) => e);
+    expect(err).toBeInstanceOf(DataImportError);
+    expect((err as DataImportError).messages.map((m) => [m.key, m.text])).toEqual([
+      ['strImportFromDeltaFailedSeeErrLog', 'Неуспешен импорт от Microinvest Делта! Подробности за грешката има в дневника на приложението.'],
+    ]);
+    const log = await readAppLog(20);
+    expect(log.find((e) => e.company === 'delta-test')).toMatchObject({ level: 'error', user: 'Администратор' });
+    expect(log.find((e) => e.company === 'delta-test')!.message).toContain('BROKEN.MDB');
   });
 });

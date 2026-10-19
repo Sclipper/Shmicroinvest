@@ -56,7 +56,7 @@ export function PartnerMovement() {
       report={report}
       isEmpty={() => false}
       status={(d) => `${d.rows.length} документа`}
-      csvName={`Движение партньор_${a.account.replace(/\//g, '-')}_${a.from}_${a.to}`}
+      csvName={`${fc ? 'Движение партньор валута' : 'Движение партньор'}_${a.account.replace(/\//g, '-')}_${a.from}_${a.to}`}
       csv={csv}
       filters={
         <>

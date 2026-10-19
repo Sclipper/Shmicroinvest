@@ -268,9 +268,10 @@ export function EntryEditor({ tab, mode }: ScreenProps & { mode?: EditorMode }) 
       if (!extras) return null;
       type Saved = { id: number; number: string; version: string; warnings: { key: string; text: string; severity: 'warning' }[] };
       // VAT questions (02b 12) come back as a 409 confirm and are resent with `force`.
-      const r = await vat.confirmSave((force) => source.id
-        ? api.put<Saved>(`/entries/${source.id}`, { ...body, ...extras, force, confirmAccountLinks: true })
-        : api.post<Saved>('/entries', { ...body, ...extras, force, confirmAccountLinks: true }));
+      // New terms/references/paragraphs ask strAdd...Confirmation (03a 8.1); declined ones are stored hidden.
+      const r = await vat.confirmSave((force, hiddenTerms) => source.id
+        ? api.put<Saved>(`/entries/${source.id}`, { ...body, ...extras, force, confirmAccountLinks: true, confirmTerms: true, hiddenTerms })
+        : api.post<Saved>('/entries', { ...body, ...extras, force, confirmAccountLinks: true, confirmTerms: true, hiddenTerms }));
       if (!r) return null;
       await pay.afterSave(extras);
       await afterSave(r, !source.id, source);

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Copy, Minus, Plus, RotateCcw, Save, Trash2 } from 'lucide-react';
-import { parseAmount } from '@shmi/core';
+import { depreciationMonthTooltip, parseAmount, strCreatingDepreciationSchedule, type DepreciationMonthStatus } from '@shmi/core';
 import { api, type Message } from '../api.ts';
 import { useDialogs } from '../components/dialogs.tsx';
 import { AccountPicker } from '../components/pickers.tsx';
@@ -282,7 +282,11 @@ export function AssetEditor({ tab }: ScreenProps) {
       <CommandBar
         right={
           <span className="flex items-center gap-2 text-[12px] text-slate-500">
-            {preview.isFetching && <Spinner className="size-3.5" />}
+            {preview.isFetching && (
+              <span className="flex items-center gap-1" data-testid="plan-busy">
+                <Spinner className="size-3.5" /> {strCreatingDepreciationSchedule}
+              </span>
+            )}
             {terminated && <span className="font-medium text-red-700">Активът е отписан{view.data?.terminationAccountingNumber ? ` (контиране № ${view.data.terminationAccountingNumber})` : ''}</span>}
             <span>Валута: {currency}</span>
           </span>
@@ -638,11 +642,12 @@ function ImprovementDialog({ current, onClose, onSubmit }: { current: string; on
   );
 }
 
-const STATUS_CLASS: Record<MonthView['status'], string> = {
+const STATUS_CLASS: Record<DepreciationMonthStatus, string> = {
   normal: '',
   posted: 'bg-emerald-50 text-emerald-800',
   postedDifferent: 'bg-amber-100 text-amber-900',
   readOnly: 'bg-slate-100 text-slate-500',
+  disabled: 'bg-slate-50 text-slate-300',
 };
 
 /** Month grid per year (Януари..Декември, % and year sum); editable from FirstEditableMonthDate. */
@@ -684,6 +689,7 @@ function Schedule({ view, disabled, onEdit, onReset }: { view: PlanView | undefi
           <span className="inline-block size-3 rounded-sm bg-emerald-100" /> осчетоводен
           <span className="ml-2 inline-block size-3 rounded-sm bg-amber-200" /> различава се от контирането
           <span className="ml-2 inline-block size-3 rounded-sm bg-slate-200" /> заключен / приключен период
+          <span className="ml-2 inline-block size-3 rounded-sm border border-slate-200 bg-slate-50" /> няма отчисление
         </span>
       </div>
       <div className="overflow-auto">
@@ -709,11 +715,12 @@ function Schedule({ view, disabled, onEdit, onReset }: { view: PlanView | undefi
                 {MONTH_SHORT.map((_, i) => {
                   const key = `${y}-${String(i + 1).padStart(2, '0')}-01`;
                   const m = byMonth.get(key);
-                  if (!m) return <td key={key} className="bg-slate-50" />;
-                  const title = m.accountingNumber ? `Контиране № ${m.accountingNumber} от ${bgDate(m.accountingDate)}${m.status === 'postedDifferent' ? ` (осчетоводено ${money(m.postedAmount)})` : ''}` : m.readOnly ? 'Заключен или приключен период' : m.isProcessed ? 'Обработен месец' : 'Неосчетоводен месец';
+                  // Disabled state (03b 6.1): no schedule row for the month (outside the plan, conservation).
+                  if (!m) return <td key={key} className={STATUS_CLASS.disabled} title={depreciationMonthTooltip({ status: 'disabled' })} data-month={key} data-status="disabled" aria-disabled="true" />;
+                  const title = depreciationMonthTooltip(m);
                   const editable = !disabled && m.status === 'normal';
                   return (
-                    <td key={key} className={cx('num p-0!', STATUS_CLASS[m.status])} title={title} data-month={key}>
+                    <td key={key} className={cx('num p-0!', STATUS_CLASS[m.status])} title={title} data-month={key} data-status={m.status}>
                       {editable ? (
                         <input
                           className="h-6 w-20 bg-transparent px-1 text-right outline-none focus:bg-white focus:ring-1 focus:ring-brand-500"

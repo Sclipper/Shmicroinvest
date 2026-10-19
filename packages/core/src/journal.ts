@@ -135,7 +135,43 @@ export interface ValidationMessage {
   text: string;
   severity: Severity;
   line?: { side: 'debit' | 'credit'; index: number };
+  /** Add-to-list questions (03a 8.1): the header field the new text belongs to. */
+  field?: DictionaryField;
 }
+
+// ---------------------------------------------------------------------------
+// Terms, references, paragraphs: add-to-list prompts of the posting screens (03a 8.1)
+
+export type DictionaryField = 'term' | 'reference' | 'optionalReference' | 'paragraph';
+
+export const DICTIONARY_MESSAGES = {
+  strAddTermConfirmation: 'Прибавяне на основанието към списъка с основания към контирания?',
+  strAddReferenceConfirmation: 'Прибавяне на забележката към списъка със забележки към контирания?',
+  strAddParagraphConfirmation: 'Прибавяне на параграфа към списъка с параграфи към контирания?',
+  strCancelAddTermConfirmation: 'Основанието няма да бъде прибавено към списъка с основания. Желаете ли да продължите?',
+  strCancelAddReferenceConfirmation: 'Забележката няма да бъде прибавена към списъка със забележки. Желаете ли да продължите?',
+  strCancelAddParagraphConfirmation: 'Параграфът няма да бъде прибавен към списъка с параграфи. Желаете ли да продължите?',
+} as const;
+
+const DICTIONARY_KIND: Record<DictionaryField, 'Term' | 'Reference' | 'Paragraph'> = {
+  term: 'Term', reference: 'Reference', optionalReference: 'Reference', paragraph: 'Paragraph',
+};
+
+/** strAdd{Term|Reference|Paragraph}Confirmation for each header text that is not in its list yet. */
+export function dictionaryAddQuestions(newFields: DictionaryField[]): ValidationMessage[] {
+  return newFields.map((field) => {
+    const key = `strAdd${DICTIONARY_KIND[field]}Confirmation` as keyof typeof DICTIONARY_MESSAGES;
+    return { key, text: DICTIONARY_MESSAGES[key], severity: 'warning', field };
+  });
+}
+
+/** The strCancelAdd...Confirmation asked when the user declines adding the text of `field` to its list. */
+export function dictionaryCancelText(field: DictionaryField): string {
+  return DICTIONARY_MESSAGES[`strCancelAdd${DICTIONARY_KIND[field]}Confirmation`];
+}
+
+/** Lookups compare lower-cased, trimmed text (03a 8.1). */
+export const dictionaryKey = (text: string | null | undefined) => (text ?? '').trim().toLowerCase();
 
 export const JOURNAL_MESSAGES = {
   /** Stale-row update (ChangeConflictException, 01b 9): the entry changed after it was loaded. */

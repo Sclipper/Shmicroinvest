@@ -4,14 +4,14 @@ import { ApiError, type Message } from '../../api.ts';
 import { Button, cx } from '../../components/ui.tsx';
 
 /** Multipart upload: the file plus JSON-encoded fields (the server parses each field as JSON when it can). */
-export async function upload<T>(url: string, file: File, fields: Record<string, unknown> = {}): Promise<T> {
+export async function upload<T>(url: string, file: File, fields: Record<string, unknown> = {}, signal?: AbortSignal): Promise<T> {
   const fd = new FormData();
   fd.set('file', file, file.name);
   for (const [k, v] of Object.entries(fields)) {
     if (v === undefined || v === null || v === '') continue;
     fd.set(k, JSON.stringify(v));
   }
-  const res = await fetch(`/api${url}`, { method: 'POST', body: fd, credentials: 'same-origin' });
+  const res = await fetch(`/api${url}`, { method: 'POST', body: fd, credentials: 'same-origin', signal });
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText, data?.messages);
