@@ -19,7 +19,11 @@ export interface ImportCtx { year: ActiveYear; userId: number; today: string }
 // ---------------------------------------------------------------------------
 // Accounts (3.5 / Excel 5.4)
 
-export interface ChartAccountInput { number: string; description: string; englishDescription?: string; currency?: string; categoryId?: number | null; isActive?: boolean | null }
+export interface ChartAccountInput {
+  number: string; description: string; englishDescription?: string; currency?: string; categoryId?: number | null; isActive?: boolean | null;
+  /** Explicit parent number (null = chart root); by default the number up to its last "/". */
+  parentNumber?: string | null;
+}
 
 /**
  * Adds an account of the active chart; an existing number is reused untouched (XML), refused
@@ -49,7 +53,7 @@ export async function importChartAccount(db: DbOrTx, chart: Chart, a: ChartAccou
   const currencyId = isos.get(iso);
   if (!currencyId) throw opts.fail('currency', iso);
   if (a.categoryId != null && !chart.categories.some((c) => c.id === a.categoryId)) throw opts.fail('category', String(a.categoryId));
-  const parentNo = number.includes('/') ? number.slice(0, number.lastIndexOf('/')) : '';
+  const parentNo = a.parentNumber !== undefined ? a.parentNumber?.trim() ?? '' : number.includes('/') ? number.slice(0, number.lastIndexOf('/')) : '';
   const parent = parentNo ? chart.byNumber.get(parentNo) : chart.root;
   if (!parent) throw opts.fail('parent', number);
   if (!parentNo && currencyId !== chart.baseCurrencyId) throw opts.fail('synthetic', number);

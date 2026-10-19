@@ -2,7 +2,7 @@ import { Hono, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import {
-  CLOSING_MODES, EXCEL_ENTITIES, XML_OPERATION_CATEGORIES, decodeText, msg, parseTransferXml, parseTrzFeed, readSetupSheet, trzAggregate, trzAvailableMonths,
+  CLOSING_MODES, DELTA_DEFAULT_FILE, DELTA_IMPORT_TYPES, DataImportError, EXCEL_ENTITIES, critical, XML_OPERATION_CATEGORIES, decodeText, msg, parseTransferXml, parseTrzFeed, readSetupSheet, trzAggregate, trzAvailableMonths,
   trzDefaultAccountingDate, trzDefaultTerm, trzGrid, trzTotal, writeTransferXml, type ClosingMode, type ExcelEntity, type ExcelMapping,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
@@ -12,7 +12,8 @@ import { zValidator } from '../lib/validate.ts';
 import { requirePermission, workingDate } from '../session.ts';
 import { logActivity } from '../services/audit.ts';
 import { getConfig, setConfig } from '../services/config.ts';
-import { importStep, readUpload } from '../services/exchange/common.ts';
+import { importStep, readUpload, throwIf } from '../services/exchange/common.ts';
+import { convertDelta, deltaPreconditions, readDeltaMdb } from '../services/exchange/deltaConversion.ts';
 import { excelTemplateRows, importExcel } from '../services/exchange/excelImport.ts';
 import { addExportReport, listExportReports, runExportReport } from '../services/exchange/reportExports.ts';
 import { importTextFile, textCategoryDefaults } from '../services/exchange/textImport.ts';
@@ -35,6 +36,8 @@ const ENTITIES = ['operations', 'partners', 'chart', 'products', 'initialBalance
  * here under the group, and the group's key is checked as well, as the menu does.
  */
 const REPORT_EXPORT = ['UI_Edit_Administration', 'UI_Edit_Administration_ReportExport'] as const;
+const DELTA = 'UI_Edit_Administration_DeltaConversion';
+const DELTA_TYPES = ['partners', 'chartAndPartners', 'all'] as const;
 /** SelectedWayOfSearching: closing mode <-> the stored Delta enum name. */
 const WAYS: [ClosingMode, string][] = [['document', 'Document'], ['amount', 'Amount'], ['optionalReference', 'OptionalReference']];
 /** Report definitions carry SQL: only an administrator may add or remove them. */
@@ -183,6 +186,33 @@ export const exchangeRoutes = new Hono<AppEnv>()
     const r = await importStep(() => c.var.db.transaction((tx) => importTrz(tx, body, { year: c.var.year, userId: c.var.user.id, today: workingDate(c.var.session) })), false);
     await logActivity(c.var.db, c.var.user.id, 'import', 'trz', null, r.message);
     return c.json(r);
+  })
+
+  // ------------------------------------------------------------------ legacy Delta .mdb (04a 7)
+  /** Wizard data: import types, the warning shown before the run and the preconditions per type. */
+  .get('/exchange/delta', requirePermission(DELTA), async (c) => {
+    const blockers = Object.fromEntries(await Promise.all(DELTA_TYPES.map(async (t) => [t, await deltaPreconditions(c.var.db, t)] as const)));
+    return c.json({
+      defaultFile: DELTA_DEFAULT_FILE, warning: msg('strDeltaConversionWarningMessage'),
+      types: DELTA_IMPORT_TYPES.map((t) => ({ id: t.id, label: msg(t.key) })), blockers,
+    });
+  })
+  .post('/exchange/delta/import', requirePermission(DELTA), async (c) => {
+    const up = await readUpload(c);
+    const type = z.enum(DELTA_TYPES).parse(up.fields.type ?? 'all');
+    await importStep(async () => throwIf(await deltaPreconditions(c.var.db, type)), false);
+    const src = await importStep(async () => readDeltaMdb(up.bytes, type), false);
+    const ctx = { year: c.var.year, userId: c.var.user.id, today: workingDate(c.var.session) };
+    const r = await importStep(async () => {
+      try {
+        return await c.var.db.transaction((tx) => convertDelta(tx, src, type, ctx));
+      } catch (e) {
+        if (e instanceof DataImportError) throw new DataImportError([critical('strImportFromDeltaFailed'), ...e.messages], e.details);
+        throw e;
+      }
+    }, false);
+    await logActivity(c.var.db, c.var.user.id, 'import', 'delta', null, `Импорт от Microinvest Делта: ${up.fileName}`);
+    return c.json({ ...r, message: msg('strTransferCompleted') });
   })
 
   // ------------------------------------------------------------------ report exports (04a 8.3)
