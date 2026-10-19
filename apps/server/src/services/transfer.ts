@@ -1,7 +1,7 @@
 import { sql, type SQL } from 'drizzle-orm';
 import type { DbOrTx } from '../db/provider.ts';
 import { queryRows } from '../db/provider.ts';
-import { CHART_TEMPLATE_TYPES, chartTemplateSettings, type ChartTemplateType } from '@shmi/core';
+import { CHART_TEMPLATE_TYPES, CHART_TEMPLATE_VERSION_KEY, chartTemplateSettings, type ChartTemplateType } from '@shmi/core';
 import { fixIdentity } from './companySetup.ts';
 import { setConfig } from './config.ts';
 
@@ -91,6 +91,10 @@ export async function transferEntities(src: DbOrTx, dst: DbOrTx, opts: TransferO
         for (const [key, value] of Object.entries(chartTemplateSettings(type.value as ChartTemplateType))) await setConfig(dst, key, value);
       }
     }
+    // So does its template version: F4 and the EUR chart follow the numbering of the copied chart.
+    const [version] = await queryRows<{ value: string }>(src, sql`SELECT value FROM configuration WHERE key = ${CHART_TEMPLATE_VERSION_KEY} AND user_id IS NULL`);
+    await dst.execute(sql`DELETE FROM configuration WHERE key = ${CHART_TEMPLATE_VERSION_KEY} AND user_id IS NULL`);
+    if (version?.value) await dst.execute(sql`INSERT INTO configuration (key, value, user_id) VALUES (${CHART_TEMPLATE_VERSION_KEY}, ${version.value}, NULL)`);
   }
 
   if (opts.users) {

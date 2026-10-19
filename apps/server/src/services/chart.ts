@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNotNull, or, sql } from 'drizzle-orm';
 import {
-  ACCOUNT_CATEGORIES, CHART_TEMPLATE_TYPES, MULTI_CATEGORIES, chartTemplateAccounts, chartTemplateSettings, isValidAccountNumber, nextAccountNumber,
+  ACCOUNT_CATEGORIES, CHART_TEMPLATE_MESSAGES, CHART_TEMPLATE_TYPES, CHART_TEMPLATE_VERSION, CHART_TEMPLATE_VERSION_KEY, MULTI_CATEGORIES, chartTemplateAccounts,
+  chartTemplateSettings, detectChartTemplateVersion, isKnownChartTemplateVersion, isValidAccountNumber, nextAccountNumber,
   normalizeAccountNumber, rebuildNestedSet, isProductCategory, isProductReleaseCategory, productAccountTypeFor, stockMessage,
   effectiveConcludeAccountId, type ChartTemplateType, type ValidationMessage,
 } from '@shmi/core';
@@ -26,6 +27,30 @@ export async function rebuildAccountsTree(db: DbOrTx) {
   }
 }
 
+/** Copies the BGN chart into an empty EUR chart (same numbers; base-currency accounts become EUR accounts). */
+export async function cloneChartToEuro(db: DbOrTx) {
+  const eur = (await db.select().from(s.accounts).where(eq(s.accounts.isEuro, true))).filter((a) => a.number !== '0');
+  if (eur.length) return 0;
+  const [bgnCur] = await db.select().from(s.currencies).where(eq(s.currencies.isoCode, 'BGN'));
+  const [eurCur] = await db.select().from(s.currencies).where(eq(s.currencies.isoCode, 'EUR'));
+  const [root] = await db.select().from(s.accounts).where(and(eq(s.accounts.isEuro, true), eq(s.accounts.number, '0')));
+  const bgn = (await db.select().from(s.accounts).where(eq(s.accounts.isEuro, false))).filter((a) => a.number !== '0').sort((a, b) => a.leftIndex - b.leftIndex);
+  const idMap = new Map<number, number>();
+  const [bgnRoot] = await db.select().from(s.accounts).where(and(eq(s.accounts.isEuro, false), eq(s.accounts.number, '0')));
+  if (bgnRoot && root) idMap.set(bgnRoot.id, root.id);
+  for (const a of bgn) {
+    const { id, leftIndex, rightIndex, level, mappedAccountId, ...rest } = a;
+    void leftIndex; void rightIndex; void level; void mappedAccountId;
+    const [row] = await db.insert(s.accounts).values({
+      ...rest, parentId: a.parentId ? idMap.get(a.parentId) ?? root?.id ?? null : root?.id ?? null, isEuro: true,
+      currencyId: a.currencyId === bgnCur?.id ? eurCur!.id : a.currencyId,
+    }).returning({ id: s.accounts.id });
+    idMap.set(id, row!.id);
+  }
+  await rebuildAccountsTree(db);
+  return bgn.length;
+}
+
 export async function chartRoot(db: DbOrTx, isEuro: boolean) {
   const [root] = await db.select().from(s.accounts).where(and(eq(s.accounts.number, '0'), eq(s.accounts.isEuro, isEuro), sql`${s.accounts.parentId} is null`));
   if (!root) throw new ApiError(500, 'Липсва корен на сметкоплана.');
@@ -39,9 +64,39 @@ export async function chartTemplateType(db: DbOrTx): Promise<ChartTemplateType |
 }
 
 /**
+ * The template version of the company's chart (ChartTemplateVersion): the
+ * stored one, else detected from the chart (companies created before the
+ * version was stored; the BGN chart first, it is the one the EUR chart is
+ * converted from). Null: no template chart to compare (empty chart, own
+ * numbering, an import), so the current templates apply.
+ */
+export async function chartTemplateVersion(db: DbOrTx): Promise<number | null> {
+  const stored = Number(await getConfig(db, CHART_TEMPLATE_VERSION_KEY));
+  if (Number.isInteger(stored) && stored > 0) return stored;
+  const type = await chartTemplateType(db);
+  if (!type) return null;
+  const rows = await db.select({ number: s.accounts.number, description: s.accounts.description, isEuro: s.accounts.isEuro }).from(s.accounts);
+  const bgn = rows.filter((r) => !r.isEuro && r.number !== '0');
+  return detectChartTemplateVersion(type, bgn.length ? bgn : rows.filter((r) => r.number !== '0'));
+}
+
+/**
+ * The template accounts that fit the company's chart: the template of its
+ * version (an old company keeps getting the old numbering, so an added
+ * account means what its number means in the rest of the chart). A chart of
+ * a version this program does not know is refused (strChartTemplateVersionUnknown).
+ */
+export async function companyTemplateAccounts(db: DbOrTx, type: ChartTemplateType) {
+  const version = await chartTemplateVersion(db);
+  if (version !== null && !isKnownChartTemplateVersion(version)) throw new ApiError(409, CHART_TEMPLATE_MESSAGES.strChartTemplateVersionUnknown(version), undefined, 'strChartTemplateVersionUnknown');
+  return { version: version ?? CHART_TEMPLATE_VERSION, accounts: chartTemplateAccounts(type, version ?? CHART_TEMPLATE_VERSION) };
+}
+
+/**
  * Template selection ("Избор на сметкоплан"): categories are inserted when the
  * table is empty, then template accounts not yet present (by number) are added
- * under their parents and the tree is rebuilt.
+ * under their parents and the tree is rebuilt. The template is the one of the
+ * company's ChartTemplateVersion; a company's first chart stores the version.
  */
 export async function applyChartTemplate(db: DbOrTx, type: ChartTemplateType, isEuro: boolean, onlyNumbers?: string[]) {
   const [{ count }] = (await db.select({ count: sql<number>`count(*)::int` }).from(s.accountCategories)) as [{ count: number }];
@@ -53,7 +108,9 @@ export async function applyChartTemplate(db: DbOrTx, type: ChartTemplateType, is
   }
   const root = await chartRoot(db, isEuro);
   const currencyId = root.currencyId;
-  let template = chartTemplateAccounts(type);
+  const companyEmpty = !(await db.select({ id: s.accounts.id }).from(s.accounts).where(sql`${s.accounts.number} <> '0'`).limit(1)).length;
+  const { version, accounts } = companyEmpty ? { version: CHART_TEMPLATE_VERSION, accounts: chartTemplateAccounts(type) } : await companyTemplateAccounts(db, type);
+  let template = accounts;
   if (onlyNumbers) {
     const wanted = new Set(onlyNumbers);
     const byNumber = new Map(template.map((a) => [a.number, a]));
@@ -91,6 +148,7 @@ export async function applyChartTemplate(db: DbOrTx, type: ChartTemplateType, is
     await setConfig(db, 'ChartOfAccountsType', type);
     for (const [key, value] of Object.entries(chartTemplateSettings(type))) await setConfig(db, key, value);
   }
+  if (companyEmpty) await setConfig(db, CHART_TEMPLATE_VERSION_KEY, String(version));
   return { added };
 }
 
@@ -397,7 +455,7 @@ export async function accountTemplates(db: DbOrTx, isEuro: boolean, q?: string) 
   const existing = await db.select({ number: s.accounts.number }).from(s.accounts).where(eq(s.accounts.isEuro, isEuro));
   const have = new Set(existing.map((e) => e.number));
   const needle = q?.trim().toLowerCase() ?? '';
-  return chartTemplateAccounts(type)
+  return (await companyTemplateAccounts(db, type)).accounts
     .filter((a) => !have.has(a.number))
     .filter((a) => !needle || a.number.startsWith(needle) || a.description.toLowerCase().includes(needle))
     .map((a) => ({ number: a.number, description: a.description, categoryId: a.categoryId, isActive: a.isActive, parentNumber: a.parentNumber }));

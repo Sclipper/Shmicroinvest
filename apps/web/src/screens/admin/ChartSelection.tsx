@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, ListPlus } from 'lucide-react';
-import { CHART_TEMPLATE_LABELS, CHART_TEMPLATE_TYPES, SHELL_MESSAGES, chartTemplateAccounts, type ChartTemplateType, type TemplateAccount } from '@shmi/core';
+import {
+  CHART_TEMPLATE_LABELS, CHART_TEMPLATE_MESSAGES, CHART_TEMPLATE_TYPES, CHART_TEMPLATE_VERSION, SHELL_MESSAGES, chartTemplateAccounts, isKnownChartTemplateVersion,
+  type ChartTemplateType, type TemplateAccount,
+} from '@shmi/core';
 import { api } from '../../api.ts';
 import { useDialogs } from '../../components/dialogs.tsx';
 import { Button, CommandBar, Empty, Panel, Spinner, cx } from '../../components/ui.tsx';
@@ -20,7 +23,10 @@ export function ChartSelection({ tab }: ScreenProps) {
   // The chosen chart type (03a 1.3) is preselected; commercial when none is chosen yet.
   const [type, setType] = useState<ChartTemplateType>(() =>
     (CHART_TEMPLATE_TYPES as readonly string[]).includes(s.chartOfAccountsType ?? '') ? (s.chartOfAccountsType as ChartTemplateType) : 'commercial');
-  const template = useMemo(() => chartTemplateAccounts(type), [type]);
+  // The templates of the company's version (an old chart keeps its numbering); an unknown version gets none.
+  const version = s.chartTemplateVersion ?? CHART_TEMPLATE_VERSION;
+  const unknownVersion = !isKnownChartTemplateVersion(version);
+  const template = useMemo(() => (unknownVersion ? [] : chartTemplateAccounts(type, version)), [type, version, unknownVersion]);
   const existing = useMemo(() => new Set((accounts ?? []).map((a) => a.number)), [accounts]);
   const kids = useMemo(() => {
     const m = new Map<string, TemplateAccount[]>();
@@ -119,6 +125,10 @@ export function ChartSelection({ tab }: ScreenProps) {
               <>Сметките от шаблона, които липсват в индивидуалния сметкоплан, могат да бъдат добавени. Наличните сметки (сиви) не се променят.</>
             )}
             <div className="mt-2">Сметкоплан {s.year.year >= 2026 ? 'в евро (от 2026 г.)' : 'в лева (до 2025 г.)'}.</div>
+            {unknownVersion && <div className="mt-2 text-red-700">{CHART_TEMPLATE_MESSAGES.strChartTemplateVersionUnknown(version)}</div>}
+            {!unknownVersion && version !== CHART_TEMPLATE_VERSION && type !== 'budget' && (
+              <div className="mt-2 text-amber-700">Сметкопланът на фирмата е по старата номерация на шаблоните (версия {version}); предлагат се сметките от същата версия.</div>
+            )}
             {type === 'budget' && <div className="mt-2">Бюджетният сметкоплан включва и полето „Параграф“ в прозорец Контиране.</div>}
           </div>
         </div>

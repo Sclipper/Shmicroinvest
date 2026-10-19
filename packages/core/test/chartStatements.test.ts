@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FormulaCalculator, STATEMENT_SEED, chartTemplateAccounts, formulaAccountMatches, templateLevel, type TemplateAccount } from '../src/index.ts';
+import { CHART_TEMPLATE_VERSION, FormulaCalculator, STATEMENT_SEED, chartTemplateAccounts, checkChartTemplate, detectChartTemplateVersion, formulaAccountMatches, templateLevel, type TemplateAccount } from '../src/index.ts';
 
 /**
  * The commercial and ЮЛНЦ chart templates against Delta's seeded statement
@@ -110,5 +110,28 @@ describe('chart templates against the seeded balance sheet', () => {
     expect(c.get('231')).toBe('Положителна търговска репутация');
     expect(c.get('105')).toBe('Премии от емисии');
     expect(c.get('512')).toBe('Изкупени собствени акции');
+  });
+});
+
+describe('template versions (ChartTemplateVersion)', () => {
+  it('version 1 keeps the national-chart numbering; budget has one version', () => {
+    const v1 = new Map(chartTemplateAccounts('commercial', 1).map((a) => [a.number, a.description]));
+    expect([v1.get('202'), v1.get('203'), v1.get('241/1')]).toEqual(['Сгради и конструкции', 'Машини, производствено оборудване и апаратура', 'Амортизация на сгради']);
+    expect(new Map(chartTemplateAccounts('commercial').map((a) => [a.number, a.description])).get('202')).toBe('Подобрения върху земи');
+    expect(chartTemplateAccounts('budget', 1)).toBe(chartTemplateAccounts('budget'));
+    for (const type of ['commercial', 'nonProfit'] as const) expect(checkChartTemplate(chartTemplateAccounts(type, 1))).toEqual([]);
+  });
+
+  it('detects the version of a chart from the accounts whose meaning changed', () => {
+    for (const type of ['commercial', 'nonProfit'] as const) {
+      expect(detectChartTemplateVersion(type, chartTemplateAccounts(type, 1))).toBe(1);
+      expect(detectChartTemplateVersion(type, chartTemplateAccounts(type))).toBe(CHART_TEMPLATE_VERSION);
+    }
+    // A chart of its own numbering (or only the unchanged accounts) is undecided.
+    expect(detectChartTemplateVersion('commercial', [{ number: '501', description: 'Каса в лева' }, { number: '9999', description: 'Своя' }])).toBeNull();
+    expect(detectChartTemplateVersion('budget', chartTemplateAccounts('budget'))).toBeNull();
+    // A few renamed accounts do not outweigh the rest of an old chart.
+    const old = chartTemplateAccounts('commercial', 1).map((a) => (a.number === '202' ? { ...a, description: 'Подобрения върху земи' } : a));
+    expect(detectChartTemplateVersion('commercial', old)).toBe(1);
   });
 });
