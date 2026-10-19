@@ -127,3 +127,22 @@ describe('branches', () => {
     expect((await t.call('DELETE', `/branches/${free.body.id}`)).status).toBe(200);
   });
 });
+
+describe('own company: VAT registration turnover and information (03a 3.3, 07 4)', () => {
+  it('sums revenue (70x, 412) of the 12 months up to the working date, without 123/70 closings and openings', async () => {
+    await t.post({ date: '2026-02-10', dr: [['501', '1000']], cr: [['702', '1000']] });
+    await t.post({ date: '2026-03-01', dr: [['501', '250']], cr: [['412', '250']] });
+    await t.post({ date: '2026-03-31', dr: [['123', '300']], cr: [['702', '300']] });
+    await t.post({ date: '2026-04-02', dr: [['501', '999']], cr: [['703', '999']] });
+    expect((await t.call('PUT', '/session/working-date', { date: '2026-03-15' })).status).toBe(200);
+    const r = (await t.call('GET', '/my-company/vat-turnover')).body;
+    expect(r.months.map((m: { month: string }) => m.month)).toHaveLength(12);
+    expect(r.months[0].month).toBe('2025-04');
+    expect(r.months.filter((m: { amount: string }) => m.amount !== '0.00')).toEqual([{ month: '2026-02', amount: '1000.00' }, { month: '2026-03', amount: '250.00' }]);
+    expect(r).toMatchObject({ total: '1250.00', currency: 'EUR', limit: '51130', exceeded: false });
+    const info = (await t.call('GET', '/my-company/info')).body as { year: number; accountings: number; documents: { type: string; count: number }[] }[];
+    expect(info[0]!.year).toBe(2026);
+    expect(info[0]!.accountings).toBeGreaterThanOrEqual(4);
+    expect(info[0]!.documents.reduce((a, d) => a + d.count, 0)).toBeGreaterThanOrEqual(4);
+  });
+});

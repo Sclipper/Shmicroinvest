@@ -5,14 +5,14 @@ import { z } from 'zod';
 import { and, asc, desc, eq, ilike, inArray, ne, or, sql } from 'drizzle-orm';
 import {
   BULSTAT_PLACEHOLDER, isCompanyCategory, isEmail, isValidEgn, isValidEik, isValidIban, isValidPartnerIdentifier, normalizeIban,
-  bankCodeFromIban, detectIdentifier, type ValidationMessage,
+  bankCodeFromIban, detectIdentifier, turnoverWindow, vatRegistrationTurnover, type ValidationMessage,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import { exec } from '../db/provider.ts';
 import type { AppEnv } from '../context.ts';
 import type { DbOrTx } from '../db/provider.ts';
 import { ApiError, badRequest, notFound } from '../lib/errors.ts';
-import { requirePermission } from '../session.ts';
+import { requirePermission, workingDate } from '../session.ts';
 import { logActivity } from '../services/audit.ts';
 
 const addressBody = z.object({
@@ -455,6 +455,43 @@ export const nomenclatureRoutes = new Hono<AppEnv>()
     const addresses = await db.select().from(s.addresses).where(and(eq(s.addresses.ownerType, 'my'), eq(s.addresses.ownerId, m!.id)));
     const bankAccounts = await db.select().from(s.bankAccounts).where(and(eq(s.bankAccounts.ownerType, 'my'), eq(s.bankAccounts.ownerId, m!.id)));
     return c.json({ ...m, addresses, bankAccounts });
+  })
+  /** Оборот за регистрация по ЗДДС (03a 3.3): the 12 months up to the working date. */
+  .get('/my-company/vat-turnover', async (c) => {
+    const { db, year, session } = c.var;
+    const end = workingDate(session).slice(0, 7);
+    const months = turnoverWindow(end);
+    const rows = (await exec(db, sql`
+      SELECT to_char(a.accounting_date, 'YYYY-MM') AS month,
+        sum(CASE WHEN ra.number LIKE '70%' OR ra.number LIKE '412%' THEN d.amount ELSE 0 END)
+        - sum(CASE WHEN da.number LIKE '123%' AND ra.number LIKE '70%' THEN d.amount ELSE 0 END) AS amount
+      FROM accounting_details d
+      JOIN accountings a ON a.id = d.accounting_id
+      JOIN accounts da ON da.id = d.account_id
+      JOIN accounts ra ON ra.id = d.ref_account_id
+      WHERE d.sign = 1 AND NOT a.is_initial_balance
+        AND a.accounting_date >= ${`${months[0]}-01`}::date AND a.accounting_date < (${`${end}-01`}::date + interval '1 month')
+      GROUP BY 1`)).rows as { month: string; amount: string }[];
+    return c.json(vatRegistrationTurnover(rows, end, year.year));
+  })
+  /** Информация tab (MyCompanyInfoView): counts by financial year. */
+  .get('/my-company/info', async (c) => {
+    const { db } = c.var;
+    const years = (await exec(db, sql`
+      SELECT y.year,
+        (SELECT count(*)::int FROM accountings a WHERE a.financial_year_id = y.id) AS accountings,
+        (SELECT count(*)::int FROM fixed_assets fa JOIN depreciations dp ON dp.id = fa.accounting_depreciation_id
+          WHERE fa.is_euro = (y.year >= 2026) AND extract(year FROM dp.acquisition_date) = y.year) AS fixed_assets
+      FROM financial_years y ORDER BY y.year DESC`)).rows as { year: number; accountings: number; fixed_assets: number }[];
+    const docs = (await exec(db, sql`
+      SELECT y.year, dt.name AS type, count(DISTINCT a.document_id)::int AS n
+      FROM accountings a JOIN financial_years y ON y.id = a.financial_year_id
+      JOIN documents doc ON doc.id = a.document_id JOIN document_types dt ON dt.id = doc.document_type_id
+      GROUP BY y.year, dt.name ORDER BY y.year DESC, n DESC, dt.name`)).rows as { year: number; type: string; n: number }[];
+    return c.json(years.map((y) => ({
+      year: y.year, accountings: y.accountings, fixedAssets: y.fixed_assets,
+      documents: docs.filter((d) => d.year === y.year).map((d) => ({ type: d.type, count: d.n })),
+    })));
   })
   .put('/my-company', requirePermission('UI_Edit_Administration_MyCompany'), zValidator('json', myCompanyBody), async (c) => {
     const { db, session } = c.var;

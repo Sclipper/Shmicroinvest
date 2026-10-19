@@ -8,6 +8,7 @@ import { useDialogs } from '../../components/dialogs.tsx';
 import { Button, Checkbox, CommandBar, Empty, Field, Panel, Select, Spinner, TextInput } from '../../components/ui.tsx';
 import { useCan, useInvalidate, useLookups } from '../../session.tsx';
 import { TabStrip, nn } from './common.tsx';
+import { money, monthLabel } from '../../format.ts';
 
 interface Address { addressTypeId: number | null; countryId: number | null; city: string; postalCode: string; address: string; phone: string; city1?: string | null; address1?: string | null }
 interface BankAcc { account: string; bankId: number | null; isEuro: boolean; bankStatementAccountId: number | null }
@@ -28,7 +29,7 @@ const toForm = (m: Raw): Form => ({
   bankAccounts: ((m.bankAccounts ?? []) as Raw[]).map((b) => ({ account: b.account ?? '', bankId: b.bankId ?? null, isEuro: !!b.isEuro, bankStatementAccountId: b.bankStatementAccountId ?? null })),
 });
 
-type TabId = 'main' | 'addresses' | 'banks' | 'branches';
+type TabId = 'main' | 'addresses' | 'banks' | 'branches' | 'info';
 
 /** Моята фирма (Ctrl+F; spec 03a 3). */
 export function MyCompany() {
@@ -104,7 +105,7 @@ export function MyCompany() {
           Отказ от промените
         </Button>
       </CommandBar>
-      <TabStrip<TabId> tabs={[['main', 'Основни данни'], ['addresses', `Адреси (${form.addresses.length})`], ['banks', `Банкови сметки (${form.bankAccounts.length})`], ['branches', 'Клонове']]} value={tab} onChange={setTab} />
+      <TabStrip<TabId> tabs={[['main', 'Основни данни'], ['addresses', `Адреси (${form.addresses.length})`], ['banks', `Банкови сметки (${form.bankAccounts.length})`], ['branches', 'Клонове'], ['info', 'Информация']]} value={tab} onChange={setTab} />
       <div className="min-h-0 flex-1 overflow-auto p-3">
         <fieldset disabled={!editable} className="max-w-[920px]">
           {tab === 'main' && (
@@ -180,6 +181,7 @@ export function MyCompany() {
                   </div>
                 </Panel>
               )}
+              <VatTurnover />
             </div>
           )}
 
@@ -257,8 +259,63 @@ export function MyCompany() {
             </div>
           )}
           {tab === 'branches' && <Branches />}
+          {tab === 'info' && <CompanyInfo />}
         </fieldset>
       </div>
+    </div>
+  );
+}
+
+interface Turnover { months: { month: string; amount: string }[]; total: string; currency: string; limit: string; exceeded: boolean }
+
+/** Оборот за регистрация по ЗДДС (03a 3.3): the 12 months up to the working date. */
+function VatTurnover() {
+  const q = useQuery({ queryKey: ['my-company', 'vat-turnover'], queryFn: () => api.get<Turnover>('/my-company/vat-turnover') });
+  const r = q.data;
+  return (
+    <Panel title="Оборот за регистрация по ЗДДС" className="col-span-2">
+      {!r ? (
+        <div className="p-3"><Spinner /></div>
+      ) : (
+        <div className="p-3">
+          <table className="grid-table w-full" aria-label="Оборот за регистрация по ЗДДС">
+            <thead>
+              <tr>{r.months.map((m) => <th key={m.month} className="num">{monthLabel(`${m.month}-01`)}</th>)}</tr>
+            </thead>
+            <tbody>
+              <tr>{r.months.map((m) => <td key={m.month} className="num">{money(m.amount)}</td>)}</tr>
+            </tbody>
+          </table>
+          <div className="mt-2 flex items-center gap-4">
+            <span>Общо за периода: <b data-testid="vat-turnover-total">{money(r.total)} {r.currency === 'EUR' ? 'EUR' : 'лв.'}</b></span>
+            <span className="text-slate-500">Праг за задължителна регистрация: {money(r.limit)} {r.currency === 'EUR' ? 'EUR' : 'лв.'}</span>
+            {r.exceeded && <span className="font-medium text-red-700">Оборотът достига прага за задължителна регистрация по ЗДДС.</span>}
+          </div>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+interface YearInfo { year: number; accountings: number; fixedAssets: number; documents: { type: string; count: number }[] }
+
+/** Информация (MyCompanyInfoView): counts of entries, documents by type and fixed assets per year. */
+function CompanyInfo() {
+  const q = useQuery({ queryKey: ['my-company', 'info'], queryFn: () => api.get<YearInfo[]>('/my-company/info') });
+  if (!q.data) return <Spinner />;
+  return (
+    <div className="flex max-w-[620px] flex-col gap-3">
+      {q.data.map((y) => (
+        <Panel key={y.year} title={`${y.year} г.`}>
+          <table className="grid-table w-full" aria-label={`Информация за ${y.year} г.`}>
+            <tbody>
+              <tr><td>Контировки</td><td className="num">{y.accountings}</td></tr>
+              <tr><td>Дълготрайни активи</td><td className="num">{y.fixedAssets}</td></tr>
+              {y.documents.map((d) => <tr key={d.type}><td>{d.type}</td><td className="num">{d.count}</td></tr>)}
+            </tbody>
+          </table>
+        </Panel>
+      ))}
     </div>
   );
 }

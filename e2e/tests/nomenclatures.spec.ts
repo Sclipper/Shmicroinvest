@@ -54,6 +54,18 @@ test('branches of the own company and switching the active branch', async ({ pag
   await api(page, 'PUT', '/session/branch', { branchId: 1 });
 });
 
+test('own company shows the VAT registration turnover and the information tab', async ({ page }) => {
+  await openApp(page);
+  await menu(page, 'Редакция', 'Администриране', 'Моята фирма');
+  const tab = activeTab(page);
+  const turnover = tab.getByRole('table', { name: 'Оборот за регистрация по ЗДДС' });
+  await expect(turnover.locator('thead th')).toHaveCount(12);
+  await expect(tab.getByTestId('vat-turnover-total')).toContainText(/\d/);
+  await expect(tab.getByText(/Праг за задължителна регистрация: 51 ?130,00 EUR/)).toBeVisible();
+  await tab.getByRole('button', { name: 'Информация' }).click();
+  await expect(tab.getByRole('table', { name: 'Информация за 2026 г.' })).toContainText('Контировки');
+});
+
 test('change active user (Ctrl+0)', async ({ page }) => {
   await loginFresh(page);
   await api(page, 'POST', '/users', { name: 'Оператор Е2Е', password: 'parola1', roleId: 5 });

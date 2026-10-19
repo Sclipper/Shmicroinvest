@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  annualAdjustmentAmount, article73Ratio, article73Sums, calculateVatAmounts, compareWithNapFile, cutOrPadLeft, decodeCp1251, deklarCells, deklarLine,
+  annualAdjustmentAmount, turnoverWindow, vatRegistrationTurnover, article73Ratio, article73Sums, calculateVatAmounts, compareWithNapFile, cutOrPadLeft, decodeCp1251, deklarCells, deklarLine,
   declarationFromSums, dec, diaryTotals, encodeCp1251, f2, findDuplicateDocuments, findMissingDocuments, napFileBytes, napLineToString,
   napPurchaseLines, napSaleLines, parseDiaryFile, parseNapLine, protocolTemplate, protocolVat, purchaseDiary, purchasePostings, saleDiary,
   salePostings, validateProtocol, validateVatEntry, vatClosingRows, vatDeclaration, viesFileLines, viesPart1, viesPart2, viesTotals, zipStore, crc32,
@@ -620,5 +620,15 @@ describe('zip writer', () => {
     const z = zipStore([{ name: '06.2026/DEKLAR.TXT', data: new Uint8Array([65, 13, 10]) }]);
     expect([...z.slice(0, 4)]).toEqual([0x50, 0x4b, 0x03, 0x04]);
     expect([...z.slice(z.length - 22, z.length - 18)]).toEqual([0x50, 0x4b, 0x05, 0x06]);
+  });
+});
+
+describe('vatRegistrationTurnover (03a 3.3)', () => {
+  it('12-month window across the year boundary; from 2026 the BGN months are converted', () => {
+    expect(turnoverWindow('2026-02')).toEqual(['2025-03', '2025-04', '2025-05', '2025-06', '2025-07', '2025-08', '2025-09', '2025-10', '2025-11', '2025-12', '2026-01', '2026-02']);
+    const r = vatRegistrationTurnover([{ month: '2025-02', amount: '99999' }, { month: '2025-12', amount: '19558.30' }, { month: '2026-02', amount: '100' }], '2026-02', 2026);
+    expect(r).toMatchObject({ total: '10100.00', currency: 'EUR', limit: '51130', exceeded: false });
+    // BGN ledger: the limit is 100,000 lv., reaching it counts.
+    expect(vatRegistrationTurnover([{ month: '2025-06', amount: '60000' }, { month: '2025-07', amount: '40000' }], '2025-12', 2025)).toMatchObject({ total: '100000.00', currency: 'BGN', exceeded: true });
   });
 });
