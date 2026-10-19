@@ -31,7 +31,7 @@ The main menu follows Delta Pro (06 1.3); every item opens a working screen.
 - **Modules:** payments and open items, inventory (FIFO/average, write-off), fixed assets (accounting and tax plans, depreciation, revaluation, Excel import), deferrals, cash book and orders, payment documents for every bank form.
 - **VAT:** purchase/sales journals, declaration and VIES files for NRA, the art. 73 coefficient, art. 117 protocols, VAT closing, the registration turnover check.
 - **Year end:** closing of income/expense accounts, automatic closing, revaluation, closing of documents, conclusion and opening of the next year.
-- **Reports:** turnover, chronological and analytical registers, general ledger, partner reports, inventory and asset books, financial statements, user activities and a user-defined report manager. Every report prints (PDF through the browser print dialog), exports to Excel and can be e-mailed.
+- **Reports:** turnover, chronological and analytical registers, general ledger, partner reports, inventory and asset books, financial statements, user activities and a user-defined report manager. Every report prints, exports to PDF, Word and Excel, and can be e-mailed as a PDF or Excel attachment.
 - **Exchange:** import from text, Excel, XML, VAT journals, ТРЗ Pro and Microinvest Delta; bank statements (MT940, Excel and per-bank XML) with rules and document binding; XML export and exports to external systems; backup and restore.
 - **Administration:** users, roles with Delta's permission tree (denied menu items are hidden), escalating login lockout, the application log, settings and SMTP.
 
