@@ -186,6 +186,10 @@ describe('04b 3 e-mail of reports', { timeout: 30_000 }, () => {
     r = await t.call('POST', '/email/report', { to: 'boss@firma.bg', subject: 'Оборотна ведомост', body: 'Приложено', report: 'Оборотна ведомост', entityType: 'turnoverReport', attachment });
     expect(r.status, r.text).toBe(200);
     expect(MAIL_OUTBOX.at(-1)).toMatchObject({ from: '"Мария Иванова" <office@firma.bg>', text: 'Приложено\n\nПоздрави,\nМария\nТест ООД' });
+    // A backslash or quote in the name cannot break out of the quoted display name.
+    await t.call('PUT', '/settings/user', { EmailUserName: 'Иван\\" <x@evil.bg>' });
+    await t.call('POST', '/email/report', { to: 'boss@firma.bg', subject: 'x', attachment });
+    expect(MAIL_OUTBOX.at(-1)!.from).toBe('"Иван x@evil.bg" <office@firma.bg>');
     await t.call('PUT', '/settings/user', { EmailUserName: '', EmailSignature: '' });
 
     // A failing server gives strEmailSendingFailed.

@@ -504,6 +504,9 @@ describe('06 3 settings pages', () => {
     });
     await call('PUT', '/settings/user', { KeepAccountingOpen: 'True' });
     expect((await call('GET', '/settings/user')).body.KeepAccountingOpen).toBe('True');
+    // One request is saved whole or not at all: an unknown key rolls back the e-mail name.
+    expect((await call('PUT', '/settings/user', { EmailUserName: 'Иван', Foo: '1' })).status).toBe(400);
+    expect((await call('GET', '/settings/user')).body.EmailUserName).toBe('');
   });
 });
 

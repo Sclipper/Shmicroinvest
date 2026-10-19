@@ -50,7 +50,10 @@ export async function saveLocalSettings(db: DbOrTx, userId: number, values: Reco
 /** The ZIP password when IsZipPasswordEnabled is on, else null. */
 export async function zipPasswordOf(db: DbOrTx, userId: number): Promise<string | null> {
   if ((await getConfig(db, 'IsZipPasswordEnabled', userId)) !== 'True') return null;
-  return decryptSecret(await getConfig(db, ZIP_PASSWORD_KEY, userId)) || null;
+  const password = decryptSecret(await getConfig(db, ZIP_PASSWORD_KEY, userId));
+  // Never fall back to an unprotected file: the key file changed or the value is damaged.
+  if (!password) throw badRequest('Паролата за ZIP архивите не може да бъде прочетена. Въведете я отново в Настройки > Лични.');
+  return password;
 }
 
 /** Sender display name and signature of the user's report e-mails. */

@@ -158,6 +158,7 @@ export const EXCHANGE_MESSAGES = {
   strHelpInvalidFilePath: 'Невалиден път до файла!', // no text
   strMissingAccountingAccount: 'Към избраната банкова сметка няма свързана счетоводна сметка!', // no text
   strCurrenciesAreNotTheSame: 'Валутата на файла е различна от валутата на банковата сметка!', // no text
+  strBankStatementIBANMismatch: 'IBAN на файла ({0}) е различен от IBAN на банковата сметка ({1})!', // not in Delta: guards against another account's statement
   strBankStatementDatesInDifferentYear: 'Периодът на извлечението е извън текущата счетоводна година!', // IsFileDatesValid (no text)
   strBankStatementImportHeader: 'Движение по сметка {0}, {1}, {2} за период {3} - {4}',
   strCustomDocumentNumber: 'Номер на банково извлечение',

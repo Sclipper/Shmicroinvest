@@ -58,3 +58,4 @@ The e2e suite includes a smoke test that opens every menu screen and runs every 
 - Online services (ECB rates and VIES) are called directly. When a service is down the screens say so; they don't fall back to a guessed value.
 - The Fibank movements XML and the payment intermediaries' IBAN lists aren't included. The default per-bank import rules were rebuilt from the spec.
 - Bank-statement import binds payments only to open documents of the active year. Unpaid invoices of the previous year are offered once its balances are carried into the new year as openings per document.
+- The commercial and ЮЛНЦ chart templates were renumbered to match Delta's statement formulas (203 сгради, 206 машини, 241/n = depreciation of 20n). Companies created before that change keep their old numbering, and their 2026 EUR chart and F4 templates would mix the two, so recreate them before use.

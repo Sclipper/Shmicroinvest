@@ -9,7 +9,7 @@ import { zipStore } from './zip.ts';
  * when the table is wide. No dependencies; runs in the browser and in Node.
  */
 
-const xmlEsc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
+const xmlEsc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, '');
 
 const A4_TWIPS = [11906, 16838];
 const MARGIN_TWIPS = 567; // 1 cm

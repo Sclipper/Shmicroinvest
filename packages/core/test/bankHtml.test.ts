@@ -67,6 +67,15 @@ describe('HTML reader', () => {
     expect(isHtmlText('﻿  <?xml version="1.0"?><!-- export --><HTML lang="bg">')).toBe(true);
     expect(isHtmlText('<?xml version="1.0"?><Document>')).toBe(false);
     expect(isHtmlText('<table><tr>')).toBe(false);
+    expect(isHtmlText('<!-- a --><!-- b -->\n<html>')).toBe(true);
+    expect(isHtmlText('<!-- never closed <html>')).toBe(false);
+  });
+
+  it('isHtmlText stays linear on many leading comments (no catastrophic backtracking)', () => {
+    const start = performance.now();
+    expect(isHtmlText('<!-- x -->'.repeat(5000) + '<Document>')).toBe(false);
+    expect(isHtmlText('<!-- x -->'.repeat(5000) + '<html>')).toBe(true);
+    expect(performance.now() - start).toBeLessThan(500);
   });
 });
 
@@ -203,6 +212,20 @@ describe('HTML statements of the seven banks (04b 1.13)', () => {
       ['2026-09-15', true, '300.00', CLIENT, 'Клиент ЕООД', 'Ф-ра 8', ''],
     ]);
     expect(s.rows[0]!.props).toMatchObject({ MovementType: 'DEBIT', Narrative: 'Ток', DescriptionAdditional: 'август' });
+  });
+
+  it('header fields come from the header block, never from a movement description', () => {
+    const html = `<html><head></head><body><table>
+      <tr><td>Сметка</td><td>BG13RZBB91551001234567</td></tr>
+      <tr><th>Дата</th><th>Сума</th><th>Контрагент</th><th>Сметка на контрагента</th><th>Основание</th></tr>
+      <tr><td>14.09.2026</td><td>-150,00</td><td>Наемодател ООД</td><td>${SUPPLIER}</td><td>Период 01.12.2025 - 31.12.2025 наем</td></tr>
+      <tr><td>15.09.2026</td><td>+300,00</td><td>Клиент ЕООД</td><td>${CLIENT}</td><td>Валута USD превалутиране</td></tr>
+    </table></body></html>`;
+    const s = parseBankStatement({ text: html }, 'RZBBBGSF')!;
+    expect(s.iban).toBe('BG13RZBB91551001234567');
+    expect([s.from, s.to]).toEqual(['2026-09-14', '2026-09-15']);
+    expect(s.currency).not.toBe('USD');
+    expect(s.rows).toHaveLength(2);
   });
 
   it('Unicredit: DR/CR movement type, Reason + ReasonI02', () => {

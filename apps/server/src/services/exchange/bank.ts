@@ -349,6 +349,11 @@ export async function parseStatementFile(db: DbOrTx, file: { fileName: string; b
     : parseBankStatement({ text: decodeText(file.bytes) }, ba.bankCode);
   if (!parsed || !parsed.rows.length) throw new DataImportError(critical('strWrongFileOrBrokenStructures'));
   if (parsed.currency && ba.currencyIso && parsed.currency.toUpperCase() !== ba.currencyIso.trim().toUpperCase()) throw new DataImportError(critical('strCurrenciesAreNotTheSame'));
+  // Another account's statement (a fixed-column format would even read its debits as credits).
+  const norm = (v: string) => v.replace(/\s/g, '').toUpperCase();
+  if (parsed.iban && ba.account && /^[A-Z]{2}\d{2}/.test(norm(ba.account)) && norm(parsed.iban) !== norm(ba.account)) {
+    throw new DataImportError(critical('strBankStatementIBANMismatch', parsed.iban, ba.account));
+  }
   // IsFileDatesValid: start year = end year = the active year (the header period when the file has one, and every row).
   const years = new Set([...parsed.rows.map((r) => r.date), parsed.from, parsed.to].filter((d): d is string => !!d).map((d) => Number(d.slice(0, 4))));
   if (years.size !== 1 || !years.has(ctx.year.year)) throw new DataImportError(critical('strBankStatementDatesInDifferentYear'));

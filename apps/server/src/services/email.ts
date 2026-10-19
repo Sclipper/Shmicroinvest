@@ -183,7 +183,7 @@ export function withSignature(body: string | null | undefined, signature?: strin
 
 /** "Name" <address> when a display name is set. */
 export function senderAddress(email: string, userName?: string) {
-  const name = userName?.replace(/["\r\n<>]/g, '').trim();
+  const name = userName?.replace(/["\\\r\n<>]/g, '').trim();
   return name ? `"${name}" <${email}>` : email;
 }
 

@@ -187,6 +187,13 @@ describe('foreign-currency account: rate per date, currency differences, fees (0
     expect(keys(r)).toEqual(['strCurrenciesAreNotTheSame']);
   });
 
+  it("another account's statement is refused by its IBAN", async () => {
+    const other = fibank('USD').replace(USD_IBAN, 'BG80BNBG96611020345678');
+    const r = await call('POST', '/bank-statements/parse', { fileName: 'fib.xml', text: other, bankAccountId: usdAccount });
+    expect(keys(r)).toEqual(['strBankStatementIBANMismatch']);
+    expect(r.body.messages[0].text).toContain('BG80BNBG96611020345678');
+  });
+
   it('each row takes the stored rate of its date; differences go to 624/724; a fee adds 629', async () => {
     expect((await call('PUT', '/revaluation/rates', { date: '2026-03-02', rates: [{ currencyId: 3, rate: '0.92' }] })).status).toBe(200);
     expect((await call('PUT', '/revaluation/rates', { date: '2026-03-03', rates: [{ currencyId: 3, rate: '0.93' }] })).status).toBe(200);

@@ -83,18 +83,24 @@ export interface SaveContext {
 
 type DictionaryTable = typeof s.terms | typeof s.referenceTexts | typeof s.paragraphs;
 
-/** The list row of a text: lookups compare lower-cased, trimmed text, an exact match first (03a 8.1). */
-async function findDictionary(db: DbOrTx, table: DictionaryTable, t: string) {
-  const rows = await db.select({ id: table.id, description: table.description }).from(table).where(sql`lower(${table.description}) = lower(${t.trim()})`).limit(20);
-  return (rows.find((r) => r.description === t) ?? rows[0])?.id ?? null;
+/** The row of a text: lookups compare lower-cased, trimmed text (stored up to 255 characters), an exact match first (03a 8.1). */
+async function findDictionary(db: DbOrTx, table: DictionaryTable, text: string) {
+  const t = text.trim().slice(0, 255);
+  const rows = await db.select({ id: table.id, description: table.description, isHidden: table.isHidden }).from(table)
+    .where(sql`lower(${table.description}) = lower(${t})`).limit(20);
+  return rows.find((r) => r.description === t) ?? rows[0] ?? null;
 }
 
-/** Id of the text's row; a new text is added (hidden when the user declined adding it to the list, 03a 8.1). */
+/**
+ * Id of the text's row; a new text is added, hidden when the user declined adding
+ * it to the list (03a 8.1). An existing row, hidden or not, is reused: Delta skips
+ * the add when the description exists, and hiding may be the user's own choice.
+ */
 async function resolveDictionary(db: DbOrTx, table: DictionaryTable, text: string | null | undefined, hidden = false) {
   const t = text?.trim();
   if (!t) return null;
   const found = await findDictionary(db, table, t);
-  if (found) return found;
+  if (found) return found.id;
   const [row] = await db.insert(table).values({ description: t.slice(0, 255), isHidden: hidden }).returning({ id: table.id });
   return row!.id;
 }

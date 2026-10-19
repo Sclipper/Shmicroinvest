@@ -832,7 +832,19 @@ export const HTML_STATEMENT_MAPPERS = ['DSK', 'Allianz', 'Fibank', 'Municipal', 
 
 /** An HTML document (optionally after an XML declaration or comments). */
 export function isHtmlText(text: string): boolean {
-  return /^(<\?xml[^>]*\?>\s*)?(<!--[\s\S]*?-->\s*)*(<!doctype\s+html|<html[\s>])/i.test(text.replace(/^\uFEFF/, '').trimStart());
+  // Skipped by hand: a regex with a repeated lazy comment group backtracks exponentially.
+  let s = text.replace(/^\uFEFF/, '').trimStart();
+  if (s.startsWith('<?xml')) {
+    const end = s.indexOf('?>');
+    if (end < 0) return false;
+    s = s.slice(end + 2).trimStart();
+  }
+  while (s.startsWith('<!--')) {
+    const end = s.indexOf('-->', 4);
+    if (end < 0) return false;
+    s = s.slice(end + 3).trimStart();
+  }
+  return /^(<!doctype\s+html|<html[\s>])/i.test(s);
 }
 
 /**
@@ -1141,9 +1153,17 @@ export function parseHtmlStatement(text: string, bankCode: string | null | undef
     movements = t.movements;
     before = rows.slice(0, Math.max(t.headerAt, 0));
   }
-  // Header block: the rows of every table and the text lines outside the tables.
+  // Header block: the text lines outside the tables, the other tables and, of the
+  // movements table, the rows above its header row and the rows that start with a
+  // header caption ("Старо салдо", "Период", ...). Movement rows are left out, so a
+  // description such as "Период 01.12 - 31.12 наем" cannot set the period.
   const textLines = htmlText(body, { skipTables: true }).split('\n').filter(Boolean).map((l): HtmlCell[] => [{ text: l, classes: [] }]);
-  const head = readHtmlHeader([...textLines, ...tables.flatMap((t) => htmlTableRows(t))]);
+  const captionRow = (r: HtmlCell[]) => {
+    const firstCell = r.find((c) => c.text.trim());
+    return Boolean(firstCell && headerCaption(firstCell.text));
+  };
+  const firstTableHead = [...before, ...rows.slice(before.length).filter(captionRow)];
+  const head = readHtmlHeader([...textLines, ...firstTableHead, ...tables.slice(1).flatMap((t) => htmlTableRows(t))]);
   head.iban ??= [...textLines, ...before].flatMap((r) => r.map((c) => ibanIn(c.text.replace(/\n/g, ' ')))).find(Boolean);
   const build = HTML_MODELS[mapper.id]!;
   const out: BankStatementRow[] = [];

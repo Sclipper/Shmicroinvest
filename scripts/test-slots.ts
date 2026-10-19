@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmdirSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -33,16 +33,42 @@ function tryTake(file: string, label: string) {
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
   }
-  // Taken: reclaim it when its owner is gone or stopped refreshing it.
+  // Taken: reclaim it when its owner is gone or stopped refreshing it. The check and
+  // the removal run under a lock directory, so two processes cannot both reclaim the
+  // same stale slot (the second would delete the first one's fresh slot).
+  if (!withReclaimLock(() => {
+    try {
+      const { pid } = JSON.parse(readFileSync(file, 'utf8')) as { pid: number };
+      if (alive(pid) && Date.now() - statSync(file).mtimeMs <= STALE_MS) return false;
+      unlinkSync(file);
+      return true;
+    } catch (e) {
+      // Removed meanwhile: free now. Half-written: try again on the next round.
+      return (e as NodeJS.ErrnoException).code === 'ENOENT';
+    }
+  })) return false;
+  return tryTake(file, label);
+}
+
+/** Runs fn while holding DIR/reclaim.lock (mkdir is atomic); false when the lock is busy. */
+function withReclaimLock(fn: () => boolean): boolean {
+  const lock = path.join(DIR, 'reclaim.lock');
   try {
-    const { pid } = JSON.parse(readFileSync(file, 'utf8')) as { pid: number };
-    if (alive(pid) && Date.now() - statSync(file).mtimeMs <= STALE_MS) return false;
-    unlinkSync(file);
+    mkdirSync(lock);
   } catch {
-    // Half-written or removed meanwhile: try again on the next round.
+    // Busy; a lock left by a process that died inside the section is removed after 10 s.
+    try {
+      if (Date.now() - statSync(lock).mtimeMs > 10_000) rmdirSync(lock);
+    } catch {
+      // Released meanwhile.
+    }
     return false;
   }
-  return tryTake(file, label);
+  try {
+    return fn();
+  } finally {
+    rmdirSync(lock);
+  }
 }
 
 /** Waits for a free slot; returns the function that frees it (also freed on exit). */
