@@ -1,11 +1,13 @@
 import { asc, eq, sql, type SQL } from 'drizzle-orm';
 import {
-  BGN_PER_EUR, CASH_AND_RECEIVABLES_SECTIONS, cashAndReceivablesFormulas, cashOrderAmountInWords, dec, EURO_CHANGEOVER_DATE,
+  BGN_PER_EUR, CASH_AND_RECEIVABLES_LIMIT_KEY, CASH_AND_RECEIVABLES_SECTIONS, cashAndReceivablesDefaultLimit, cashAndReceivablesLimitWarning, cashOrderAmountInWords, dec, EURO_CHANGEOVER_DATE,
   pairTwoPerRow, ZERO, type Dec,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import { queryRows, type DbOrTx } from '../db/provider.ts';
-import { accountBalances, accountRuleSql, trialBalance } from './reports.ts';
+import { getConfig, setConfig } from './config.ts';
+import { accountRuleSql, trialBalance } from './reports.ts';
+import { statementCalculator } from './statements.ts';
 import { myCompanyCard } from './partnerReports.ts';
 
 /**
@@ -269,10 +271,7 @@ export interface CashAndReceivablesRow {
 }
 
 export async function cashAndReceivables(db: DbOrTx, o: CashAndReceivablesOptions) {
-  const numbers = [...new Set(CASH_AND_RECEIVABLES_SECTIONS.flatMap((x) => x.accounts))];
-  const bal = new Map<string, Awaited<ReturnType<typeof accountBalances>>>();
-  for (const n of numbers) bal.set(n, await accountBalances(db, n, { startDate: o.startDate, endDate: o.endDate }));
-  const amounts = cashAndReceivablesFormulas((n) => bal.get(n) ?? { closingDebit: 0, closingCredit: 0 });
+  const amounts = await cashAndReceivablesAmounts(db, o.startDate, o.endDate);
 
   const sections = [];
   for (const sec of CASH_AND_RECEIVABLES_SECTIONS) {
@@ -292,5 +291,46 @@ export async function cashAndReceivables(db: DbOrTx, o: CashAndReceivablesOption
     sections.push({ key: sec.key, title: sec.title, amount: amounts[sec.key], rows });
   }
   const [me] = await db.select({ name: s.myCompany.name }).from(s.myCompany).orderBy(asc(s.myCompany.id)).limit(1);
-  return { myCompanyName: me?.name ?? '', startDate: o.startDate, endDate: o.endDate, ...amounts, totalAmount: amounts.total, sections };
+  const limit = await cashAndReceivablesLimit(db, Number(o.endDate.slice(0, 4)));
+  const warning = cashAndReceivablesLimitWarning(amounts.total, limit, o.endDate >= EURO_CHANGEOVER_DATE ? 'EUR' : 'лв');
+  return { myCompanyName: me?.name ?? '', startDate: o.startDate, endDate: o.endDate, ...amounts, totalAmount: amounts.total, sections, limit, warning };
+}
+
+/**
+ * The three amounts of the report through the statement formula engine:
+ * cells cr1, cr2, cr3 of "CashAndReceivables", so the user's edits in
+ * "Редакция на формули" apply (05 6.10).
+ */
+export async function cashAndReceivablesAmounts(db: DbOrTx, startDate: string, endDate: string) {
+  const { calc } = await statementCalculator(db, { startDate, endDate, statements: ['cr'] });
+  const availableCash = calc.cell('cr1', 'cp');
+  const ownersReceivables = calc.cell('cr2', 'cp');
+  const workersReceivables = calc.cell('cr3', 'cp');
+  const total = availableCash.plus(ownersReceivables).plus(workersReceivables);
+  return { availableCash: f2(availableCash), ownersReceivables: f2(ownersReceivables), workersReceivables: f2(workersReceivables), total: f2(total) };
+}
+
+/** Legal limit of cash plus receivables in the base currency of the year (configuration key, else the default). */
+export async function cashAndReceivablesLimit(db: DbOrTx, year: number) {
+  const v = (await getConfig(db, CASH_AND_RECEIVABLES_LIMIT_KEY))?.trim().replace(',', '.');
+  return v && /^-?\d+(\.\d+)?$/.test(v) ? dec(v).toFixed(2) : cashAndReceivablesDefaultLimit(year);
+}
+
+const LIMIT_HIDDEN_KEY = 'CashAndReceivablesLimitMessageHidden';
+
+/**
+ * CashAndReceivablesExceededView: the check of the active year up to the
+ * working date. `message` is null when the total is within the limit or the
+ * user ticked "Не показвай повече" (IsMessageHidden, per user).
+ */
+export async function cashAndReceivablesLimitCheck(db: DbOrTx, o: { startDate: string; workingDate: string; userId: number }) {
+  const amounts = await cashAndReceivablesAmounts(db, o.startDate, o.workingDate);
+  const limit = await cashAndReceivablesLimit(db, Number(o.workingDate.slice(0, 4)));
+  const warning = cashAndReceivablesLimitWarning(amounts.total, limit, o.workingDate >= EURO_CHANGEOVER_DATE ? 'EUR' : 'лв');
+  const hidden = (await getConfig(db, LIMIT_HIDDEN_KEY, o.userId)) === 'True';
+  return { total: amounts.total, limit, exceeded: warning != null, hidden, message: hidden ? null : warning };
+}
+
+export async function hideCashAndReceivablesLimitMessage(db: DbOrTx, userId: number, hidden: boolean) {
+  await setConfig(db, LIMIT_HIDDEN_KEY, hidden ? 'True' : 'False', userId);
 }

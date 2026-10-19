@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  cashAndReceivablesFormulas, cashOrderAmountInWords, daysBetweenDates, isOverdue, matchesColumnFilter, movementLineDirection,
+  cashAndReceivablesDefaultLimit, cashAndReceivablesFormulas, cashAndReceivablesLimitWarning, cashOrderAmountInWords, daysBetweenDates, isOverdue, matchesColumnFilter, movementLineDirection,
   overdueDaysText, pairTwoPerRow,
 } from '../src/index.ts';
 
@@ -62,5 +62,17 @@ describe('partner reports helpers (spec 05 6)', () => {
     expect(matchesColumnFilter(row, 'amount', '1234,5')).toBe(true);
     expect(matchesColumnFilter(row, 'all', 'ООД')).toBe(true);
     expect(matchesColumnFilter(row, 'all', '')).toBe(true);
+  });
+});
+
+describe('cash and receivables legal limit (strCashAndReceivablesLimitExceeded)', () => {
+  it('default limit 10 000 лв, 5 112,92 EUR from 2026; warns only above the limit; 0 switches it off', () => {
+    expect(cashAndReceivablesDefaultLimit(2025)).toBe('10000.00');
+    expect(cashAndReceivablesDefaultLimit(2026)).toBe('5112.92');
+    expect(cashAndReceivablesLimitWarning('5112.92', '5112.92', 'EUR')).toBeNull();
+    expect(cashAndReceivablesLimitWarning('6000', '5112.92', 'EUR')).toBe(
+      'Общата сума на касовите наличности и вземанията от собственици и от работници, служители и подотчетни лица (6 000,00 EUR) надвишава допустимия лимит от 5 112,92 EUR.',
+    );
+    expect(cashAndReceivablesLimitWarning('6000', '0', 'EUR')).toBeNull();
   });
 });

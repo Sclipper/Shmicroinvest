@@ -1,11 +1,13 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../context.ts';
 import { badRequest } from '../lib/errors.ts';
-import { requireAnyPermission, requirePermission } from '../session.ts';
+import { z } from 'zod';
+import { zValidator } from '../lib/validate.ts';
+import { requireAnyPermission, requirePermission, workingDate } from '../session.ts';
 import {
   COMPANIES_FILTER_COLUMNS, companiesReport, confirmationLetters, overdues, partnerDebts, partnerMovement, paymentsReport, receivedIssued, type DebtLevel,
 } from '../services/partnerReports.ts';
-import { cashAndReceivables, cashBook, cashOrders } from '../services/cashReports.ts';
+import { cashAndReceivables, cashAndReceivablesLimitCheck, cashBook, cashOrders, hideCashAndReceivablesLimitMessage } from '../services/cashReports.ts';
 
 /**
  * Partner and cash reports (spec 05 6, 7). Query parameters follow
@@ -86,6 +88,18 @@ export const partnerReportsRoutes = new Hono<AppEnv>()
     return c.json(await cashAndReceivables(c.var.db, {
       startDate: q.from ?? yearStart(c.var.year.year), endDate: q.to ?? yearEnd(c.var.year.year), subAccountLevel: num(q.level) ?? 0,
     }));
+  })
+  /** Legal-limit pop-up (CashAndReceivablesExceededView): the active year up to the working date. */
+  .get('/reports/cash-and-receivables/limit', requirePermission('UI_Reporting_CashReports_CashAndReceivables'), async (c) => {
+    const y = c.var.year;
+    const wd = workingDate(c.var.session);
+    const end = wd < y.startDate ? y.startDate : wd > `${y.year}-12-31` ? `${y.year}-12-31` : wd;
+    return c.json(await cashAndReceivablesLimitCheck(c.var.db, { startDate: y.startDate, workingDate: end, userId: c.var.user.id }));
+  })
+  /** "Не показвай повече" (IsMessageHidden), per user. */
+  .put('/reports/cash-and-receivables/limit', requirePermission('UI_Reporting_CashReports_CashAndReceivables'), zValidator('json', z.object({ hidden: z.boolean() })), async (c) => {
+    await hideCashAndReceivablesLimitMessage(c.var.db, c.var.user.id, c.req.valid('json').hidden);
+    return c.json({ ok: true });
   })
   .get('/reports/cash-book', requirePermission('UI_Reporting_CashReports_CashBook'), async (c) => {
     const q = c.req.query();
