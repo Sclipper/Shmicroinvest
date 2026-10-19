@@ -7,6 +7,8 @@ import {
   isValidEik, isValidEgn, isValidEgnChecksum, isValidLnch, isValidIban, amountInWords,
   buildLegs, legBalance, linesFromLegs, round2, validateEntry, parseChartTemplate, COMMERCIAL_CHART,
   reverseLines, formatMoney, parseAmount,
+  ACCOUNT_CATEGORIES, BANKS, CHART_TEMPLATE_TYPES, TRZ_REQUIRED_ACCOUNTS, chartTemplateAccounts, chartTemplateSettings, checkChartTemplate, templateLevel,
+  type ChartTemplateType,
 } from '../src/index.ts';
 
 describe('nested set rebuild (01a 4.3 worked example)', () => {
@@ -199,6 +201,97 @@ describe('commercial chart template', () => {
     for (const a of accs) if (a.parentNumber !== '0') expect(numbers.has(a.parentNumber), a.number).toBe(true);
     expect(accs.find((a) => a.number === '453/1')!.categoryId).toBe(16);
     expect(new Set(accs.map((a) => a.number)).size).toBe(accs.length);
+  });
+});
+
+describe('chart-of-accounts templates (01a 7, 03a 1.3)', () => {
+  const shape = (type: ChartTemplateType) => {
+    const accs = chartTemplateAccounts(type);
+    const byNumber = new Map(accs.map((a) => [a.number, a]));
+    const levels: Record<number, number> = {};
+    for (const a of accs) { const l = templateLevel(a, byNumber); levels[l] = (levels[l] ?? 0) + 1; }
+    const withCategory = accs.filter((a) => a.categoryId != null);
+    return { accs, byNumber, levels, withCategory, distinct: new Set(withCategory.map((a) => a.categoryId)) };
+  };
+
+  it.each(CHART_TEMPLATE_TYPES)('%s: unique numbers, parents listed first, known categories', (type) => {
+    const accs = chartTemplateAccounts(type);
+    expect(checkChartTemplate(accs)).toEqual([]);
+    expect(new Set(accs.map((a) => a.number)).size).toBe(accs.length);
+    const numbers = new Set(accs.map((a) => a.number));
+    for (const a of accs) if (a.parentNumber !== '0') expect(numbers.has(a.parentNumber), a.number).toBe(true);
+    const known = new Set(ACCOUNT_CATEGORIES.map((c) => c.id));
+    for (const a of accs) if (a.categoryId != null) expect(known.has(a.categoryId), a.number).toBe(true);
+    // Categories that no template attaches (01a 6.3).
+    for (const id of [1, 2, 3, 23, 24, 25, 31, 52, 53, 54, 55]) expect(accs.some((a) => a.categoryId === id), `${type} ${id}`).toBe(false);
+  });
+
+  it('the checker reports broken trees', () => {
+    const bad = parseChartTemplate('4|Разчети\n40|Доставчици\n401|Доставчици|4\n401|Доставчици\n45/1|Без родител\n402/1|Подсметка|10\n402|Аванси|5\n41|Клиенти\n411|Клиенти|99');
+    expect(checkChartTemplate(bad)).toEqual([
+      '401: duplicate number',
+      '45/1: parent 45 missing or listed later',
+      '402/1: parent 402 missing or listed later',
+      '411: unknown category 99',
+    ]);
+    expect(checkChartTemplate(parseChartTemplate('4|Разчети\n40|Доставчици\n401|Доставчици|4\n401/1|Аванси|5'))).toEqual(['401/1: category 5 differs from parent 401 (4)']);
+  });
+
+  it('commercial: the 61 category attachments on 50 categories of Delta; existing numbers keep their meaning', () => {
+    const c = shape('commercial');
+    expect(c.withCategory).toHaveLength(61);
+    expect(c.distinct.size).toBe(50);
+    expect(c.accs.length).toBeGreaterThanOrEqual(300);
+    expect(c.levels[2]).toBe(8);
+    expect(c.accs.filter((a) => a.categoryId === 40).map((a) => a.number)).toEqual(['604', '604/1', '604/2', '604/3', '604/4', '604/5']);
+    expect(c.accs.filter((a) => a.categoryId === 41).map((a) => a.number)).toEqual(['605', '605/1', '605/2', '605/3', '605/4', '605/5', '605/6']);
+    expect(c.byNumber.get('411')).toMatchObject({ description: 'Клиенти', categoryId: 10 });
+    expect(c.byNumber.get('453/9')).toMatchObject({ categoryId: 36 });
+    // The accounts the ТРЗ Pro import needs are part of the template.
+    for (const a of TRZ_REQUIRED_ACCOUNTS) expect(c.byNumber.has(a.number), a.number).toBe(true);
+  });
+
+  it('non-profit: Delta\'s shape (302 accounts with the root) and category attachments', () => {
+    const n = shape('nonProfit');
+    expect(n.accs).toHaveLength(301);
+    expect(n.levels).toEqual({ 2: 8, 3: 43, 4: 181, 5: 65, 6: 4 });
+    expect(n.withCategory).toHaveLength(71);
+    expect(n.distinct.size).toBe(47);
+    // No internal settlements / related-party suppliers and clients (01a 6.3).
+    for (const id of [32, 33, 34]) expect(n.withCategory.some((a) => a.categoryId === id)).toBe(false);
+    expect(n.accs.filter((a) => a.categoryId === 45).map((a) => a.number)).toEqual(['609', '609/1', '609/1/1', '609/1/2', '609/1/3', '609/1/4', '609/2']);
+    expect(n.accs.filter((a) => a.categoryId === 58).map((a) => a.number)).toEqual(['509', '509/1', '509/9']);
+    expect(n.byNumber.get('712')!.description).toBe('Приходи от членски внос');
+    expect(n.byNumber.get('714')!.description).toBe('Приходи от дарения');
+    expect(n.byNumber.get('754')!.description).toBe('Финансиране на текущата дейност');
+  });
+
+  it('budget: 4-digit synthetic accounts under 8 sections and the 31 attachments of 01a 6.3', () => {
+    const b = shape('budget');
+    expect(b.levels[2]).toBe(8);
+    expect(b.levels[3]).toBe(48);
+    expect(b.levels[4]).toBe(220);
+    expect(b.levels[5]).toBeGreaterThan(850);
+    expect(b.levels[6]).toBe(4);
+    for (const a of b.accs) if (templateLevel(a, b.byNumber) === 5) expect(a.number, a.number).toMatch(/^\d{4}$/);
+    expect(b.withCategory).toHaveLength(31);
+    expect(b.distinct.size).toBe(31);
+    const at = (n: string) => b.byNumber.get(n)!.categoryId;
+    expect([at('4010'), at('4110'), at('5011'), at('5013'), at('4261'), at('4511/1'), at('4511/2'), at('4511/8'), at('4511/9')]).toEqual([4, 10, 21, 22, 30, 16, 17, 35, 36]);
+    expect(b.byNumber.get('1001')).toMatchObject({ description: 'Разполагаем капитал', parentNumber: '100' });
+    expect(chartTemplateSettings('budget')).toEqual({ IsParagraphEnabled: 'True' });
+    expect(chartTemplateSettings('nonProfit')).toEqual({});
+  });
+});
+
+describe('banks seed (01a 9.2)', () => {
+  it('has Delta\'s 46 rows with unique BICs; the first rows keep their positional ids', () => {
+    expect(BANKS).toHaveLength(46);
+    expect(new Set(BANKS.map((b) => b.code)).size).toBe(46);
+    for (const b of BANKS) expect(b.code, b.name).toMatch(/^[A-Z]{4}BG[A-Z0-9]{2}$|^EVIULT2V$/);
+    expect(BANKS.slice(0, 3).map((b) => b.code)).toEqual(['BNBGBGSF', 'UNCRBGSF', 'STSABGSF']);
+    expect(BANKS[29]!.code).toBe('EVIULT2V');
+    expect(BANKS.map((b) => b.code)).toEqual(expect.arrayContaining(['KORPBGSF', 'CBUNBGSF', 'BUIBBGSF', 'CRBABGSF', 'BNBGBGSD']));
   });
 });
 

@@ -27,7 +27,7 @@ export interface EntrySpec {
  * Test harness: an in-memory server with one freshly created company and a
  * logged-in administrator. Each test file gets its own instance.
  */
-export async function createTestCompany(opts: { year?: number; companyName?: string; bulstat?: string } = {}) {
+export async function createTestCompany(opts: { year?: number; companyName?: string; bulstat?: string; chartTemplate?: 'commercial' | 'nonProfit' | 'budget' } = {}) {
   const driver = new PgliteDriver();
   const app = createApp(driver);
   let cookie = '';
@@ -51,7 +51,7 @@ export async function createTestCompany(opts: { year?: number; companyName?: str
 
   const created = await call('POST', '/companies', {
     companyName: opts.companyName ?? 'Тест ООД', bulstat: opts.bulstat ?? '831641791',
-    adminName: 'Администратор', adminPassword: 'secret1', year: opts.year ?? 2026,
+    adminName: 'Администратор', adminPassword: 'secret1', year: opts.year ?? 2026, chartTemplate: opts.chartTemplate,
   });
   expect(created.status, created.text).toBe(201);
   const companyDb = created.body.name as string;
