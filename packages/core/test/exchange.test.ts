@@ -391,6 +391,21 @@ describe('Excel import (04a 5)', () => {
     expect(k({ Accounts: '601;602-401;403', Sums: '1;1' })).toEqual(['strInvalidDataFormatInExcelCell']);
     expect(k({ OperationType: '3-x', Term: '' })).toEqual(['strInvalidTermInRowField']);
   });
+  it('a VAT rate on a pair without a "%" side is strVATNotAllowedInOperationErrorWithRowNumber (5.3 VAT split)', () => {
+    const base = { Accounts: '602-401', Sums: '120', Date: '15.03.2025', Partner: 'Алфа', Term: 'x' };
+    let msgs: string[] = [];
+    try {
+      parseExcelOperationRow(row({ ...base, VATOperation: '2-покупка' }), letter, 3, ctx);
+    } catch (e) {
+      msgs = (e as DataImportError).messages.map((m) => `${m.key}: ${m.text}`);
+    }
+    expect(msgs).toEqual(['strVATNotAllowedInOperationErrorWithRowNumber: Грешка при импортирането на ред 3 от файла. В избрания тип операция не се използват ДДС сметки, а има начислен ДДС 20.00 лв.']);
+    // Per pair: the second pair's term (20 %) fails even when the first is VAT-free.
+    expect(errorKeys(() => parseExcelOperationRow(row({ ...base, Accounts: '601;602-401', Sums: '20;100', VATOperation: '1-x;2-покупка' }), letter, 3, ctx))).toEqual(['strVATNotAllowedInOperationErrorWithRowNumber']);
+    // A "%" side or a rate-free term is fine.
+    expect(parseExcelOperationRow(row({ ...base, Accounts: '602%-401', VATOperation: '2-покупка' }), letter, 3, ctx).debits.map((l) => l.amount)).toEqual(['100.00', '20.00']);
+    expect(parseExcelOperationRow(row({ ...base, VATOperation: '3-x' }), letter, 3, ctx).debits.map((l) => l.amount)).toEqual(['120.00']);
+  });
   it('no-VAT term with empty term imports; material analytics', () => {
     const d = parseExcelOperationRow(row({ Accounts: '304-401', Sums: '10(5|2)', Date: '15.03.2025', Partner: 'Алфа', VATOperation: '1-x' }), letter, 3, ctx);
     expect(d.debits[0]).toMatchObject({ quantity: '5', price: '2', amount: '10.00' });

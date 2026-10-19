@@ -410,6 +410,15 @@ export function parseExcelOperationRow(get: (key: string) => ExcelCell, letter: 
   const term = text('Term', 254);
   if (!term && (icaType === 3 || transactionTypeId !== TRANSACTION_TYPE.NotSet)) fail('strInvalidTermInRowField', row, letter('Term'));
 
+  // VAT split check: a pair whose VAT term carries a rate needs a '%' side (5.3 "VAT split").
+  if (!D.vat && !Cr.vat) {
+    for (let i = 0; i < pairs; i++) {
+      const it = shared ? sharedItems[i] : (n === pairs ? debitItems[i] : creditItems[i]);
+      const vat = it ? vatFromGross(it.amount, VAT_TERM.get(termFor(i))?.vatValue ?? 0) : dec(0);
+      if (!vat.isZero()) fail('strVATNotAllowedInOperationErrorWithRowNumber', row, vat.toFixed(2));
+    }
+  }
+
   if (icaType !== null) ica = buildIca(icaType, get, letter, row, date!, documentTypeId, docNumber, termFor(0), vatIds, ctx);
 
   return {

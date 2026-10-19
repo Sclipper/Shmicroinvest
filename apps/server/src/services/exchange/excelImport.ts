@@ -74,18 +74,18 @@ export async function importExcel(tx: DbOrTx, sheets: ExcelSheet[], entity: Exce
       if (d.ica && vatS && d.ica.debitAccount) {
         const ica = d.ica;
         const number = ica.documentNumber ?? (await reserveNumber(tx, CHANNEL.VatProtocol, ctx.year.id, async () => false)).number;
+        // A protocol is built even without VAT: call-off stock (type 6, codes 41-58), 163a and the
+        // bread/flour types carry no ICAVAT but must reach the VAT diaries (04a 5.3 ICA items 3-7).
         const amount = round2(ica.vatAmount);
-        if (!amount.isZero()) {
-          const icaEntry = await saveEntry(tx, {
-            accountingDate: ica.accountingDate, documentDate: ica.documentDate, documentTypeId: ica.documentTypeId, documentNumber: number,
-            companyId: partner?.id ?? null, term: ica.term, reference: ica.reference || null, transactionTypeId: ica.transactionTypeId, viesMonth: ica.viesMonth,
-            icaType: ica.icaType, deliveryDescription: ica.deliveryDescription || null, source: 'import-excel',
-            debits: [{ accountId: ica.debitAccount!.id, amount: amount.toFixed(2), vatTermId: ica.vatTermId }],
-            credits: [{ accountId: vatS.id, amount: amount.toFixed(2), vatTermId: ica.vatTermId }],
-          }, { year: ctx.year, userId: ctx.userId, skipHeaderChecks: true });
-          if (ica.vatDiaryCode) await tx.insert(s.accountingExtendedDetails).values({ accountingId: icaEntry.id, vatDiaryCode: ica.vatDiaryCode });
-          await tx.update(s.accountings).set({ icaAccountingId: icaEntry.id, icaType: ica.icaType }).where(eq(s.accountings.id, saved.id));
-        }
+        const icaEntry = await saveEntry(tx, {
+          accountingDate: ica.accountingDate, documentDate: ica.documentDate, documentTypeId: ica.documentTypeId, documentNumber: number,
+          companyId: partner?.id ?? null, term: ica.term, reference: ica.reference || null, transactionTypeId: ica.transactionTypeId, viesMonth: ica.viesMonth,
+          icaType: ica.icaType, deliveryDescription: ica.deliveryDescription || null, source: 'import-excel',
+          debits: [{ accountId: ica.debitAccount!.id, amount: amount.toFixed(2), vatTermId: ica.vatTermId }],
+          credits: [{ accountId: vatS.id, amount: amount.toFixed(2), vatTermId: ica.vatTermId }],
+        }, { year: ctx.year, userId: ctx.userId, skipHeaderChecks: true });
+        if (ica.vatDiaryCode) await tx.insert(s.accountingExtendedDetails).values({ accountingId: icaEntry.id, vatDiaryCode: ica.vatDiaryCode });
+        await tx.update(s.accountings).set({ icaAccountingId: icaEntry.id, icaType: ica.icaType }).where(eq(s.accountings.id, saved.id));
       }
       created++;
     }

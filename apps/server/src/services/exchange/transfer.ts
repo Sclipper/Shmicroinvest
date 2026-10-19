@@ -1,7 +1,7 @@
 import { and, asc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import {
-  DataImportError, accountingLines, critical, isCompanyCategory, msg, operationToLines, warning, XML_OPERATION_CATEGORIES,
-  type ExchangeMessage, type TdAccounting, type TdCompany, type TdDetail, type TransferData, CHANNEL, DOCUMENT_TYPE,
+  DataImportError, ZERO, accountingLines, critical, dec, isCompanyCategory, msg, operationToLines, round2, warning, XML_OPERATION_CATEGORIES,
+  type Dec, type ExchangeMessage, type TdAccounting, type TdCompany, type TdDetail, type TransferData, CHANNEL, DOCUMENT_TYPE,
 } from '@shmi/core';
 import * as s from '../../db/company/schema/index.ts';
 import type { CompanyDb, DbOrTx } from '../../db/provider.ts';
@@ -206,8 +206,9 @@ async function importAccounting(tx: DbOrTx, chart: Chart, acc: TdAccounting, iso
     if (!number && ica.document.documentType === DOCUMENT_TYPE.VatProtocol) {
       number = (await reserveNumber(tx, CHANNEL.VatProtocol, ctx.year.id, async () => false)).number;
     }
-    const vat = ica.vatAmount ?? '0';
-    if (vatSale && debitAcc && Number(vat) !== 0) {
+    // Protocols without VAT (call-off stock, 163a, bread/flour) are imported too (04a 3.7 step 8).
+    const vat = round2(ica.vatAmount ?? 0).toFixed(2);
+    if (vatSale && debitAcc) {
       const icaEntry = await saveEntry(tx, {
         accountingDate: date, documentDate: ica.document.date ?? date, documentTypeId: ica.document.documentType, documentNumber: number,
         companyId: partner?.id ?? null, term: ica.term ?? '', reference: ica.reference ?? null, transactionTypeId: 2, viesMonth: ica.viesMonth ?? null,
@@ -272,21 +273,26 @@ export async function exportTransferData(db: DbOrTx, f: XmlExportFilter): Promis
       skipped++;
       continue;
     }
-    // Group by (account, sign, VAT term).
-    const groups = new Map<string, TdDetail & { _q: number; _c: number }>();
+    // Group by (account, sign, VAT term); sums in decimal (amount = Amount + RefAmount).
+    const groups = new Map<string, { d: TdDetail; amount: Dec; cur: Dec; qty: Dec }>();
     for (const l of legs) {
       const key = `${l.accountId}|${l.sign}|${l.vatTermId}`;
-      const amount = Number(l.amount) + Number(l.refAmount);
       let g = groups.get(key);
       if (!g) {
-        g = { accountNumber: accNo.get(l.accountId) ?? '', amount: '0', direction: l.sign === 1 ? 'Debit' : 'Credit', vatTerm: l.vatTermId, _q: 0, _c: 0 };
-        if (l.currencyId) g.currency = { currency: curIso.get(l.currencyId) ?? '', currencyAmount: '0', exchangeRate: l.exchangeRate ?? '0', fixedRate: l.fixedRate ?? '0' };
-        if (l.productId) g.material = { productName: prodName.get(l.productId), quantity: '0', price: l.price ?? '0' };
+        const d: TdDetail = { accountNumber: accNo.get(l.accountId) ?? '', amount: '0', direction: l.sign === 1 ? 'Debit' : 'Credit', vatTerm: l.vatTermId };
+        if (l.currencyId) d.currency = { currency: curIso.get(l.currencyId) ?? '', currencyAmount: '0', exchangeRate: l.exchangeRate ?? '0', fixedRate: l.fixedRate ?? '0' };
+        if (l.productId) d.material = { productName: prodName.get(l.productId), quantity: '0', price: l.price ?? '0' };
+        g = { d, amount: ZERO, cur: ZERO, qty: ZERO };
         groups.set(key, g);
       }
-      g.amount = (Number(g.amount) + amount).toFixed(2);
-      if (g.currency) g.currency.currencyAmount = (Number(g.currency.currencyAmount) + Number(l.currencyAmount ?? 0)).toFixed(2);
-      if (g.material) g.material.quantity = (Number(g.material.quantity) + Number(l.quantity ?? 0)).toFixed(6);
+      g.amount = g.amount.plus(dec(l.amount)).plus(dec(l.refAmount));
+      g.cur = g.cur.plus(dec(l.currencyAmount ?? 0));
+      g.qty = g.qty.plus(dec(l.quantity ?? 0));
+    }
+    for (const g of groups.values()) {
+      g.d.amount = round2(g.amount).toFixed(2);
+      if (g.d.currency) g.d.currency.currencyAmount = round2(g.cur).toFixed(2);
+      if (g.d.material) g.d.material.quantity = g.qty.toDecimalPlaces(6).toFixed(6);
     }
     const companyId = legs.find((l) => l.companyId)?.companyId;
     const company = companies.find((c) => c.id === companyId);
@@ -300,11 +306,7 @@ export async function exportTransferData(db: DbOrTx, f: XmlExportFilter): Promis
         name: company.name, bulstat: company.bulstat ?? undefined, vatNumber: company.vatNumber ?? undefined, companyAccounts: [],
         bankAccounts: banksAcc.filter((b) => b.ownerId === company.id).map((b) => ({ bankName: (b.bankId && bankById.get(b.bankId)?.name) || '', bankCode: (b.bankId && bankById.get(b.bankId)?.code) || '', accountNumber: b.account })),
       } : undefined,
-      details: [...groups.values()].map(({ _q, _c, ...d }) => {
-        void _q;
-        void _c;
-        return d;
-      }),
+      details: [...groups.values()].map((g) => g.d),
     };
     if (h.icaAccountingId) {
       const ih = icaHeads.find((x) => x.id === h.icaAccountingId);
@@ -315,7 +317,7 @@ export async function exportTransferData(db: DbOrTx, f: XmlExportFilter): Promis
         const code = icaExt.find((e) => e.accountingId === ih.id)?.vatDiaryCode;
         item.ica = {
           icaType: ih.icaType, viesMonth: ih.viesMonth, deliveryDescription: ih.deliveryDescription ?? undefined, reference: ih.referenceId ? refs.get(ih.referenceId) : undefined,
-          term: ih.termId ? terms.get(ih.termId) : undefined, vatAmount: firstDebit ? (Number(firstDebit.amount) + Number(firstDebit.refAmount)).toFixed(2) : '0.00',
+          term: ih.termId ? terms.get(ih.termId) : undefined, vatAmount: firstDebit ? round2(dec(firstDebit.amount).plus(dec(firstDebit.refAmount))).toFixed(2) : '0.00',
           document: idoc ? { documentType: idoc.documentTypeId, number: idoc.number, date: idoc.date } : { documentType: DOCUMENT_TYPE.VatProtocol, number: '', date: ih.accountingDate },
           icaType163a: code && /^\d+$/.test(code) ? Number(code) : 0, operationByVat: firstDebit?.vatTermId, terminateAssetCreditAccount: firstDebit ? accNo.get(firstDebit.accountId) : undefined,
         };

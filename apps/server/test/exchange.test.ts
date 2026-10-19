@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
 import ExcelJS from 'exceljs';
-import { BACKUP_FORMAT_VERSION, formatTextImportLine, writeTransferXml, type TransferData } from '@shmi/core';
+import { BACKUP_FORMAT_VERSION, formatTextImportLine, parseTransferXml, writeTransferXml, type TransferData } from '@shmi/core';
 import { createTestCompany, type TestCompany } from './helpers.ts';
 import { encodeBackup } from '../src/services/exchange/backup.ts';
 import { encodeLogicalDump, logicalDump } from '../src/db/logicalDump.ts';
@@ -235,6 +235,33 @@ describe('TransferData XML (04a 3)', () => {
     expect(r.body.accounts).toBe(0);
   });
 
+  it('imports a protocol without VAT (call-off stock, 04a 3.7 step 8) and exports it back', async () => {
+    const data: TransferData = {
+      accountings: [{
+        accountingDate: '2026-06-10', vies: 5, vatTerm: 1, term: 'Изпращане към склад', document: { documentType: 1, number: '0000000610', date: '2026-06-10' },
+        company: { name: 'Склад ЕС ГмбХ', vatNumber: 'DE123456789', bankAccounts: [], companyAccounts: [] },
+        details: [{ accountNumber: '602', amount: '50.00', direction: 'Debit', vatTerm: 1 }, { accountNumber: '401', amount: '50.00', direction: 'Credit', vatTerm: 1 }],
+        ica: { icaType: 6, vatAmount: '0.00', icaType163a: 41, term: 'Складове на изискване', document: { documentType: 13, number: '', date: '2026-06-10' } },
+      }],
+    };
+    const r = await t2.call('POST', '/exchange/xml/import', { fileName: 'ica.xml', text: writeTransferXml(data) });
+    expect(r.status, r.text).toBe(200);
+    const d = await t.driver.company(t2.database);
+    const rows = await queryRows<{ ica_type: number; dr: string; code: string | null; number: string }>(d, sql`
+      SELECT p.ica_type, (SELECT sum(x.amount)::numeric(19,2)::text FROM accounting_details x WHERE x.accounting_id = p.id) AS dr,
+        (SELECT e.vat_diary_code FROM accounting_extended_details e WHERE e.accounting_id = p.id LIMIT 1) AS code, doc.number
+      FROM accountings a JOIN accountings p ON p.id = a.ica_accounting_id LEFT JOIN documents doc ON doc.id = p.document_id
+      WHERE a.accounting_date = '2026-06-10'`);
+    expect(rows.map((x) => [x.ica_type, x.dr, x.code])).toEqual([[6, '0.00', '41']]);
+    expect(rows[0]!.number).not.toBe('');
+    const exp = await raw(t2, 'POST', '/exchange/xml/export', { from: '2026-06-10', to: '2026-06-10' });
+    expect(exp.status).toBe(200);
+    const back = parseTransferXml(new TextDecoder().decode(exp.bytes));
+    expect(back.accountings!.map((a) => [a.details.map((x) => [x.accountNumber, x.amount, x.direction]), a.ica?.icaType, a.ica?.vatAmount, a.ica?.icaType163a])).toEqual([
+      [[['602', '50.00', 'Debit'], ['401', '50.00', 'Credit']], 6, '0.00', 41],
+    ]);
+  });
+
   it('reports an empty export', async () => {
     const r = await t.call('POST', '/exchange/xml/export', { from: '2026-12-30', to: '2026-12-31' });
     expect(r.status).toBe(422);
@@ -263,6 +290,24 @@ describe('Excel import (04a 5)', () => {
     expect(tb['501']!.dt).toBe('30.00');
     const saved = (await call('GET', '/exchange/excel/entities')).body.find((e: { entity: string }) => e.entity === 'operations');
     expect(saved.mapping.columns.Accounts).toBe('A');
+  });
+
+  it('protocols without VAT are imported: bread (type 8, code 07) and call-off stock (type 6) (04a 5.3)', async () => {
+    const content = await xlsx([
+      ['h'],
+      ['602-401', '80', '23.07.2026', 'Хляб ЕООД', '161616161', '', '', '0000000911', 'Ф-ра', '23.07.2026', 'Хляб', '', '', '3-без ДК', '', '', '8-ВОП хляб', '7-Хляб'],
+      ['602-401', '60', '23.07.2026', 'Хляб ЕООД', '161616161', '', '', '0000000912', 'Ф-ра', '23.07.2026', 'Склад', '', '', '3-без ДК', '', '', '6-Режим складиране', ''],
+    ]);
+    const mapping = { ...opsMapping, hasIcaColumns: true, columns: { ...opsMapping.columns, OperationType: 'Q', OperationGoodType: 'R' } };
+    const r = await call('POST', '/exchange/excel/import', { fileName: 'ica.xlsx', contentBase64: content, entity: 'operations', mapping });
+    expect(r.status, r.text).toBe(200);
+    const rows = await queryRows<{ doc: string; ica_type: number; dr: string; code: string | null; term: string | null }>(await t.driver.company(t.companyDb), sql`
+      SELECT md.number AS doc, p.ica_type, (SELECT sum(x.amount)::numeric(19,2)::text FROM accounting_details x WHERE x.accounting_id = p.id) AS dr,
+        (SELECT e.vat_diary_code FROM accounting_extended_details e WHERE e.accounting_id = p.id LIMIT 1) AS code, tm.description AS term
+      FROM accountings a JOIN documents md ON md.id = a.document_id JOIN accountings p ON p.id = a.ica_accounting_id LEFT JOIN terms tm ON tm.id = p.term_id
+      WHERE md.number IN ('0000000911', '0000000912') ORDER BY md.number`);
+    expect(rows.map((x) => [x.doc, x.ica_type, x.dr, x.code])).toEqual([['0000000911', 8, '0.00', '07'], ['0000000912', 6, '0.00', '00']]);
+    expect(rows[0]!.term).toBe('Самоначисляване на ДДС при доставка на хляб');
   });
 
   it('one bad row: nothing is saved; mapping errors block', async () => {
