@@ -84,8 +84,13 @@ export async function applyChartTemplate(db: DbOrTx, type: ChartTemplateType, is
     pending = pending.filter((a) => !idByNumber.has(a.number));
   }
   await rebuildAccountsTree(db);
-  await setConfig(db, 'ChartOfAccountsType', type);
-  for (const [key, value] of Object.entries(chartTemplateSettings(type))) await setConfig(db, key, value);
+  // The chart type follows the first template only: adding a few accounts of
+  // another template to an existing chart keeps the company's type and settings.
+  const wasEmpty = !existing.some((e) => e.number !== '0');
+  if (wasEmpty || !(await chartTemplateType(db))) {
+    await setConfig(db, 'ChartOfAccountsType', type);
+    for (const [key, value] of Object.entries(chartTemplateSettings(type))) await setConfig(db, key, value);
+  }
   return { added };
 }
 

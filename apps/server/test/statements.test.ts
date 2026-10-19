@@ -308,6 +308,13 @@ describe('statement formula editor (9.9)', () => {
     expect(cell.get('b108')!.ep).toBe('0.00');
     const { cell: computed } = await run('from=2026-01-01&to=2026-12-31&statements=balance');
     expect(computed.get('b50')!.ep).toBe('12000.00');
+    // ОСК/ОПП have no entered previous values: their "_2" checks are skipped, the balance ones stay.
+    const v = await t.call('GET', '/statements/verify?from=2026-01-01&to=2026-12-31&usePrev=1');
+    const ids = v.body.checks.map((c: { id: string }) => c.id);
+    expect(ids).toContain('balance_2');
+    expect(ids).not.toContain('equity_2');
+    expect(ids).not.toContain('cash_2');
+    expect((await t.call('GET', '/statements/verify?from=2026-01-01&to=2026-12-31')).body.checks.map((c: { id: string }) => c.id)).toContain('equity_2');
   });
 
   it('needs the editor permission', async () => {

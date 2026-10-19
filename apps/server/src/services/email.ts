@@ -43,9 +43,16 @@ function secretKey(): Buffer {
   const file = process.env.SHMI_SECRET_FILE ?? path.join(process.env.DATA_DIR ?? path.resolve(import.meta.dirname, '../../.data'), 'secret.key');
   if (!existsSync(file)) {
     mkdirSync(path.dirname(file), { recursive: true });
-    writeFileSync(file, randomBytes(32).toString('base64'), { mode: 0o600, flag: 'wx' });
+    try {
+      writeFileSync(file, randomBytes(32).toString('base64'), { mode: 0o600, flag: 'wx' });
+    } catch (e) {
+      // Another process created it first: use that one.
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+    }
   }
-  return (cachedKey = Buffer.from(readFileSync(file, 'utf8').trim(), 'base64'));
+  const key = Buffer.from(readFileSync(file, 'utf8').trim(), 'base64');
+  if (key.length !== 32) throw new ApiError(500, `Ключът за пароли (${file}) е повреден. Изтрийте файла и въведете паролата за SMTP отново.`);
+  return (cachedKey = key);
 }
 
 export function encryptSecret(plain: string): string {

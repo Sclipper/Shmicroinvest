@@ -56,3 +56,4 @@ The e2e suite includes a smoke test that opens every menu screen and runs every 
 - Some Bulgarian texts have no wording in the spec; those were written for this project.
 - Online services (ECB rates and VIES) are called directly. When a service is down the screens say so; they don't fall back to a guessed value.
 - The Fibank movements XML and the payment intermediaries' IBAN lists aren't included. The default per-bank import rules were rebuilt from the spec.
+- Bank-statement import binds payments only to open documents of the active year. Unpaid invoices of the previous year are offered once its balances are carried into the new year as openings per document.

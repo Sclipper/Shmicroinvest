@@ -93,7 +93,7 @@ export const shellExtraRoutes = new Hono<AppEnv>()
     c.json(await sendTestEmail(c.var.db, c.var.session.companyDb ?? '', c.req.valid('json').to)))
 
   /** "Изпращане по e-mail" from the report frame: the report as an .xlsx attachment. */
-  .post('/email/report', requireAnyPermission('UI_Reporting', 'UI_Operations'), zValidator('json', z.object({
+  .post('/email/report', zValidator('json', z.object({
     to: z.string().max(2000),
     cc: z.string().max(2000).optional(),
     subject: z.string().max(255),
@@ -103,9 +103,10 @@ export const shellExtraRoutes = new Hono<AppEnv>()
     attachment: z.object({ fileName: z.string().min(1).max(255), contentBase64: z.string().max(15_000_000) }),
   })), async (c) => {
     const b = c.req.valid('json');
-    // The report's own right when it is known; the rest need a report or operations right (route guard).
+    // The report's own right when it is known; the rest need a report or operations right.
     const key = b.entityType ? REPORT_PERMISSIONS[b.entityType] : undefined;
-    if (key && !(await c.var.can(key))) throw new ApiError(403, 'Нямате права за тази операция.');
+    const allowed = key ? await c.var.can(key) : (await c.var.can('UI_Reporting')) || (await c.var.can('UI_Operations'));
+    if (!allowed) throw new ApiError(403, 'Нямате права за тази операция.');
     if (parseEmailList(b.to).length + parseEmailList(b.cc ?? '').length > MAX_RECIPIENTS) throw badRequest(`Може да изпратите до ${MAX_RECIPIENTS} получатели.`);
     const rateKey = `${c.var.session.companyDb}:${c.var.user.id}`;
     const now = Date.now();

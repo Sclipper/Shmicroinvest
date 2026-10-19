@@ -362,7 +362,7 @@ export async function runAbbreviatedStatements(db: DbOrTx, o: StatementRunOption
 export async function verifyStatements(db: DbOrTx, o: StatementRunOptions & { balanceOnly?: boolean }) {
   const { calc } = await statementCalculator(db, o);
   const unit = statementUnit(Number(o.endDate.slice(0, 4)), Boolean(o.thousands));
-  const checks = STATEMENT_CHECKS.filter((c) => !o.balanceOnly || c.balanceOnly).map((c) => {
+  const checks = STATEMENT_CHECKS.filter((c) => (!o.balanceOnly || c.balanceOnly) && !(o.usePreviousPeriodValues && c.computedPreviousOnly)).map((c) => {
     let last: Dec = dec(0);
     let ok = false;
     for (const f of c.formulas) {

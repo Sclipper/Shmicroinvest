@@ -176,6 +176,28 @@ describe('chart-of-accounts templates (01a 7, 03a 1.3-1.4)', { timeout: 120_000 
     }
   });
 
+  it('adding accounts of another template keeps the chart type; a copied budget chart turns on Параграф', async () => {
+    const c = await createTestCompany({ companyName: 'Смесен Тест' });
+    try {
+      const add = await c.call('POST', '/accounts/template', { type: 'budget', numbers: ['4511/1'] });
+      expect(add.status, add.text).toBe(200);
+      expect(add.body.added).toBeGreaterThan(0);
+      let s = (await c.call('GET', '/session')).body;
+      expect([s.chartOfAccountsType, s.settings.IsParagraphEnabled]).toEqual(['commercial', 'False']);
+    } finally {
+      await c.close();
+    }
+    const b = await createTestCompany({ chartTemplate: 'budget', companyName: 'Община Източник' });
+    try {
+      const r = await b.call('POST', '/companies', { companyName: 'Община Копие', adminName: 'Админ', adminPassword: 'secret2', year: 2026, transfer: { chartOfAccounts: true } });
+      expect(r.status, r.text).toBe(201);
+      const s = (await b.call('GET', '/session')).body;
+      expect([s.company.name, s.chartOfAccountsType, s.settings.IsParagraphEnabled]).toEqual(['Община Копие', 'budget', 'True']);
+    } finally {
+      await b.close();
+    }
+  });
+
   it('"Избор на сметкоплан" adds selected budget accounts with their ancestors to an empty chart', async () => {
     const e = await createTestCompany({ companyName: 'Празна Тест' });
     try {

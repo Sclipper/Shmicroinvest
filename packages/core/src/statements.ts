@@ -216,6 +216,11 @@ export interface StatementCheck {
   severity: 'critical' | 'warning';
   /** true = part of the "balance sheet only" sub-type. */
   balanceOnly?: boolean;
+  /**
+   * true = compares computed previous-year cells of ОПП/ОСК, which have no
+   * manually entered values: skipped when the previous period is entered by hand.
+   */
+  computedPreviousOnly?: boolean;
 }
 
 const SDA_PAIRS: [string, number][] = [['b2', 309], ['b3', 310], ['b4', 311], ['b5', 312], ['b6', 313], ['b7', 314], ['b8', 315], ['b9', 316], ['b10', 317], ['b11', 318], ['b12', 319], ['b13', 320]];
@@ -249,7 +254,7 @@ export const STATEMENT_CHECKS: readonly StatementCheck[] = [
   ...PREVIOUS_YEAR_OF.map((id): StatementCheck => {
     const c = CURRENT_CHECKS.find((x) => x.id === id)!;
     return {
-      id: `${id}_2`, formulas: c.formulas.map((f) => f.replace(/CP\b/g, 'EP')), severity: c.severity,
+      id: `${id}_2`, formulas: c.formulas.map((f) => f.replace(/CP\b/g, 'EP')), severity: c.severity, computedPreviousOnly: true,
       message: c.message.replace('. Разлика:', ' (предходна година). Разлика:'),
     };
   }),

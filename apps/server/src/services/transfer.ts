@@ -1,7 +1,9 @@
 import { sql, type SQL } from 'drizzle-orm';
 import type { DbOrTx } from '../db/provider.ts';
 import { queryRows } from '../db/provider.ts';
+import { CHART_TEMPLATE_TYPES, chartTemplateSettings, type ChartTemplateType } from '@shmi/core';
 import { fixIdentity } from './companySetup.ts';
+import { setConfig } from './config.ts';
 
 /**
  * Data carried over into a new company (TransferEntitiesViewModel /
@@ -85,6 +87,9 @@ export async function transferEntities(src: DbOrTx, dst: DbOrTx, opts: TransferO
     if (type?.value) {
       await dst.execute(sql`DELETE FROM configuration WHERE key = 'ChartOfAccountsType' AND user_id IS NULL`);
       await dst.execute(sql`INSERT INTO configuration (key, value, user_id) VALUES ('ChartOfAccountsType', ${type.value}, NULL)`);
+      if ((CHART_TEMPLATE_TYPES as readonly string[]).includes(type.value)) {
+        for (const [key, value] of Object.entries(chartTemplateSettings(type.value as ChartTemplateType))) await setConfig(dst, key, value);
+      }
     }
   }
 
