@@ -14,6 +14,7 @@ import {
   newRow, periodEnd, PERIODS, postForFile, rowFromDto, saveBlob, type DocRow, type PaymentDocumentDto, type PeriodKind, type Suggestions,
 } from './paymentDocuments/model.ts';
 import { PaymentDocumentPrint, PrintPortal, usePrint } from './paymentDocuments/PrintForms.tsx';
+import { useShortcuts } from '../screens/entry/shortcuts.ts';
 
 interface Filter {
   period: PeriodKind;
@@ -233,6 +234,10 @@ export function PaymentDocuments({ tab, type }: ScreenProps & { type: number }) 
   // Ctrl+F2 inside the screen adds a document (the shell binds it to the journal otherwise).
   const addRef = useRef(add);
   addRef.current = add;
+  // ExportPaymentsDocument (F6, 06 2.6) with the user's override: "Експорт към ОББ" of the checked documents.
+  const shortcuts = useShortcuts();
+  const exportRef = useRef({ shortcuts, exportUbb, can: checked.size > 0 });
+  exportRef.current = { shortcuts, exportUbb, can: checked.size > 0 };
   useEffect(() => {
     if (ws.active !== tab.key) return;
     const onKey = (e: KeyboardEvent) => {
@@ -240,6 +245,12 @@ export function PaymentDocuments({ tab, type }: ScreenProps & { type: number }) 
         e.preventDefault();
         e.stopImmediatePropagation();
         addRef.current();
+        return;
+      }
+      if (exportRef.current.shortcuts.match(e, ['ExportPaymentsDocument'])) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (exportRef.current.can) void exportRef.current.exportUbb();
       }
     };
     window.addEventListener('keydown', onKey, true);
