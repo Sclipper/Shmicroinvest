@@ -146,4 +146,30 @@ describe('api', () => {
     expect(new Set(numbers).size).toBe(8);
     expect(numbers.map(Number).sort((a, b) => a - b)).toEqual(Array.from({ length: 8 }, (_, i) => start + 3 + i));
   });
+
+  it('rejects saving an entry that changed since it was loaded (01b 9 optimistic concurrency)', async () => {
+    const body = (amount: string, term: string) => ({
+      accountingDate: '2026-04-02', documentTypeId: 1, documentNumber: 'V-1', term,
+      debits: [{ accountId: acc('501'), amount }], credits: [{ accountId: acc('101'), amount }],
+    });
+    const created = await call('POST', '/entries', body('10', 'Версия'));
+    expect(created.status, created.text).toBe(201);
+    const id = created.body.id as number;
+    const first = (await call('GET', `/entries/${id}`)).body;
+    expect(first.version).toMatch(/^\d+$/);
+    expect(first.version).toBe(created.body.version);
+    // User A and user B both opened version 1; A saves first.
+    const a = await call('PUT', `/entries/${id}`, { ...body('20', 'Промяна А'), version: first.version });
+    expect(a.status, a.text).toBe(200);
+    expect(a.body.version).not.toBe(first.version);
+    const b = await call('PUT', `/entries/${id}`, { ...body('30', 'Промяна Б'), version: first.version });
+    expect(b.status).toBe(409);
+    expect(b.body.code).toBe('conflict');
+    expect(b.body.error).toBe('Контирането е променено от друг потребител след зареждането му. Заредете го отново, за да видите промените.');
+    const now = (await call('GET', `/entries/${id}`)).body;
+    expect([now.term, now.debits[0].amount, now.version]).toEqual(['Промяна А', '20.00', a.body.version]);
+    // Reloaded, B saves; callers without a version are not checked.
+    expect((await call('PUT', `/entries/${id}`, { ...body('30', 'Промяна Б'), version: now.version })).status).toBe(200);
+    expect((await call('PUT', `/entries/${id}`, body('40', 'Без версия'))).status).toBe(200);
+  });
 });

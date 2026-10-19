@@ -48,6 +48,8 @@ const entryBody = z.object({
   source: z.string().max(30).optional(),
   icaType: z.number().int().optional(),
   deliveryDescription: z.string().nullable().optional(),
+  /** Version from GET /entries/:id (optimistic concurrency, 01b 9); optional. */
+  version: z.string().max(40).nullable().optional(),
   debits: z.array(lineBody).min(1),
   credits: z.array(lineBody).min(1),
   force: z.boolean().optional(),

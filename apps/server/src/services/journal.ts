@@ -45,6 +45,8 @@ export interface EntryInput {
   source?: string;
   icaType?: number;
   deliveryDescription?: string | null;
+  /** Optimistic concurrency (01b 9): the `version` loadEntry returned; a different stored version is a 409 conflict. */
+  version?: string | null;
   debits: LineInput[];
   credits: LineInput[];
 }
@@ -118,7 +120,18 @@ function toEntryLine(l: LineInput, headerCompanyId: number | null | undefined, i
 export interface SaveResult {
   id: number;
   number: string;
+  /** Version of the saved entry, for the next optimistic save. */
+  version: string;
   warnings: ValidationMessage[];
+}
+
+/** Row version of an entry: updated_at in microseconds (timestamps keep microseconds, JS dates only milliseconds). */
+const versionSql = sql<string>`(extract(epoch from ${s.accountings.updatedAt}) * 1000000)::bigint::text`;
+
+export async function entryVersion(db: DbOrTx, id: number, lock = false) {
+  const q = db.select({ v: versionSql }).from(s.accountings).where(eq(s.accountings.id, id));
+  const [r] = lock ? await q.for('update') : await q;
+  return r?.v ?? null;
 }
 
 /** Create or replace a journal entry (AccountingViewModel save path, spec 02a section 4). */
@@ -128,6 +141,10 @@ export async function saveEntry(db: DbOrTx, input: EntryInput, ctx: SaveContext,
   if (existingId) {
     [existing] = await db.select().from(s.accountings).where(eq(s.accountings.id, existingId));
     if (!existing) throw notFound('Контирането');
+    // Locks the row to the end of the save, so two saves of one version cannot both pass.
+    if (input.version != null && (await entryVersion(db, existingId, true)) !== input.version) {
+      throw new ApiError(409, JOURNAL_MESSAGES.strAccountingChangeConflict, undefined, 'conflict');
+    }
     if (existing.financialYearId !== fy.id) throw badRequest(JOURNAL_MESSAGES.strWrongAccountingDate);
     if (fy.isLocked) throw badRequest(JOURNAL_MESSAGES.strVoidAccountingLockedYearWarning);
     const oldMonth = Number(existing.accountingDate.slice(5, 7));
@@ -261,7 +278,7 @@ export async function saveEntry(db: DbOrTx, input: EntryInput, ctx: SaveContext,
     })));
   }
   await logActivity(db, ctx.userId, existing ? 'edit' : 'add', 'accounting', id, `Контиране ${number}`);
-  return { id, number, warnings };
+  return { id, number, version: (await entryVersion(db, id))!, warnings };
 }
 
 async function deleteOrphanDocument(db: DbOrTx, documentId: number) {
@@ -318,6 +335,7 @@ export async function loadEntry(db: DbOrTx, id: number) {
   return {
     id: e.id,
     number: e.number,
+    version: (await entryVersion(db, id))!,
     accountingDate: e.accountingDate,
     documentDate: doc?.date ?? e.date,
     documentTypeId: doc?.documentTypeId ?? null,
@@ -360,6 +378,7 @@ export async function reversalDraft(db: DbOrTx, id: number, workingDate: string)
   return {
     ...e,
     id: undefined,
+    version: undefined,
     number: '',
     accountingDate: workingDate,
     term: JOURNAL_MESSAGES.strReversalOperation,

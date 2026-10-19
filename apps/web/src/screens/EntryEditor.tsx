@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Copy, FileDown, FileUp, Package, Plus, Save, Scale, SplitSquareHorizontal, Trash2, Undo2, X } from 'lucide-react';
 import { dec, formatMoney, isCompanyCategory, JOURNAL_EXTRA_MESSAGES as XM, parseAmount } from '@shmi/core';
-import { api, qs } from '../api.ts';
+import { ApiError, api, qs } from '../api.ts';
 import { useDialogs } from '../components/dialogs.tsx';
 import { DictionaryInput } from '../components/DictionaryInput.tsx';
 import { AccountPicker, PartnerPicker } from '../components/pickers.tsx';
@@ -35,6 +35,8 @@ export interface Line {
 
 export interface Draft {
   id?: number;
+  /** Row version from the server (optimistic concurrency, 01b 9). */
+  version?: string;
   number: string;
   accountingDate: string;
   documentDate: string;
@@ -146,6 +148,7 @@ export function EntryEditor({ tab, mode }: ScreenProps & { mode?: EditorMode }) 
   const balance = () => !diff.isZero() && patch(balanced(d));
 
   const payload = (x: Draft) => ({
+    version: x.id ? (x.version ?? null) : null,
     number: x.number || null,
     accountingDate: x.accountingDate,
     documentDate: x.documentDate || null,
@@ -188,7 +191,7 @@ export function EntryEditor({ tab, mode }: ScreenProps & { mode?: EditorMode }) 
       const body = payload(source);
       const extras = await pay.beforeSave(body);
       if (!extras) return null;
-      type Saved = { id: number; number: string; warnings: { key: string; text: string; severity: 'warning' }[] };
+      type Saved = { id: number; number: string; version: string; warnings: { key: string; text: string; severity: 'warning' }[] };
       // VAT questions (02b 12) come back as a 409 confirm and are resent with `force`.
       const r = await vat.confirmSave((force) => source.id
         ? api.put<Saved>(`/entries/${source.id}`, { ...body, ...extras, force })
@@ -207,7 +210,7 @@ export function EntryEditor({ tab, mode }: ScreenProps & { mode?: EditorMode }) 
         ws.update(tab.key, { title: 'Контиране', params: {} });
         void nextNumber.refetch();
       } else if (next === 'stay' || next === 'expenses') {
-        setD({ ...source, id: r.id, number: r.number });
+        setD({ ...source, id: r.id, number: r.number, version: r.version });
         ws.update(tab.key, { title: `Контиране ${r.number}`, params: { id: r.id } });
         if (next === 'expenses') setDlg('expenses');
       } else {
@@ -215,10 +218,27 @@ export function EntryEditor({ tab, mode }: ScreenProps & { mode?: EditorMode }) 
       }
       return r;
     } catch (e) {
+      if (e instanceof ApiError && e.code === 'conflict' && source.id) {
+        // Changed by someone else since it was loaded: offer to reload it (the local edits are lost).
+        if (await dialogs.confirm(`${e.message}\nЖелаете ли да заредите контирането отново?`, 'Контирането е променено')) await reload(source.id);
+        return null;
+      }
       await dialogs.error(e, 'Операцията не може да бъде записана');
       return null;
     } finally {
       setSaving(false);
+    }
+  };
+
+  /** Loads the stored entry again, dropping the local edits. */
+  const reload = async (entryId: number) => {
+    try {
+      const fresh = await api.get<Record<string, unknown>>(`/entries/${entryId}`);
+      qc.setQueryData(['entry', entryId], fresh);
+      setD(fromServer(fresh));
+      setDirty(false);
+    } catch (e) {
+      await dialogs.error(e);
     }
   };
 
@@ -504,7 +524,7 @@ export function EntryEditor({ tab, mode }: ScreenProps & { mode?: EditorMode }) 
           onPick={(server) => {
             setDlg(null);
             const t = fromServer(server);
-            patch({ ...t, id: d.id, number: d.number, accountingDate: d.accountingDate, isInitialBalance: d.isInitialBalance });
+            patch({ ...t, id: d.id, version: d.version, number: d.number, accountingDate: d.accountingDate, isInitialBalance: d.isInitialBalance });
           }}
         />
       )}
@@ -619,6 +639,7 @@ export function fromServer(e: Record<string, unknown>): Draft {
   const s = (k: string) => ((e[k] as string | null) ?? '');
   return {
     id: e.id as number | undefined,
+    version: (e.version as string | undefined) ?? undefined,
     number: s('number'),
     accountingDate: s('accountingDate'),
     documentDate: s('documentDate'),

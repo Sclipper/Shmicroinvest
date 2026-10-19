@@ -84,7 +84,7 @@ export function entryFilterConditions(q: EntryFilter, year: ActiveYear): SQL[] {
 /** "Ново контиране от избраното": same lines/partner/document fields, new number, working date. */
 export async function copyDraft(db: DbOrTx, id: number, workingDate: string) {
   const e = await loadEntry(db, id);
-  return { ...e, id: undefined, number: '', accountingDate: workingDate, viesMonth: `${workingDate.slice(0, 7)}-01`, source: 'manual', isInitialBalance: false, isInitialCorrespondence: false };
+  return { ...e, id: undefined, version: undefined, number: '', accountingDate: workingDate, viesMonth: `${workingDate.slice(0, 7)}-01`, source: 'manual', isInitialBalance: false, isInitialCorrespondence: false };
 }
 
 /** GetPrev/NextAccounting: neighbour in the list order (date, number, id) within the active year. */
@@ -419,7 +419,7 @@ export async function reorder(db: DbOrTx, type: keyof typeof REORDER_TYPES, by: 
     const rows = await db.select({ id: s.accountings.id, number: s.accountings.number, date: s.accountings.accountingDate }).from(s.accountings)
       .where(and(eq(s.accountings.financialYearId, year.id), eq(s.accountings.isInitialBalance, false), ne(s.accountings.number, '')));
     const r = reorderNumbers(rows, by);
-    for (const row of rows) await db.update(s.accountings).set({ number: formatSequenceNumber(seq, r.numbers.get(row.id)!) }).where(eq(s.accountings.id, row.id));
+    for (const row of rows) await db.update(s.accountings).set({ number: formatSequenceNumber(seq, r.numbers.get(row.id)!), updatedAt: new Date() }).where(eq(s.accountings.id, row.id));
     count = r.count;
   } else {
     const docs = (await exec(db, sql`SELECT DISTINCT d.id, d.number, d.date FROM documents d JOIN accountings a ON a.document_id = d.id
