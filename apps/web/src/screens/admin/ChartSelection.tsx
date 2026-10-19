@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, ListPlus } from 'lucide-react';
-import { COMMERCIAL_CHART, parseChartTemplate, type TemplateAccount } from '@shmi/core';
+import { COMMERCIAL_CHART, SHELL_MESSAGES, parseChartTemplate, type TemplateAccount } from '@shmi/core';
 import { api } from '../../api.ts';
 import { useDialogs } from '../../components/dialogs.tsx';
 import { Button, CommandBar, Empty, Panel, Spinner, cx } from '../../components/ui.tsx';
 import { useAccounts, useCan, useInvalidate, useSession } from '../../session.tsx';
+import { useWorkspace, type ScreenProps } from '../../shell/workspace.tsx';
 
 type TemplateType = 'commercial' | 'nonProfit' | 'budget';
 const TEMPLATES: { id: TemplateType; label: string; available: boolean }[] = [
@@ -14,8 +15,9 @@ const TEMPLATES: { id: TemplateType; label: string; available: boolean }[] = [
 ];
 
 /** Избор на сметкоплан (Alt+K): add accounts from a chart template to the individual chart. */
-export function ChartSelection() {
+export function ChartSelection({ tab }: ScreenProps) {
   const s = useSession();
+  const ws = useWorkspace();
   const can = useCan();
   const dialogs = useDialogs();
   const invalidate = useInvalidate();
@@ -34,9 +36,21 @@ export function ChartSelection() {
   const [unchecked, setUnchecked] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const selected = missing.filter((a) => !unchecked.has(a.number));
+  /**
+   * The user worked with the selection (or came here because no chart type is
+   * chosen): leaving with selected, not transferred accounts asks
+   * strSelectedAccountsExistWarning (03a 1.4).
+   */
+  const [touched, setTouched] = useState(!!tab.params?.notDefined);
+  const pending = touched && editable && selected.length > 0;
+  useEffect(() => {
+    ws.update(tab.key, { dirty: pending, dirtyMessage: SHELL_MESSAGES.strSelectedAccountsExistWarning });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending, tab.key]);
 
   const descendants = (n: string): string[] => (kids.get(n) ?? []).flatMap((k) => [k.number, ...descendants(k.number)]);
   const toggle = (a: TemplateAccount, on: boolean) => {
+    setTouched(true);
     const all = [a.number, ...descendants(a.number)].filter((n) => !existing.has(n));
     setUnchecked((u) => {
       const n = new Set(u);
@@ -63,6 +77,7 @@ export function ChartSelection() {
       const r = await api.post<{ added: number }>('/accounts/template', { type, ...(all ? {} : { numbers: selected.map((a) => a.number) }) });
       await invalidate('accounts', 'session');
       setUnchecked(new Set());
+      setTouched(false);
       await dialogs.alert(r.added === 1 ? "Добавена е 1 сметка." : `Добавени са ${r.added} сметки.`, "Избор на сметкоплан");
     } catch (e) {
       await dialogs.error(e);
@@ -77,8 +92,8 @@ export function ChartSelection() {
         <Button variant="primary" icon={<ListPlus className="size-3.5" />} disabled={!editable || !selected.length || type !== 'commercial'} onClick={apply}>
           Добавяне на избраните
         </Button>
-        <Button variant="ghost" onClick={() => setUnchecked(new Set())}>Маркирай всички</Button>
-        <Button variant="ghost" onClick={() => setUnchecked(new Set(missing.map((a) => a.number)))}>Размаркирай всички</Button>
+        <Button variant="ghost" onClick={() => { setTouched(true); setUnchecked(new Set()); }}>Маркирай всички</Button>
+        <Button variant="ghost" onClick={() => { setTouched(true); setUnchecked(new Set(missing.map((a) => a.number))); }}>Размаркирай всички</Button>
         <span className="mx-1 h-5 w-px bg-slate-300" />
         <Button variant="ghost" onClick={() => setExpanded(new Set(template.filter((a) => kids.has(a.number)).map((a) => a.number)))}>Разгъни всички</Button>
         <Button variant="ghost" onClick={() => setExpanded(new Set())}>Свий всички</Button>

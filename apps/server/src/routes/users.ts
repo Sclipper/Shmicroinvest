@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '../lib/validate.ts';
 import { z } from 'zod';
-import { and, asc, desc, eq, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, ne, sql } from 'drizzle-orm';
 import { resolvePermission } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import type { AppEnv } from '../context.ts';
@@ -207,19 +207,6 @@ export const userRoutes = new Hono<AppEnv>()
       await logActivity(tx, c.var.user.id, 'edit', 'userRolePermissions', roleId, `Права на група ${role?.name ?? roleId} (${Object.keys(body).length})`);
     });
     return c.json({ ok: true });
-  })
-
-  /** Audit log (Действия по потребители). */
-  .get('/activity', requirePermission('UI_Reporting_UsersActivitiesReport'), async (c) => {
-    const q = c.req.query();
-    const rows = await c.var.db.select({
-      id: s.dataActivityLog.id, userId: s.dataActivityLog.userId, user: s.users.name, activity: s.dataActivityLog.activity,
-      entityType: s.dataActivityLog.entityType, entityId: s.dataActivityLog.entityId, description: s.dataActivityLog.description,
-      createdAt: s.dataActivityLog.createdAt,
-    }).from(s.dataActivityLog).leftJoin(s.users, eq(s.users.id, s.dataActivityLog.userId))
-      .where(q.userId ? eq(s.dataActivityLog.userId, Number(q.userId)) : undefined)
-      .orderBy(desc(s.dataActivityLog.id)).limit(Number(q.limit ?? 1000));
-    return c.json(rows);
   });
 
 /** Other non-deleted administrators, with their rows locked to the end of the transaction (SELECT ... FOR UPDATE). */

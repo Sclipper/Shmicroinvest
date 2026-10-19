@@ -11,7 +11,8 @@ export type MenuItem =
       /** Screen id to open. */
       screen?: string;
       /** Shell command. */
-      command?: 'newCompany' | 'chooseCompany' | 'logout' | 'closeCurrent' | 'closeAllButCurrent' | 'closeAll' | 'about' | 'changeUser' | 'updateCheck';
+      command?: 'newCompany' | 'chooseCompany' | 'logout' | 'closeCurrent' | 'closeAllButCurrent' | 'closeAll' | 'about' | 'changeUser' | 'updateCheck'
+        | 'toggleQuickCommands' | 'toggleHelpPanel' | 'toggleMessagesPanel';
       children?: MenuItem[];
     };
 
@@ -212,6 +213,11 @@ export const MENU: TopMenu[] = [
       { label: 'Затваряне на текущия прозорец', permission: 'UI_Windows_CloseCurrent', gesture: 'Ctrl+F4', command: 'closeCurrent' },
       { label: 'Затваряне на всички без текущия', permission: 'UI_Windows_CloseAllButCurrent', command: 'closeAllButCurrent' },
       { label: 'Затваряне на всички прозорци', permission: 'UI_Windows_CloseAll', gesture: 'Shift+F4', command: 'closeAll' },
+      { sep: true },
+      // Left-column panels of the shell (06 2.1); the spec gives no menu place, the rebuild puts them here.
+      { label: 'Бързи команди', command: 'toggleQuickCommands' },
+      { label: 'Помощен панел', command: 'toggleHelpPanel' },
+      { label: 'Съобщения', command: 'toggleMessagesPanel' },
     ],
   },
   {
@@ -287,6 +293,24 @@ export function findMenuItem(label: string): { item: MenuEntry; permissions: str
   };
   for (const m of MENU) {
     const found = walk(m.items, [m.permission]);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** Menu item opening a screen, with its caption path (e.g. Справки › Оборотна ведомост). */
+export function findMenuItemByScreen(screen: string): { item: MenuEntry; path: string[] } | null {
+  const walk = (items: MenuItem[], path: string[]): { item: MenuEntry; path: string[] } | null => {
+    for (const i of items) {
+      if ('sep' in i) continue;
+      if (i.screen === screen) return { item: i, path: [...path, i.label] };
+      const found = i.children ? walk(i.children, [...path, i.label]) : null;
+      if (found) return found;
+    }
+    return null;
+  };
+  for (const m of MENU) {
+    const found = walk(m.items, [m.label]);
     if (found) return found;
   }
   return null;

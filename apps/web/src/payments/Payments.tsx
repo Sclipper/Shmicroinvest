@@ -8,10 +8,15 @@ import { useDialogs } from '../components/dialogs.tsx';
 import { Button, Checkbox, CommandBar, Dialog, Empty, Field, Spinner, TextInput, cx } from '../components/ui.tsx';
 import { useInvalidate, useSession } from '../session.tsx';
 import { useWorkspace, type ScreenProps } from '../shell/workspace.tsx';
+import { useQuickCommands } from '../shell/quickCommands.tsx';
+import { useShortcuts } from '../screens/entry/shortcuts.ts';
 import { NewPaymentDialog } from './PaymentsNewDialog.tsx';
 import { OpenItemsGrid, sum, toggleIn, toRows, type Allocation, type OpenItemRow, type PartnerOpenItems, type PaymentLink } from './PaymentsShared.tsx';
 
 interface PartnerRow { companyId: number; companyName: string; companyBulstat: string; balance: string; currencyBalance: string; liabilities: number; payments: number }
+
+/** Window shortcuts of F3 (06 2.6), with the user's overrides. */
+const PAYMENT_COMMANDS = ['Payment', 'SelectAllItems', 'PaymentsAndConnectedDocuments', 'Print'] as const;
 
 const TABS = [
   { id: 'all', label: 'Фирми' },
@@ -129,8 +134,44 @@ export function Payments({ tab: screenTab }: Partial<ScreenProps> = {}) {
     return { amount, currencyAmount: cur.toFixed(2), exchangeRate: chosenLiab[0]!.exchangeRate };
   }, [liab, chosenLiab, showCurrency]);
 
+  const shortcuts = useShortcuts();
+  const selectAll = () => setLiab(new Map(liabilities.map((l) => [l.accountingId, { amount: dec(l.openAbs).toFixed(2) }])));
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const cmd = shortcuts.match(e, PAYMENT_COMMANDS);
+    if (!cmd) return;
+    // Typing in a field keeps its keys, except the function-key commands.
+    const inField = !!(e.target as HTMLElement).closest('input,select,textarea');
+    if (inField && cmd !== 'Payment' && cmd !== 'PaymentsAndConnectedDocuments') return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (cmd === 'Payment') {
+      if (companyId) void startPayment();
+    } else if (cmd === 'SelectAllItems') selectAll();
+    else if (cmd === 'PaymentsAndConnectedDocuments') ws.open('paymentsReport');
+    else window.print();
+  };
+
+  useQuickCommands([
+    {
+      title: 'Разплащания',
+      items: [
+        { label: 'Разплащане', run: () => void startPayment(), disabled: !companyId, gesture: shortcuts.gesture('Payment') },
+        { label: 'Обвързване', run: () => void bind(), disabled: !companyId },
+        { label: 'Избор на всички', run: selectAll, disabled: !liabilities.length, gesture: shortcuts.gesture('SelectAllItems') },
+        { label: 'Изчистване', run: clear },
+      ],
+    },
+    {
+      title: 'Справки',
+      items: [
+        { label: 'Разплащания и обвързани документи', run: () => ws.open('paymentsReport'), gesture: shortcuts.gesture('PaymentsAndConnectedDocuments') },
+        { label: 'Задължения/вземания по партньори', run: () => ws.open('partnerDebts') },
+      ],
+    },
+  ]);
+
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col outline-none" tabIndex={-1} onKeyDown={onKeyDown} data-testid="payments-screen">
       <CommandBar
         right={
           partner && (
@@ -146,7 +187,7 @@ export function Payments({ tab: screenTab }: Partial<ScreenProps> = {}) {
           )
         }
       >
-        <Button variant="primary" icon={<HandCoins className="size-3.5" />} disabled={!companyId} onClick={startPayment}>
+        <Button variant="primary" icon={<HandCoins className="size-3.5" />} disabled={!companyId} onClick={startPayment} title={shortcuts.gesture('Payment')}>
           Разплащане
         </Button>
         <Button icon={<Link2 className="size-3.5" />} disabled={!companyId || bindMut.isPending} onClick={bind}>

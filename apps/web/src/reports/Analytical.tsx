@@ -83,6 +83,7 @@ export function Analytical() {
   return (
     <ReportFrame<Result>
       title={TITLE[a.type]}
+      logEntity="analyticalReport"
       subtitle={subtitle}
       report={report}
       // The card is meaningful even without movements (opening balance only).

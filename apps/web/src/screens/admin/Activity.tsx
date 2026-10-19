@@ -1,17 +1,21 @@
-import { useMemo, useState } from 'react';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { RefreshCw } from 'lucide-react';
+import { useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { ACTIVITY_DOCUMENT_COLUMNS, USER_ACTIVITIES, USER_ACTIVITY_REPORT_TYPES, type ActivityDocumentCounts } from '@shmi/core';
 import { api, qs } from '../../api.ts';
-import { Button, CommandBar, Empty, Field, Select, Spinner, TextInput } from '../../components/ui.tsx';
+import { Field, Select, TextInput } from '../../components/ui.tsx';
 import { useCan } from '../../session.tsx';
+import { PeriodFields, ReportFrame, periodText, useReport, useReportFilters, useYearPeriod, type Cell } from '../../reports/common.tsx';
 
-interface Row { id: number; userId: number | null; user: string | null; activity: string; entityType: string; entityId: number | null; description: string | null; createdAt: string }
+interface LogRow { id: number; userId: number | null; user: string | null; activity: string; entityType: string; entityId: number | null; description: string | null; createdAt: string }
+type DocRow = ActivityDocumentCounts & { userId: number | null; userName: string };
+type Result = { type: 'menus'; rows: LogRow[] } | { type: 'documents'; rows: DocRow[] };
 
-const ACTIVITY: Record<string, string> = { login: 'Вписване', logout: 'Изход', add: 'Добавяне', edit: 'Редакция', delete: 'Изтриване', print: 'Печат', export: 'Експорт' };
+const ACTIVITY: Record<string, string> = Object.fromEntries(USER_ACTIVITIES.map((a) => [a.code, a.name]));
 const ENTITY: Record<string, string> = {
   identification: 'Идентификация', partner: 'Партньори', user: 'Потребители', accounting: 'Контиране', myCompany: 'Моята фирма', account: 'Сметкоплан',
   turnoverReport: 'Оборотна ведомост', analyticalReport: 'Аналитичен регистър', chronologicalReport: 'Хронологичен регистър', document: 'Документ',
   financialYear: 'Счетоводна година', userRole: 'Потребителски групи', userRolePermissions: 'Права на потребителски групи',
+  icaReport: 'Протоколи по чл. 117 от ЗДДС', report: 'Справка', usersActivitiesReport: 'Действия по потребители', smtpConfiguration: 'Настройки за e-mail',
 };
 
 const p2 = (n: number) => String(n).padStart(2, '0');
@@ -20,73 +24,97 @@ const ts = (iso: string) => {
   return `${p2(d.getDate())}.${p2(d.getMonth() + 1)}.${d.getFullYear()} ${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
 };
 
-/** Действия по потребители (audit log). */
+/**
+ * Действия по потребители (01b 8, 05 7.7): "По менюта" = the activity log,
+ * "По документи" = processed documents per user. Period, user and activity
+ * are filtered on the server.
+ */
 export function Activity() {
   const can = useCan();
-  const [userId, setUserId] = useState('');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const [kind, setKind] = useState('');
-  const [q, setQ] = useState('');
+  const year = useYearPeriod();
+  const [f, setF] = useReportFilters('usersActivities', { ...year, type: 'menus' as 'menus' | 'documents', userId: '', activity: '', q: '' });
+  const report = useReport<typeof f, Result>('usersActivities', f, async (x) =>
+    x.type === 'documents'
+      ? { type: 'documents', rows: await api.get<DocRow[]>(`/activity/by-documents${qs({ from: x.from, to: x.to, userId: x.userId })}`) }
+      : { type: 'menus', rows: await api.get<LogRow[]>(`/activity${qs({ from: x.from, to: x.to, userId: x.userId, activity: x.activity, q: x.q, limit: 20000 })}`) },
+  );
   const users = useQuery({ queryKey: ['users'], queryFn: () => api.get<{ id: number; name: string }[]>('/users'), enabled: can('UI_Edit_Administration_Users') });
-  const list = useQuery({ queryKey: ['activity', userId], queryFn: () => api.get<Row[]>(`/activity${qs({ userId, limit: 5000 })}`), placeholderData: keepPreviousData });
-
-  const rows = useMemo(() => {
-    const f = q.trim().toLowerCase();
-    return (list.data ?? []).filter((r) => {
-      const day = new Date(r.createdAt).toLocaleDateString('sv-SE'); // yyyy-mm-dd in local time
-      if (from && day < from) return false;
-      if (to && day > to) return false;
-      if (kind && r.activity !== kind) return false;
-      if (f && !`${r.user ?? ''} ${r.description ?? ''} ${ENTITY[r.entityType] ?? r.entityType}`.toLowerCase().includes(f)) return false;
-      return true;
-    });
-  }, [list.data, from, to, kind, q]);
-  // Users seen in the log are offered even without access to the users list.
   const userOptions = useMemo(() => {
     const m = new Map<number, string>();
     for (const u of users.data ?? []) m.set(u.id, u.name);
-    for (const r of list.data ?? []) if (r.userId != null && r.user) m.set(r.userId, r.user);
+    const d = report.q.data;
+    if (d?.type === 'menus') for (const r of d.rows) if (r.userId != null && r.user) m.set(r.userId, r.user);
+    if (d?.type === 'documents') for (const r of d.rows) if (r.userId != null) m.set(r.userId, r.userName);
     return [...m].sort((a, b) => a[1].localeCompare(b[1], 'bg'));
-  }, [users.data, list.data]);
+  }, [users.data, report.q.data]);
+  const a = report.applied ?? f;
+  const typeName = USER_ACTIVITY_REPORT_TYPES.find((t) => t.id === a.type)!.name;
+
+  const csv = (d: Result): Cell[][] =>
+    d.type === 'documents'
+      ? [['Потребител', ...ACTIVITY_DOCUMENT_COLUMNS.map((c) => c.label)], ...d.rows.map((r) => [r.userName, ...ACTIVITY_DOCUMENT_COLUMNS.map((c) => String(r[c.key]))])]
+      : [['Дата и час', 'Потребител', 'Действие', 'Обект', 'Описание'], ...d.rows.map((r) => [ts(r.createdAt), r.user ?? '', ACTIVITY[r.activity] ?? r.activity, ENTITY[r.entityType] ?? r.entityType, r.description ?? ''])];
 
   return (
-    <div className="flex h-full flex-col">
-      <CommandBar right={<span className="text-[12px] text-slate-500">{rows.length} записа</span>}>
-        <Field label="Потребител" className="w-48">
-          <Select value={userId} onChange={(e) => setUserId(e.target.value)}>
-            <option value="">Всички</option>
-            {userOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-          </Select>
-        </Field>
-        <Field label="Действие" className="w-36">
-          <Select value={kind} onChange={(e) => setKind(e.target.value)}>
-            <option value="">Всички</option>
-            {Object.entries(ACTIVITY).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </Select>
-        </Field>
-        <Field label="От дата" className="w-36">
-          <TextInput type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-        </Field>
-        <Field label="До дата" className="w-36">
-          <TextInput type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-        </Field>
-        <Field label="Търсене" className="w-56">
-          <TextInput placeholder="Описание, обект" value={q} onChange={(e) => setQ(e.target.value)} />
-        </Field>
-        <Button className="self-end" icon={<RefreshCw className="size-3.5" />} onClick={() => list.refetch()}>
-          Обнови
-        </Button>
-      </CommandBar>
-      <div className="min-h-0 flex-1 overflow-auto">
-        {list.isLoading ? (
-          <Empty><Spinner /></Empty>
-        ) : list.error ? (
-          <Empty>{(list.error as Error).message}</Empty>
-        ) : !rows.length ? (
-          <Empty>Няма действия за избраните критерии.</Empty>
+    <ReportFrame<Result>
+      title={a.type === 'documents' ? 'Брой обработени документи' : 'Действия по потребители'}
+      logEntity="usersActivitiesReport"
+      subtitle={`${typeName}, ${periodText(a)}`}
+      report={report}
+      isEmpty={(d) => d.rows.length === 0}
+      status={(d) => `${d.rows.length} ${d.type === 'documents' ? 'потребители' : 'записа'}`}
+      csvName={`ДействияПотребители_${a.from}_${a.to}`}
+      csv={csv}
+      filters={
+        <>
+          <PeriodFields value={f} onChange={(p) => setF({ ...f, ...p })} />
+          <Field label="Тип справка" className="w-36">
+            <Select aria-label="Тип справка" value={f.type} onChange={(e) => setF({ ...f, type: e.target.value as 'menus' | 'documents' })}>
+              {USER_ACTIVITY_REPORT_TYPES.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </Select>
+          </Field>
+          <Field label="Потребител" className="w-48">
+            <Select aria-label="Потребител" value={f.userId} onChange={(e) => setF({ ...f, userId: e.target.value })}>
+              <option value="">Всички</option>
+              {userOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+            </Select>
+          </Field>
+          {f.type === 'menus' && (
+            <>
+              <Field label="Действие" className="w-44">
+                <Select aria-label="Действие" value={f.activity} onChange={(e) => setF({ ...f, activity: e.target.value })}>
+                  <option value="">Всички</option>
+                  {USER_ACTIVITIES.map((x) => <option key={x.code} value={x.code}>{x.name}</option>)}
+                </Select>
+              </Field>
+              <Field label="Търсене" className="w-48">
+                <TextInput placeholder="Описание, обект" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} />
+              </Field>
+            </>
+          )}
+        </>
+      }
+    >
+      {(d) =>
+        d.type === 'documents' ? (
+          <table className="grid-table" data-testid="activity-documents">
+            <thead>
+              <tr>
+                <th>Потребител</th>
+                {ACTIVITY_DOCUMENT_COLUMNS.map((c) => <th key={c.key} className="w-36 text-right whitespace-normal">{c.label}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {d.rows.map((r) => (
+                <tr key={r.userId ?? 0}>
+                  <td>{r.userName}</td>
+                  {ACTIVITY_DOCUMENT_COLUMNS.map((c) => <td key={c.key} className={c.key === 'total' ? 'num font-semibold' : 'num'}>{r[c.key]}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         ) : (
-          <table className="grid-table">
+          <table className="grid-table" data-testid="activity-log">
             <thead>
               <tr>
                 <th>Дата и час</th>
@@ -98,7 +126,7 @@ export function Activity() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {d.rows.map((r) => (
                 <tr key={r.id}>
                   <td className="w-40">{ts(r.createdAt)}</td>
                   <td>{r.user}</td>
@@ -110,8 +138,8 @@ export function Activity() {
               ))}
             </tbody>
           </table>
-        )}
-      </div>
-    </div>
+        )
+      }
+    </ReportFrame>
   );
 }

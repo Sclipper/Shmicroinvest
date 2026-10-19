@@ -164,6 +164,7 @@ export function Chronological() {
   return (
     <ReportFrame<JournalLine[]>
       title={TITLE[a.type]}
+      logEntity="chronologicalReport"
       subtitle={subtitle}
       report={report}
       isEmpty={(d) => d.length === 0}

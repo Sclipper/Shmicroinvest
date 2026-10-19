@@ -34,6 +34,7 @@ import { assetRoutes } from './routes/assets.ts';
 import { exchangeRoutes } from './routes/exchange.ts';
 import { bankRoutes } from './routes/bank.ts';
 import { companyOpsRoutes } from './routes/companyOps.ts';
+import { shellExtraRoutes } from './routes/shellExtras.ts';
 
 const WEB_DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../web/dist');
 
@@ -64,7 +65,8 @@ export function createApp(driver: DbDriver, opts: { serveWeb?: boolean } = {}) {
     .route('/', assetRoutes)
     .route('/', exchangeRoutes)
     .route('/', bankRoutes)
-    .route('/', companyOpsRoutes);
+    .route('/', companyOpsRoutes)
+    .route('/', shellExtraRoutes);
 
   const app = new Hono<AppEnv>();
   app.use('*', async (c, next) => {

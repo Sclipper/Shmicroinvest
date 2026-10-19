@@ -41,3 +41,6 @@ export * from './exchange/exportReports.ts';
 export * from './exchange/deltaConversion.ts';
 export * from './reportFilters.ts';
 export * from './entryFollowUps.ts';
+export * from './email.ts';
+export * from './userActivities.ts';
+export * from './notices.ts';

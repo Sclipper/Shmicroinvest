@@ -13,6 +13,8 @@ import { MENU, TOOLBAR, UNBINDABLE, findMenuItem, gestureOf, type MenuEntry, typ
 import { useWorkspace, type ScreenDef } from './workspace.tsx';
 import { chooseActiveYear } from '../screens/admin/yearChoice.ts';
 import { CashLimitNotice } from './CashLimitNotice.tsx';
+import { QuickCommandsProvider, TabKeyContext } from './quickCommands.tsx';
+import { SidePanels, useSidePanelState } from './SidePanels.tsx';
 
 type Cmd = NonNullable<Extract<MenuItem, { label: string }>['command']>;
 
@@ -21,6 +23,7 @@ export function Shell({ screens, onCommand }: { screens: Record<string, ScreenDe
   const can = useCan();
   const dialogs = useDialogs();
   const [changeUser, setChangeUser] = useState(false);
+  const panels = useSidePanelState();
 
   /** Close several tabs; any unsaved page among them asks once (06 2.2). */
   const closeMany = async (exceptKey?: string) => {
@@ -37,6 +40,9 @@ export function Shell({ screens, onCommand }: { screens: Record<string, ScreenDe
     else if ((item.command === 'logout' || item.command === 'chooseCompany') && !(await closeMany())) return;
     else if (item.command === 'about') void dialogs.alert('Шмикроинвест Шмелта Про — уеб счетоводна система, съвместима с Microinvest Делта Про 1.01.089.', 'За програмата');
     else if (item.command === 'changeUser') setChangeUser(true);
+    else if (item.command === 'toggleQuickCommands') panels.toggle('quick');
+    else if (item.command === 'toggleHelpPanel') panels.toggle('help');
+    else if (item.command === 'toggleMessagesPanel') panels.toggle('messages');
     else if (item.command === 'updateCheck') {
       const v = await api.get<{ version: string }>('/version');
       void dialogs.alert(`Използвате актуалната версия ${v.version}. Уеб приложението се обновява автоматично на сървъра.`, 'Нови версии');
@@ -46,7 +52,7 @@ export function Shell({ screens, onCommand }: { screens: Record<string, ScreenDe
 
   const closeTab = async (key: string) => {
     const t = ws.tabs.find((x) => x.key === key);
-    if (t?.dirty && !(await dialogs.confirm('Желаете ли изход без запис на данните?'))) return;
+    if (t?.dirty && !(await dialogs.confirm(t.dirtyMessage ?? 'Желаете ли изход без запис на данните?'))) return;
     ws.close(key);
   };
 
@@ -100,30 +106,39 @@ export function Shell({ screens, onCommand }: { screens: Record<string, ScreenDe
   }, [can]);
 
   return (
-    <div className="flex h-full flex-col">
-      <MenuBar run={run} screens={screens} />
-      <Toolbar screens={screens} run={(item) => void run(item)} />
-      <TabStrip onClose={closeTab} />
-      <main className="relative min-h-0 flex-1">
-        {ws.tabs.length === 0 && <StartPage />}
-        {ws.tabs.map((t) => {
-          const def = screens[t.screen];
-          if (!def) return null;
-          const C = def.component;
-          return (
-            <div key={t.key} className={cx('absolute inset-0 flex flex-col overflow-hidden bg-white', t.key !== ws.active && 'hidden')}>
-              <ScreenBoundary title={t.title}>
-                <C tab={t} />
-              </ScreenBoundary>
-            </div>
-          );
-        })}
-      </main>
-      {/* Outside <main>: its children are the tab panes. */}
-      <CashLimitNotice />
-      <StatusBar onCommand={(c) => (c === 'changeUser' ? setChangeUser(true) : void run({ label: '', command: c }))} />
-      {changeUser && <ChangeUserDialog onClose={() => setChangeUser(false)} />}
-    </div>
+    <QuickCommandsProvider>
+      <div className="flex h-full flex-col">
+        <MenuBar run={run} screens={screens} />
+        <Toolbar screens={screens} run={(item) => void run(item)} />
+        <div className="flex min-h-0 flex-1">
+          <SidePanels screens={screens} panels={panels} />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <TabStrip onClose={closeTab} />
+            <main className="relative min-h-0 flex-1">
+              {ws.tabs.length === 0 && <StartPage />}
+              {ws.tabs.map((t) => {
+                const def = screens[t.screen];
+                if (!def) return null;
+                const C = def.component;
+                return (
+                  <div key={t.key} className={cx('absolute inset-0 flex flex-col overflow-hidden bg-white', t.key !== ws.active && 'hidden')}>
+                    <TabKeyContext.Provider value={t.key}>
+                      <ScreenBoundary title={t.title}>
+                        <C tab={t} />
+                      </ScreenBoundary>
+                    </TabKeyContext.Provider>
+                  </div>
+                );
+              })}
+            </main>
+          </div>
+        </div>
+        {/* Outside <main>: its children are the tab panes. */}
+        <CashLimitNotice />
+        <StatusBar onCommand={(c) => (c === 'changeUser' ? setChangeUser(true) : void run({ label: '', command: c }))} />
+        {changeUser && <ChangeUserDialog onClose={() => setChangeUser(false)} />}
+      </div>
+    </QuickCommandsProvider>
   );
 }
 

@@ -20,12 +20,14 @@
     "exceljs": "^4.4.0",
     "hono": "^4.13.13",
     "mdb-reader": "^3.2.0",
+    "nodemailer": "^10.1.2",
     "pg": "^8.23.1",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
+    "@types/nodemailer": "^8.0.2",
     "@types/pg": "^8.23.1",
     "drizzle-kit": "^0.31.11",
     "typescript": "^7.0.2",

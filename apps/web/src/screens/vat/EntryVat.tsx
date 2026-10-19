@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { FileText, Percent } from 'lucide-react';
-import { CATEGORY, calculateVatAmounts, dec, parseAmount, round2, VAT_MESSAGES, vatTermsFor } from '@shmi/core';
+import { CATEGORY, calculateVatAmounts, dec, parseAmount, parseVatTermConfig, round2, VAT_MESSAGES, vatTermsFor } from '@shmi/core';
 import { ApiError } from '../../api.ts';
 import { useDialogs } from '../../components/dialogs.tsx';
 import { Button, Field, Select } from '../../components/ui.tsx';
@@ -37,7 +37,8 @@ export function useEntryVat<D extends VatDraft>(d: D | null, patch: (p: Partial<
   const [protocolOpen, setProtocolOpen] = useState(false);
   const terms = lookups.data?.vatTerms ?? [];
   const tt = d?.transactionTypeId ?? 1;
-  const configured = tt === 3 ? Number(session.settings.SaleVatTerm) || null : tt === 2 ? Number(session.settings.PurchaseVatTerm) || null : null;
+  // SaleVatTerm / PurchaseVatTerm hold the VATTermType enum name (06 3.4); older numeric values are read too.
+  const configured = tt === 3 ? parseVatTermConfig(session.settings.SaleVatTerm, 3) : tt === 2 ? parseVatTermConfig(session.settings.PurchaseVatTerm, 2) : null;
   const { list, defaultId } = vatTermsFor(terms, tt, configured);
   const [entryTerm, setEntryTerm] = useState<number | null>(null);
   const termId = entryTerm != null && list.some((t) => t.id === entryTerm) ? entryTerm : defaultId;

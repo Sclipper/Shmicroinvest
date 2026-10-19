@@ -49,6 +49,7 @@ export function IcaReport() {
   return (
     <ReportFrame<{ rows: Row[] }>
       title="Протоколи по чл. 117 от ЗДДС"
+      logEntity="icaReport"
       subtitle={periodText(a)}
       report={report}
       isEmpty={(d) => d.rows.length === 0}

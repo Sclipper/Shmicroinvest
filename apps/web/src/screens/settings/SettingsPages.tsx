@@ -277,5 +277,7 @@ export function useSettingsPages() {
     { id: 'database', label: 'База данни', visible: true },
     { id: 'sequences', label: 'Номерация', visible: can('UI_Other_Settings_Sequences') },
     { id: 'documents', label: 'Документи', visible: can('UI_Other_Settings_DocumentTypes') },
+    // SmtpConfigurationView: Delta shows it only for TRZ Pro (06 3.5); the web rebuild needs it to e-mail reports.
+    { id: 'smtp', label: 'E-mail', visible: can('UI_Other_Settings') },
   ].filter((p) => p.visible);
 }

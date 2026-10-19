@@ -56,7 +56,10 @@ export const authRoutes = new Hono<AppEnv>()
     bulstat: z.string().trim().max(50).optional(),
     chartTemplate: z.enum(['commercial', 'nonProfit', 'budget']).nullable().optional(),
     /** Data carried over from the active company (01b 1.2 TransferEntities). */
-    transfer: z.object({ chartOfAccounts: z.boolean().optional(), users: z.boolean().optional(), partners: z.boolean().optional(), accountings: z.boolean().optional() }).optional(),
+    transfer: z.object({
+      chartOfAccounts: z.boolean().optional(), users: z.boolean().optional(), partners: z.boolean().optional(), accountings: z.boolean().optional(),
+      accountingTemplates: z.boolean().optional(), bankTemplates: z.boolean().optional(),
+    }).optional(),
   })), async (c) => {
     const body = c.req.valid('json');
     const catalog = await c.var.driver.catalog();
@@ -72,13 +75,14 @@ export const authRoutes = new Hono<AppEnv>()
     }
     const transfer = body.transfer && Object.values(body.transfer).some(Boolean) ? body.transfer : null;
     if (transfer && !sourceDb) throw new ApiError(400, 'Няма активна фирма, от която да се прехвърлят данни.');
-    const copiesChart = !!(transfer?.chartOfAccounts || transfer?.accountings);
+    const copiesChart = !!(transfer?.chartOfAccounts || transfer?.accountings || transfer?.accountingTemplates || transfer?.bankTemplates);
     if (!isStrongPassword(body.adminPassword)) throw new ApiError(400, 'Паролата трябва да е поне 6 символа.');
     const name = newDatabaseName();
     const db = await c.var.driver.createCompanyDatabase(name);
     try {
       await db.transaction(async (tx) => {
-        await seedCompany(tx, { ...body, chartTemplate: copiesChart ? null : body.chartTemplate ?? 'commercial' });
+        // An explicit null starts without a chart and without a chart type (03a 1.1 asks for the selection).
+        await seedCompany(tx, { ...body, chartTemplate: copiesChart ? null : body.chartTemplate === undefined ? 'commercial' : body.chartTemplate });
         if (transfer) await transferEntities(await c.var.driver.company(sourceDb!), tx, transfer);
       });
     } catch (e) {

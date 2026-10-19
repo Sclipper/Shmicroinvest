@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { asc, eq, sql } from 'drizzle-orm';
 import {
   EURO_CHANGEOVER_YEAR, MONTH_SHORT_BG, PERMISSIONS, YEAR_MESSAGES, baseCurrencyForYear, formatMessage, lockMonth, lockedMonthList, needsPreviousConclusion,
-  unlockMonth, lockYear, unlockYear, workingDateInYear,
+  unlockMonth, lockYear, unlockYear, workingDateInYear, parseVatTermConfig, vatTermConfigValue,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import { exec } from '../db/provider.ts';
@@ -45,6 +45,8 @@ export const sessionRoutes = new Hono<AppEnv>()
       workingDate: workingDate(session),
       baseCurrency: baseCurrencyForYear(year.year),
       chartIsEmpty: count === 0,
+      /** Config ChartOfAccountsType; empty = no chart type chosen yet (03a 1.1 strChartOfAccountsNotDefined). */
+      chartOfAccountsType: (await getConfig(db, 'ChartOfAccountsType')) ?? '',
       permissions,
       settings,
     });
@@ -192,6 +194,13 @@ export const sessionRoutes = new Hono<AppEnv>()
     // Validate everything first, then write in one transaction.
     const unknown = Object.keys(body).find((k) => !(k in BASIC_SETTINGS));
     if (unknown) throw new ApiError(400, `Непозната настройка ${unknown}.`);
+    // SaleVatTerm / PurchaseVatTerm hold the VATTermType enum name of a term of that type (06 3.4, 02b 17).
+    for (const [key, type] of [['SaleVatTerm', 3], ['PurchaseVatTerm', 2]] as const) {
+      if (body[key] === undefined || body[key] === '') continue;
+      const id = parseVatTermConfig(body[key], type);
+      if (!id) throw new ApiError(400, `Невалидна операция по ДДС за ${BASIC_SETTINGS[key]!.label.toLowerCase()}.`);
+      body[key] = vatTermConfigValue(id);
+    }
     await c.var.db.transaction(async (tx) => {
       for (const [k, v] of Object.entries(body)) await setConfig(tx, k, v);
       // 06 3.5: a parent option turned off clears its dependent options.

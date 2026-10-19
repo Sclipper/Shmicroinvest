@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { dec } from '@shmi/core';
+import { dec, paymentDocumentTypeFor } from '@shmi/core';
 import { api } from '../api.ts';
 import { money } from '../format.ts';
 import { AccountPicker } from '../components/pickers.tsx';
@@ -16,10 +16,9 @@ export const PAYMENT_DOCUMENT_TYPES = [8, 9, 11, 12, 10];
 
 export const usePaymentSettings = () => useQuery({ queryKey: ['payments', 'settings'], queryFn: () => api.get<PaymentSettings>('/payments/settings') });
 
-/** ПКО for a client paying into cash, РКО for paying a supplier from cash, bank statement otherwise. */
-export function defaultPaymentDocType(side: 'client' | 'supplier', categoryId: number | null | undefined) {
-  if (categoryId === 21 || categoryId === 26) return side === 'client' ? 8 : 9;
-  return 11;
+/** ПКО for a client paying into cash, РКО for paying a supplier from cash, bank statement otherwise; Фактура with InvoiceAsPaymentDocument. */
+export function defaultPaymentDocType(side: 'client' | 'supplier', categoryId: number | null | undefined, invoiceAsPayment = false) {
+  return paymentDocumentTypeFor(side, categoryId === 21 || categoryId === 26, invoiceAsPayment);
 }
 
 /** NewPaymentView: the paying entry for the chosen documents. */
@@ -47,12 +46,15 @@ export function NewPaymentDialog({ companyId, companyName, accountId, side, allo
     amount: initialAmount, currencyAmount: initialCurrency ?? '', exchangeRate: initialRate ?? '',
   });
   const payAcc = accounts.data?.find((a) => a.id === f.paymentAccountId);
+  // "Разплащане на задължения/вземания с документ тип Фактура" (06 3.4).
+  const asInvoice = (s.settings.InvoiceAsPaymentDocument ?? '').toLowerCase() === 'true';
+  const docTypes = asInvoice ? [1, ...PAYMENT_DOCUMENT_TYPES] : PAYMENT_DOCUMENT_TYPES;
   useEffect(() => {
     if (f.paymentAccountId === null && settings.data?.paymentAccountId) setF((x) => ({ ...x, paymentAccountId: settings.data!.paymentAccountId }));
   }, [settings.data, f.paymentAccountId]);
   useEffect(() => {
-    if (payAcc) setF((x) => ({ ...x, documentTypeId: defaultPaymentDocType(side, payAcc.categoryId) }));
-  }, [payAcc, side]);
+    if (payAcc) setF((x) => ({ ...x, documentTypeId: defaultPaymentDocType(side, payAcc.categoryId, asInvoice) }));
+  }, [payAcc, side, asInvoice]);
   const channel = lookups.data?.documentTypes.find((t) => t.id === f.documentTypeId)?.sequenceChannel ?? 0;
   const nextNumber = f.documentTypeId === 8 ? settings.data?.nextCashReceipt : f.documentTypeId === 9 ? settings.data?.nextCashPayment : '';
   const save = useMutation({
@@ -96,14 +98,14 @@ export function NewPaymentDialog({ companyId, companyName, accountId, side, allo
         <Field label="Платежен документ">
           <Select aria-label="Платежен документ" value={f.documentTypeId} onChange={(e) => setF({ ...f, documentTypeId: Number(e.target.value) })}>
             <option value={0}>—</option>
-            {lookups.data?.documentTypes.filter((t) => PAYMENT_DOCUMENT_TYPES.includes(t.id)).map((t) => (
+            {lookups.data?.documentTypes.filter((t) => docTypes.includes(t.id)).map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
               </option>
             ))}
           </Select>
         </Field>
-        <Field label="Номер" hint={channel ? 'Празно = следващ номер' : undefined}>
+        <Field label="Номер" hint={f.documentTypeId === 1 ? 'Празно = номерът на платената фактура' : channel ? 'Празно = следващ номер' : undefined}>
           <TextInput aria-label="Номер на платежен документ" value={f.documentNumber} placeholder={nextNumber || ''} onChange={(e) => setF({ ...f, documentNumber: e.target.value })} />
         </Field>
         <Field label="Основание" className="col-span-2">

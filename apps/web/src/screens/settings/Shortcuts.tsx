@@ -1,20 +1,39 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { RotateCcw, Save } from 'lucide-react';
-import { duplicateShortcutWarnings, isAllowedEditableGesture, JOURNAL_EXTRA_MESSAGES as XM } from '@shmi/core';
+import { Printer, RotateCcw, Save } from 'lucide-react';
+import { SHORTCUT_TYPE_LABELS, duplicateShortcutWarnings, isAllowedEditableGesture, shortcutsByType, JOURNAL_EXTRA_MESSAGES as XM } from '@shmi/core';
 import { api } from '../../api.ts';
 import { useDialogs } from '../../components/dialogs.tsx';
 import { Button, CommandBar, Empty, Spinner, cx } from '../../components/ui.tsx';
-import { gestureOf } from '../../shell/menu.ts';
+import { MENU, gestureOf, type MenuItem } from '../../shell/menu.ts';
+import { PrintPortal, usePrinting } from '../../reports/common.tsx';
+import { useCan } from '../../session.tsx';
 import { useShortcutRows, type ShortcutRow } from '../entry/shortcuts.ts';
 
-const TYPE_LABEL: Record<string, string> = { WindowEditable: 'Прозорец (редакция)', WindowReadOnly: 'Прозорец', MainMenu: 'Главно меню' };
+const TYPE_LABEL: Record<string, string> = SHORTCUT_TYPE_LABELS;
+
+/** MainMenu rows of the printout: the gestures of the menu items the user can reach (06 2.6). */
+function useMenuShortcutRows() {
+  const can = useCan();
+  const out: { id: string; label: string; type: 'MainMenu'; gesture: string }[] = [];
+  const walk = (items: MenuItem[], path: string) => {
+    for (const i of items) {
+      if ('sep' in i || !can(i.permission)) continue;
+      if (i.gesture) out.push({ id: `menu:${path}${i.label}`, label: `${path}${i.label}`, type: 'MainMenu', gesture: i.gesture });
+      if (i.children) walk(i.children, `${path}${i.label} › `);
+    }
+  };
+  for (const m of MENU) if (can(m.permission)) walk(m.items, `${m.label} › `);
+  return out;
+}
 
 /** Клавишни комбинации (Други, Ctrl+K; spec 06 2.6): per-user window shortcuts. */
 export function Shortcuts() {
   const dialogs = useDialogs();
   const qc = useQueryClient();
   const q = useShortcutRows();
+  const menuRows = useMenuShortcutRows();
+  const [printing, print] = usePrinting();
   const [rows, setRows] = useState<ShortcutRow[]>([]);
   const [capture, setCapture] = useState<string | null>(null);
   useEffect(() => {
@@ -51,7 +70,35 @@ export function Shortcuts() {
         <Button icon={<RotateCcw className="size-3.5" />} onClick={restore}>
           По подразбиране
         </Button>
+        <Button icon={<Printer className="size-3.5" />} onClick={print}>
+          Печат
+        </Button>
       </CommandBar>
+      {printing && (
+        <PrintPortal title="Клавишни комбинации" signatures={false}>
+          {shortcutsByType([...rows.filter((r) => r.gesture), ...menuRows]).map((g) => (
+            <section key={g.type} className="mb-3" data-testid="shortcuts-print-group">
+              <h2 className="mb-1 text-[13px] font-bold">{g.label}</h2>
+              <table className="grid-table">
+                <thead>
+                  <tr>
+                    <th>Команда</th>
+                    <th className="w-48">Клавиши</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {g.rows.map((r) => (
+                    <tr key={r.id}>
+                      <td>{r.label}</td>
+                      <td className="font-mono">{r.gesture}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          ))}
+        </PrintPortal>
+      )}
       {warnings.length > 0 && (
         <ul className="border-b border-amber-200 bg-amber-50 px-3 py-1 text-[12px] text-amber-900">
           {warnings.map((w, i) => (
