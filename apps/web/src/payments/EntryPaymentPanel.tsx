@@ -116,7 +116,8 @@ export function EntryPaymentPanel({ ctl, payload, entryId, readOnly }: { ctl: En
   const payAcc = accounts.data?.find((a) => a.id === ctl.paymentAccountId);
   const targetCategory = target ? categoryOf(target.accountId) : null;
   const side = (SUPPLIER_CATEGORIES as readonly number[]).includes(targetCategory ?? -1) ? 'supplier' : 'client';
-  const typeId = ctl.documentTypeId ?? (payAcc ? defaultPaymentDocType(side, payAcc.categoryId) : null);
+  const asInvoice = (s.settings.InvoiceAsPaymentDocument ?? '').toLowerCase() === 'true';
+  const typeId = ctl.documentTypeId ?? (payAcc ? defaultPaymentDocType(side, payAcc.categoryId, asInvoice) : null);
   const channel = lookups.data?.documentTypes.find((t) => t.id === typeId)?.sequenceChannel ?? 0;
   const bindingEnabled = s.settings.IsBindingDocumentsEnabled !== 'False';
   if (!target && !ctl.auto && !ctl.binding) return null;

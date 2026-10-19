@@ -1,16 +1,16 @@
 import { eq, inArray, or, sql } from 'drizzle-orm';
 import {
-  CATEGORY, JOURNAL_MESSAGES, PAYMENT_MESSAGES, allocateWalk, dec, isCompanyCategory, isMonthLocked, paymentMessage, round2,
+  CATEGORY, JOURNAL_MESSAGES, PAYMENT_DOC, PAYMENT_MESSAGES, allocateWalk, dec, invoicePaymentNumber, isCompanyCategory, isMonthLocked, paymentDocumentTypeFor, paymentMessage, round2,
   validatePaymentAllocations, ZERO, type Dec, type PaymentMessageKey, type ValidationMessage,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import { queryRows, type DbOrTx } from '../db/provider.ts';
 import type { ActiveYear } from '../context.ts';
 import { ApiError, notFound } from '../lib/errors.ts';
-import { CASH_PAYMENT, CASH_RECEIPT, postSystemEntry } from './autoEntries.ts';
+import { postSystemEntry } from './autoEntries.ts';
 import { baseCurrencyId, type SaveContext } from './journal.ts';
 import { insertPaymentLinks, openItems, sideOfCategory, type OpenItem, type PartnerSide } from './openItems.ts';
-import { getConfig, setConfig } from './config.ts';
+import { getBoolConfig, getConfig, setConfig } from './config.ts';
 import { logActivity } from './audit.ts';
 
 /**
@@ -309,12 +309,17 @@ export interface NewPaymentInput {
   allocations: BindRow[];
 }
 
-/** Default payment document: ПКО/РКО for cash accounts, bank statement otherwise. */
-export function defaultPaymentDocumentType(side: PartnerSide, paymentAccountCategory: number | null) {
+/**
+ * Default payment document: ПКО/РКО for cash accounts, bank statement
+ * otherwise; Фактура with InvoiceAsPaymentDocument (06 3.4).
+ */
+export function defaultPaymentDocumentType(side: PartnerSide, paymentAccountCategory: number | null, invoiceAsPaymentDocument = false) {
   const cash = paymentAccountCategory === CATEGORY.CashBase || paymentAccountCategory === CATEGORY.CashForeign;
-  if (!cash) return BANK_STATEMENT;
-  return side === 'client' ? CASH_RECEIPT : CASH_PAYMENT;
+  return paymentDocumentTypeFor(side, cash, invoiceAsPaymentDocument);
 }
+
+/** "Разплащане на задължения/вземания с документ тип Фактура" (global setting, written by the settings screen). */
+export const invoiceAsPaymentDocument = (db: DbOrTx) => getBoolConfig(db, 'InvoiceAsPaymentDocument', false);
 
 /**
  * Creates the paying entry (client: Dr payment account / Cr partner account;
@@ -346,12 +351,15 @@ export async function createPayment(db: DbOrTx, ctx: SaveContext, input: NewPaym
   });
   const partnerLine = line(input.accountId, acc.currencyId !== base, input.companyId);
   const paymentLine = line(payAcc!.id, payAcc!.currencyId !== base, null);
-  const documentTypeId = input.documentTypeId ?? defaultPaymentDocumentType(side, payAcc!.accountCategoryId);
+  const documentTypeId = input.documentTypeId ?? defaultPaymentDocumentType(side, payAcc!.accountCategoryId, await invoiceAsPaymentDocument(db));
+  // A payment of type Фактура carries the paid invoice's number, never a new one of the invoice sequence.
+  const typedNumber = input.documentNumber?.trim() ? input.documentNumber.trim() : undefined;
+  const documentNumber = typedNumber ?? (documentTypeId === PAYMENT_DOC.Invoice ? invoicePaymentNumber(ls.map((l) => l.item.documentNumber)) ?? '' : undefined);
   const saved = await postSystemEntry(db, {
     accountingDate: input.date,
     documentDate: input.documentDate || input.date,
     documentTypeId,
-    documentNumber: input.documentNumber?.trim() ? input.documentNumber.trim() : undefined,
+    documentNumber,
     companyId: input.companyId,
     term: input.term,
     reference: input.reference ?? null,
@@ -420,14 +428,15 @@ export async function validateAutoPayment(db: DbOrTx, o: AutoPaymentOptions, e: 
   const accs = ids.length ? await db.select().from(s.accounts).where(inArray(s.accounts.id, ids)) : [];
   const side = accs.map((a) => sideOfCategory(a.accountCategoryId)).find(Boolean);
   if (!side) msgs.push(pm('strNoPartnerLineForPayment'));
-  const typeId = o.documentTypeId ?? (side && payAcc ? defaultPaymentDocumentType(side, payAcc.accountCategoryId) : null);
+  const asInvoice = await invoiceAsPaymentDocument(db);
+  const typeId = o.documentTypeId ?? (side && payAcc ? defaultPaymentDocumentType(side, payAcc.accountCategoryId, asInvoice) : null);
   let channel = 0;
   if (typeId) {
     const [t] = await db.select({ channel: s.documentTypes.sequenceChannel }).from(s.documentTypes).where(eq(s.documentTypes.id, typeId));
     channel = t?.channel ?? 0;
   }
-  // ПКО/РКО take the next number of their channel; other payment documents need one.
-  if (!o.documentNumber?.trim() && !channel) msgs.push(crit('strMissingDocumentNumberInPayment', PAYMENT_MESSAGES.strMissingDocumentNumberInPayment));
+  // ПКО/РКО take the next number of their channel, a Фактура the paid invoice's number; other payment documents need one.
+  if (!o.documentNumber?.trim() && !channel && typeId !== PAYMENT_DOC.Invoice) msgs.push(crit('strMissingDocumentNumberInPayment', PAYMENT_MESSAGES.strMissingDocumentNumberInPayment));
   return msgs;
 }
 

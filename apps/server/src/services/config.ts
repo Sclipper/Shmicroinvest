@@ -34,10 +34,14 @@ export const BASIC_SETTINGS: Record<string, { default: string; label: string }> 
   IsBindingDocumentsEnabled: { default: 'True', label: 'Обвързване на документи в контиране' },
   IsAutomaticOpenBindingDocumentsEnabled: { default: 'False', label: 'Автоматично отваряне на обвързване на документи' },
   IsBindingBySumEnabled: { default: 'True', label: 'Обвързване по сума' },
+  InvoiceAsPaymentDocument: { default: 'False', label: 'Разплащане на задължения/вземания с документ тип Фактура' },
   IsAllowAccountingAutomaticEnd: { default: 'False', label: 'Приключване на гр. 60 при контиране' },
   IsShowSeperateAccountingsForeachAccountGroup60: { default: 'False', label: 'Отделно контиране за всяка сметка от гр. 60' },
   IsVisualizeDateTimeOnReportingEnabled: { default: 'False', label: 'Визуализиране на дата и час в справки' },
   QuantityFormat: { default: '3', label: 'Знаци след десетичната запетая за количество' },
   PriceFormat: { default: '3', label: 'Знаци след десетичната запетая за цена на СМЗ' },
   ExchangeRateFormat: { default: '5', label: 'Знаци след десетичната запетая за валутен курс' },
+  /** VATTermType enum name of the default term (06 3.4); empty = the first term of the type. */
+  SaleVatTerm: { default: '', label: 'Най-често използвана операция по ДДС при продажба' },
+  PurchaseVatTerm: { default: '', label: 'Най-често използвана операция по ДДС при покупка' },
 };

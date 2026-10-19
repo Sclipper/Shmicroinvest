@@ -1,7 +1,7 @@
 import { dec, round2, sum, type Dec, type DecInput } from '../money.ts';
 import type { ValidationMessage } from '../journal.ts';
 import { TRANSACTION_TYPE } from '../seeds/lookups.ts';
-import { VAT_DOC, VAT_MESSAGES, type VatMessageKey } from './constants.ts';
+import { PURCHASE_TERMS, SALE_TERMS, VAT_DOC, VAT_MESSAGES, VAT_TERM, type VatMessageKey } from './constants.ts';
 
 /** VAT assists and checks of the accounting screen (spec 02b 1.4, 1.5, 12). */
 
@@ -27,6 +27,35 @@ export function calculateVatAmounts(lines: VatCalcLine[], entryTermId: number | 
     const base = sum(lines.filter((o, j) => j !== i && !o.isVat && term(o) === t).map((o) => o.amount));
     return round2(base.times(dec(rateOf(t))).div(100));
   });
+}
+
+/**
+ * Config keys SaleVatTerm / PurchaseVatTerm (06 3.4, 02b 17): the enum name of
+ * the default VAT term of the transaction type (VATTermType; the names are
+ * those of VAT_TERM). Empty = the first term of the type.
+ */
+export const VAT_TERM_CONFIG_KEYS = { 2: 'PurchaseVatTerm', 3: 'SaleVatTerm' } as const;
+
+const TERM_NAME_BY_ID = new Map<number, string>(Object.entries(VAT_TERM).filter(([, id]) => id <= 18).map(([n, id]) => [id, n]));
+
+/** Enum name stored for a term id ('' for none or an unknown id). */
+export function vatTermConfigValue(termId: number | null | undefined): string {
+  return termId ? TERM_NAME_BY_ID.get(termId) ?? '' : '';
+}
+
+/**
+ * Term id of a stored SaleVatTerm / PurchaseVatTerm value. Accepts the enum
+ * name and, for values written by older builds, the number. With a
+ * transaction type, a term of another type gives null.
+ */
+export function parseVatTermConfig(value: string | null | undefined, transactionTypeId?: 2 | 3 | number): number | null {
+  const v = (value ?? '').trim();
+  if (!v) return null;
+  const id = /^\d+$/.test(v) ? Number(v) : (VAT_TERM as Record<string, number>)[v] ?? null;
+  if (!id || !TERM_NAME_BY_ID.has(id)) return null;
+  if (transactionTypeId === 2 && !(PURCHASE_TERMS as readonly number[]).includes(id)) return null;
+  if (transactionTypeId === 3 && !(SALE_TERMS as readonly number[]).includes(id)) return null;
+  return id;
 }
 
 /** Terms offered for a transaction type; default = configured term if set, else the first of the list. */

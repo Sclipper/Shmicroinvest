@@ -6,6 +6,8 @@ export interface Session {
   workingDate: string;
   baseCurrency: 'BGN' | 'EUR';
   chartIsEmpty: boolean;
+  /** Config ChartOfAccountsType ("" = not chosen yet). */
+  chartOfAccountsType?: string;
   permissions: Record<string, boolean>;
   settings: Record<string, string>;
 }

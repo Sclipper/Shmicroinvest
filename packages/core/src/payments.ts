@@ -380,3 +380,31 @@ export function sameExchangeRate(rates: DecInput[]): boolean {
   const set = new Set(rates.map((r) => dec(r)).filter((r) => !r.isZero()).map((r) => r.toDecimalPlaces(5).toFixed(5)));
   return set.size <= 1;
 }
+
+/* ------------------------------------------------------------------ */
+/* Document type of a payment (06 3.4 InvoiceAsPaymentDocument)          */
+/* ------------------------------------------------------------------ */
+
+export const PAYMENT_DOC = { Invoice: 1, CashReceipt: 8, CashPayment: 9, BankStatement: 11 } as const;
+
+/**
+ * Default document of a payment entry. Normally ПКО (client paying into cash),
+ * РКО (paying a supplier from cash) or a bank statement. With
+ * "Разплащане на задължения/вземания с документ тип Фактура"
+ * (InvoiceAsPaymentDocument) the payment is a document of type Фактура.
+ * `cashAccount`: the payment account is of category 21 or 26.
+ */
+export function paymentDocumentTypeFor(side: 'client' | 'supplier', cashAccount: boolean, invoiceAsPaymentDocument = false): number {
+  if (invoiceAsPaymentDocument) return PAYMENT_DOC.Invoice;
+  if (!cashAccount) return PAYMENT_DOC.BankStatement;
+  return side === 'client' ? PAYMENT_DOC.CashReceipt : PAYMENT_DOC.CashPayment;
+}
+
+/**
+ * Number of a payment that is a Фактура: the number of the first paid
+ * document that has one. A payment never takes a number from the invoice
+ * sequence.
+ */
+export function invoicePaymentNumber(paidDocumentNumbers: (string | null | undefined)[]): string | null {
+  return paidDocumentNumbers.map((n) => (n ?? '').trim()).find(Boolean) ?? null;
+}
