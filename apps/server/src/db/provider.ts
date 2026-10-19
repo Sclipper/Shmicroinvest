@@ -44,6 +44,22 @@ export interface DbDriver {
   close(): Promise<void>;
 }
 
+/**
+ * Postgres settings for the embedded engine. Its defaults are sized for a
+ * server (128 MB shared buffers, 80 MB of retained WAL), and every company is
+ * its own instance, so a process with a few open companies used gigabytes.
+ * A single-user database needs far less: about 90 MB per instance with these.
+ */
+const PGLITE_CONF = [
+  'shared_buffers=16MB', 'max_connections=5', 'wal_buffers=1MB', 'min_wal_size=32MB', 'max_wal_size=64MB',
+  'effective_cache_size=64MB', 'maintenance_work_mem=16MB',
+];
+
+/** A PGlite instance with the settings above; dir undefined = in memory. */
+export function newPglite(dir?: string, opts: { loadDataDir?: Blob } = {}) {
+  return new PGlite({ ...(dir ? { dataDir: dir } : {}), postgresqlconf: PGLITE_CONF, ...opts });
+}
+
 export const DB_NAME_RE = /^[a-z][a-z0-9_]{2,62}$/;
 
 export class PgliteDriver implements DbDriver {
@@ -69,7 +85,7 @@ export class PgliteDriver implements DbDriver {
   catalog(): Promise<CatalogDb> {
     this.catalogDb ??= (async () => {
       if (this.dataRoot) await mkdir(this.dataRoot, { recursive: true });
-      const client = new PGlite(this.dataRoot ? path.join(this.dataRoot, 'catalog') : undefined);
+      const client = newPglite(this.dataRoot ? path.join(this.dataRoot, 'catalog') : undefined);
       this.catalogClient = client;
       const db = drizzlePglite(client, { schema: catalogSchema });
       await migratePglite(db, { migrationsFolder: CATALOG_MIGRATIONS });
@@ -85,7 +101,7 @@ export class PgliteDriver implements DbDriver {
         const dir = this.dir(name);
         if (dir && !create && !existsSync(dir)) throw new Error(`Company database ${name} does not exist`);
         if (dir) await mkdir(path.dirname(dir), { recursive: true });
-        const client = new PGlite(dir);
+        const client = newPglite(dir);
         const db = drizzlePglite(client, { schema: companySchema });
         // Schema upgrade on open, like Delta's ValidateDatabase.
         await migratePglite(db, { migrationsFolder: COMPANY_MIGRATIONS });
@@ -131,12 +147,12 @@ export class PgliteDriver implements DbDriver {
     const dir = this.dir(name);
     if (dir) await mkdir(path.dirname(dir), { recursive: true });
     if (dir) {
-      const client = new PGlite(dir, { loadDataDir: new Blob([data as Uint8Array<ArrayBuffer>]) });
+      const client = newPglite(dir, { loadDataDir: new Blob([data as Uint8Array<ArrayBuffer>]) });
       await client.waitReady;
       await client.close();
     } else {
       // In-memory: keep the loaded instance.
-      const c2 = new PGlite({ loadDataDir: new Blob([data as Uint8Array<ArrayBuffer>]) });
+      const c2 = newPglite(undefined, { loadDataDir: new Blob([data as Uint8Array<ArrayBuffer>]) });
       const db = drizzlePglite(c2, { schema: companySchema });
       await migratePglite(db, { migrationsFolder: COMPANY_MIGRATIONS });
       this.companies.set(name, Promise.resolve({ client: c2, db: db as unknown as CompanyDb }));
