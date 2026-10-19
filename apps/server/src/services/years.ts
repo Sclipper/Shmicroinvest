@@ -2,7 +2,7 @@ import { asc, eq, sql } from 'drizzle-orm';
 import { EURO_FLAGS, defaultActiveYear, loginActiveYear } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import { exec, type DbOrTx } from '../db/provider.ts';
-import { applyChartTemplate } from './chart.ts';
+import { applyChartTemplate, chartTemplateType } from './chart.ts';
 import { getConfig, setConfig } from './config.ts';
 
 /** Financial years: create, delete and the euro-chart guard (spec 01b 6.3, 06 4.1). */
@@ -60,7 +60,7 @@ export async function addFinancialYear(tx: DbOrTx, year: number) {
 export async function ensureEuroChart(tx: DbOrTx, year: number) {
   if (year < 2026) return;
   if ((await count(tx, sql`SELECT count(*)::int AS n FROM accounts WHERE is_euro AND number <> '0'`)) > 0) return;
-  const type = (await getConfig(tx, 'ChartOfAccountsType')) as 'commercial' | null;
+  const type = await chartTemplateType(tx);
   if (type) await applyChartTemplate(tx, type, true);
 }
 

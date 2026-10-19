@@ -1,18 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, ListPlus } from 'lucide-react';
-import { COMMERCIAL_CHART, SHELL_MESSAGES, parseChartTemplate, type TemplateAccount } from '@shmi/core';
+import { CHART_TEMPLATE_LABELS, CHART_TEMPLATE_TYPES, SHELL_MESSAGES, chartTemplateAccounts, type ChartTemplateType, type TemplateAccount } from '@shmi/core';
 import { api } from '../../api.ts';
 import { useDialogs } from '../../components/dialogs.tsx';
 import { Button, CommandBar, Empty, Panel, Spinner, cx } from '../../components/ui.tsx';
 import { useAccounts, useCan, useInvalidate, useSession } from '../../session.tsx';
 import { useWorkspace, type ScreenProps } from '../../shell/workspace.tsx';
 
-type TemplateType = 'commercial' | 'nonProfit' | 'budget';
-const TEMPLATES: { id: TemplateType; label: string; available: boolean }[] = [
-  { id: 'commercial', label: 'Фирмен (Търговски)', available: true },
-  { id: 'nonProfit', label: 'ЮЛНЦ (Организации)', available: false },
-  { id: 'budget', label: 'Бюджетен', available: false },
-];
 
 /** Избор на сметкоплан (Alt+K): add accounts from a chart template to the individual chart. */
 export function ChartSelection({ tab }: ScreenProps) {
@@ -23,8 +17,10 @@ export function ChartSelection({ tab }: ScreenProps) {
   const invalidate = useInvalidate();
   const editable = can('UI_Operations_ChartOfAccounts_ChartOfAccountsSelection');
   const { data: accounts, isLoading } = useAccounts();
-  const [type, setType] = useState<TemplateType>('commercial');
-  const template = useMemo(() => parseChartTemplate(COMMERCIAL_CHART), []);
+  // The chosen chart type (03a 1.3) is preselected; commercial when none is chosen yet.
+  const [type, setType] = useState<ChartTemplateType>(() =>
+    (CHART_TEMPLATE_TYPES as readonly string[]).includes(s.chartOfAccountsType ?? '') ? (s.chartOfAccountsType as ChartTemplateType) : 'commercial');
+  const template = useMemo(() => chartTemplateAccounts(type), [type]);
   const existing = useMemo(() => new Set((accounts ?? []).map((a) => a.number)), [accounts]);
   const kids = useMemo(() => {
     const m = new Map<string, TemplateAccount[]>();
@@ -71,7 +67,7 @@ export function ChartSelection({ tab }: ScreenProps) {
 
   const apply = async () => {
     if (!selected.length) return;
-    if (!(await dialogs.confirm(`Ще бъдат добавени ${selected.length} сметки от сметкоплан „Фирмен (Търговски)“ в сметкоплана за ${s.year.year} г. Съществуващите сметки не се променят. Желаете ли да продължите?`))) return;
+    if (!(await dialogs.confirm(`Ще бъдат добавени ${selected.length} сметки от сметкоплан „${CHART_TEMPLATE_LABELS[type]}“ в сметкоплана за ${s.year.year} г. Съществуващите сметки не се променят. Желаете ли да продължите?`))) return;
     try {
       const all = selected.length === missing.length;
       const r = await api.post<{ added: number }>('/accounts/template', { type, ...(all ? {} : { numbers: selected.map((a) => a.number) }) });
@@ -89,7 +85,7 @@ export function ChartSelection({ tab }: ScreenProps) {
   return (
     <div className="flex h-full flex-col">
       <CommandBar right={<span className="text-[12px] text-slate-500">Шаблон: {template.length} сметки · налични: {template.length - missing.length} · избрани за добавяне: {selected.length}</span>}>
-        <Button variant="primary" icon={<ListPlus className="size-3.5" />} disabled={!editable || !selected.length || type !== 'commercial'} onClick={apply}>
+        <Button variant="primary" icon={<ListPlus className="size-3.5" />} disabled={!editable || !selected.length} onClick={apply}>
           Добавяне на избраните
         </Button>
         <Button variant="ghost" onClick={() => { setTouched(true); setUnchecked(new Set()); }}>Маркирай всички</Button>
@@ -102,11 +98,16 @@ export function ChartSelection({ tab }: ScreenProps) {
         <div className="w-72 shrink-0 border-r border-slate-300 bg-slate-50 p-3">
           <Panel title="Вид сметкоплан">
             <div className="flex flex-col gap-1.5 p-3">
-              {TEMPLATES.map((t) => (
-                <label key={t.id} className={cx('flex items-center gap-2 whitespace-nowrap', !t.available && 'text-slate-400')} title={t.available ? undefined : 'Предстои'}>
-                  <input type="radio" name="chart-template" className="accent-brand-500" checked={type === t.id} disabled={!t.available} onChange={() => setType(t.id)} />
-                  <span>{t.label}</span>
-                  {!t.available && <span className="text-[11px]">(предстои)</span>}
+              {CHART_TEMPLATE_TYPES.map((id) => (
+                <label key={id} className="flex items-center gap-2 whitespace-nowrap">
+                  <input
+                    type="radio"
+                    name="chart-template"
+                    className="accent-brand-500"
+                    checked={type === id}
+                    onChange={() => { setType(id); setUnchecked(new Set()); setExpanded(new Set()); }}
+                  />
+                  <span>{CHART_TEMPLATE_LABELS[id]}</span>
                 </label>
               ))}
             </div>
@@ -118,6 +119,7 @@ export function ChartSelection({ tab }: ScreenProps) {
               <>Сметките от шаблона, които липсват в индивидуалния сметкоплан, могат да бъдат добавени. Наличните сметки (сиви) не се променят.</>
             )}
             <div className="mt-2">Сметкоплан {s.year.year >= 2026 ? 'в евро (от 2026 г.)' : 'в лева (до 2025 г.)'}.</div>
+            {type === 'budget' && <div className="mt-2">Бюджетният сметкоплан включва и полето „Параграф“ в прозорец Контиране.</div>}
           </div>
         </div>
         <div className="min-w-0 flex-1 overflow-auto">

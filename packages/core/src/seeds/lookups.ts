@@ -263,6 +263,26 @@ export const BANKS: { code: string; name: string }[] = [
   ['ESPYBGS1', 'Изипей АД'],
   ['ECFEBG22', 'Еконт Файненшъл Сървисис'],
   ['EVIULT2V', 'Paysera LT'],
+  // Appended to reach Delta's 46 rows. Reconstructed from public sources (BNB
+  // register of BAE/BIC codes and its republications), not from Delta's seed;
+  // historical banks are kept so that old IBANs still resolve. Ids are
+  // positional: append only.
+  ['BUINBGSF', 'ТБ Алианц България АД'],
+  ['CRBABGSF', 'Алфа Банк - клон България (до 2016 г.)'],
+  ['KORPBGSF', 'Корпоративна търговска банка АД (до 2014 г.)'],
+  ['CBUNBGSF', 'МКБ Юнионбанк АД (до 2016 г.)'],
+  ['BUIBBGSF', 'СИБАНК ЕАД (до 2018 г.)'],
+  ['BINVBGSF', 'Креди Агрикол България ЕАД (Емпорики Банк)'],
+  ['RIBRBG22', 'Регионална инвестиционна банка - клон България'],
+  ['BFTBBGSF', 'Булбанк АД (до 2007 г., вече УниКредит Булбанк)'],
+  ['BACXBGSF', 'ХВБ Банк Биохим АД (до 2007 г., вече УниКредит Булбанк)'],
+  ['BNBGBGSD', 'Българска народна банка (RINGS)'],
+  ['BIGKBGSF', 'Бигбанк АС - клон България'],
+  ['VGAGBGSF', 'Варенголд Банк АГ - клон София'],
+  ['PATCBGSF', 'Пейнетикс АД'],
+  ['TRIVBGS1', 'Транскарт Файненшъл Сървисис АД'],
+  ['TRUDBG21', 'Райвъл (ЕУ) ЕАД'],
+  ['MYFNBGSF', 'Майфин ЕАД'],
 ].map(([code, name]) => ({ code: code!, name: name! }));
 
 export const ADDRESS_TYPES = [

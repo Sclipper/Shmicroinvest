@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { CHART_TEMPLATE_LABELS, CHART_TEMPLATE_TYPES, type ChartTemplateType } from '@shmi/core';
 import { api } from '../api.ts';
 import { Button, Checkbox, ErrorText, Field, Select, TextInput } from '../components/ui.tsx';
 
@@ -104,6 +105,7 @@ export function NewCompanyForm({ firstRun, onDone, onCancel }: { firstRun: boole
   const [f, setF] = useState({ companyName: '', bulstat: '', adminName: 'Администратор', adminPassword: '', confirm: '', year: new Date().getFullYear() });
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const [chartTemplate, setChartTemplate] = useState<ChartTemplateType>('commercial');
   const [transfer, setTransfer] = useState({ chartOfAccounts: false, users: false, partners: false, accountings: false, accountingTemplates: false, bankTemplates: false });
   // Entries and templates post to accounts: they bring the chart along (01b 1.2).
   const chartForced = transfer.accountings || transfer.accountingTemplates || transfer.bankTemplates;
@@ -124,7 +126,7 @@ export function NewCompanyForm({ firstRun, onDone, onCancel }: { firstRun: boole
     setError(null);
     try {
       const r = await api.post<{ name: string }>('/companies', {
-        companyName: f.companyName, bulstat: f.bulstat || undefined, adminName: f.adminName, adminPassword: f.adminPassword, year: f.year, chartTemplate: 'commercial',
+        companyName: f.companyName, bulstat: f.bulstat || undefined, adminName: f.adminName, adminPassword: f.adminPassword, year: f.year, chartTemplate,
         transfer: firstRun ? undefined : transfer,
       });
       localStorage.setItem('shmi.lastCompany', r.name);
@@ -160,6 +162,11 @@ export function NewCompanyForm({ firstRun, onDone, onCancel }: { firstRun: boole
           <TextInput type="password" value={f.confirm} onChange={set('confirm')} autoComplete="new-password" required />
         </Field>
       </div>
+      <Field label="Вид сметкоплан">
+        <Select value={chartTemplate} disabled={!firstRun && (transfer.chartOfAccounts || chartForced)} onChange={(e) => setChartTemplate(e.target.value as ChartTemplateType)}>
+          {CHART_TEMPLATE_TYPES.map((t) => <option key={t} value={t}>{CHART_TEMPLATE_LABELS[t]}</option>)}
+        </Select>
+      </Field>
       {!firstRun && (
         <fieldset className="rounded-sm border border-slate-200 px-3 pt-1 pb-2">
           <legend className="px-1 text-[12px] text-slate-500">Прехвърляне на данни от активната фирма</legend>
@@ -174,7 +181,7 @@ export function NewCompanyForm({ firstRun, onDone, onCancel }: { firstRun: boole
         </fieldset>
       )}
       <div className="text-[12px] text-slate-500">
-        {transfer.chartOfAccounts || chartForced ? 'Сметкопланът се копира от активната фирма.' : 'Фирмата се създава с Фирмен (Търговски) сметкоплан.'} От 2026 г. основната валута е евро.
+        {transfer.chartOfAccounts || chartForced ? 'Сметкопланът се копира от активната фирма.' : `Фирмата се създава с ${CHART_TEMPLATE_LABELS[chartTemplate]} сметкоплан.${chartTemplate === 'budget' ? ' Полето „Параграф“ в Контиране се включва.' : ''}`} От 2026 г. основната валута е евро.
       </div>
       {dupWarning && (
         <div role="alert" className="flex items-center gap-2 rounded-sm border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">

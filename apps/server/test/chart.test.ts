@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { chartTemplateAccounts } from '@shmi/core';
 import { createTestCompany, type TestCompany } from './helpers.ts';
 
 let t: TestCompany;
@@ -121,5 +122,74 @@ describe('chart of accounts rules (03a 1.5-1.9)', () => {
     // Other edits keep the flag.
     await call('PUT', `/accounts/${r.body.id}`, { isForBanks: true });
     expect((await call('PUT', `/accounts/${r.body.id}`, { description: 'Банка 2' })).body.isForBanks).toBe(true);
+  });
+});
+
+describe('chart-of-accounts templates (01a 7, 03a 1.3-1.4)', { timeout: 120_000 }, () => {
+  type Acc = { id: number; number: string; description: string; categoryId: number | null; parentId: number | null };
+  const nonRoot = (list: Acc[]) => list.filter((a) => a.number !== '0');
+  const chartSizes = async (c: TestCompany) => {
+    const db = await c.driver.company(c.companyDb);
+    return ((await db.execute(`SELECT is_euro, count(*)::int AS n FROM accounts WHERE number <> '0' GROUP BY is_euro ORDER BY is_euro`)) as unknown as { rows: unknown[] }).rows;
+  };
+
+  it('a non-profit company gets the ЮЛНЦ chart (EUR chart from 2026) and its F4 templates', async () => {
+    const n = await createTestCompany({ chartTemplate: 'nonProfit', companyName: 'Сдружение Тест' });
+    try {
+      const s = (await n.call('GET', '/session')).body;
+      expect([s.chartOfAccountsType, s.chartIsEmpty, s.settings.IsParagraphEnabled]).toEqual(['nonProfit', false, 'False']);
+      const accs = (await n.call('GET', '/accounts')).body as Acc[];
+      expect(nonRoot(accs)).toHaveLength(chartTemplateAccounts('nonProfit').length);
+      const by = new Map(accs.map((a) => [a.number, a]));
+      expect(by.get('712')!.description).toBe('Приходи от членски внос');
+      expect(by.get('609/1/1')).toMatchObject({ categoryId: 45, parentId: by.get('609/1')!.id });
+      expect(by.get('453/1')!.categoryId).toBe(16);
+      expect(by.has('415')).toBe(false);
+      expect(await chartSizes(n)).toEqual([{ is_euro: true, n: 301 }]);
+      // F4 offers the missing accounts of the chosen template.
+      expect((await n.call('DELETE', `/accounts/${by.get('716')!.id}`)).status).toBe(200);
+      const f4 = (await n.call('GET', '/accounts/templates?q=71')).body as { number: string }[];
+      expect(f4.map((a) => a.number)).toEqual(['716']);
+    } finally {
+      await n.close();
+    }
+  });
+
+  it('a budget company gets the 4-digit budget chart in BGN and EUR and IsParagraphEnabled', async () => {
+    const b = await createTestCompany({ chartTemplate: 'budget', year: 2025, companyName: 'Община Тест' });
+    try {
+      const s = (await b.call('GET', '/session')).body;
+      expect([s.chartOfAccountsType, s.settings.IsParagraphEnabled]).toEqual(['budget', 'True']);
+      const accs = (await b.call('GET', '/accounts')).body as Acc[];
+      const n = chartTemplateAccounts('budget').length;
+      expect(nonRoot(accs)).toHaveLength(n);
+      const by = new Map(accs.map((a) => [a.number, a]));
+      expect(by.get('1001')).toMatchObject({ description: 'Разполагаем капитал', parentId: by.get('100')!.id });
+      expect(by.get('5011')!.categoryId).toBe(21);
+      expect(by.get('4511/9')).toMatchObject({ categoryId: 36, parentId: by.get('4511')!.id });
+      // A EUR year gets the budget chart too (the type is stored per database).
+      const y = await b.call('POST', '/years', { year: 2026, force: true });
+      expect(y.status, y.text).toBe(201);
+      expect(await chartSizes(b)).toEqual([{ is_euro: false, n }, { is_euro: true, n }]);
+    } finally {
+      await b.close();
+    }
+  });
+
+  it('"Избор на сметкоплан" adds selected budget accounts with their ancestors to an empty chart', async () => {
+    const e = await createTestCompany({ companyName: 'Празна Тест' });
+    try {
+      const r = await e.call('POST', '/companies', { companyName: 'Без сметкоплан ЕООД', adminName: 'Админ', adminPassword: 'secret2', year: 2026, chartTemplate: null });
+      expect(r.status, r.text).toBe(201);
+      const add = await e.call('POST', '/accounts/template', { type: 'budget', numbers: ['4511/1'] });
+      expect(add.status, add.text).toBe(200);
+      expect(add.body.added).toBe(5);
+      const numbers = nonRoot((await e.call('GET', '/accounts')).body as Acc[]).map((a) => a.number).sort();
+      expect(numbers).toEqual(['4', '45', '451', '4511', '4511/1']);
+      const s = (await e.call('GET', '/session')).body;
+      expect([s.chartOfAccountsType, s.settings.IsParagraphEnabled]).toEqual(['budget', 'True']);
+    } finally {
+      await e.close();
+    }
   });
 });

@@ -1,7 +1,7 @@
 import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import {
-  ACCOUNT_CATEGORIES, COMMERCIAL_CHART, MULTI_CATEGORIES, isValidAccountNumber, nextAccountNumber, normalizeAccountNumber,
-  parseChartTemplate, rebuildNestedSet, isProductCategory, isProductReleaseCategory, productAccountTypeFor, stockMessage,
+  ACCOUNT_CATEGORIES, CHART_TEMPLATE_TYPES, MULTI_CATEGORIES, chartTemplateAccounts, chartTemplateSettings, isValidAccountNumber, nextAccountNumber,
+  normalizeAccountNumber, rebuildNestedSet, isProductCategory, isProductReleaseCategory, productAccountTypeFor, stockMessage,
   effectiveConcludeAccountId, type ChartTemplateType, type ValidationMessage,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
@@ -32,13 +32,18 @@ export async function chartRoot(db: DbOrTx, isEuro: boolean) {
   return root;
 }
 
+/** The chosen ChartOfAccountsType (03a 1.3); null when none is chosen yet. */
+export async function chartTemplateType(db: DbOrTx): Promise<ChartTemplateType | null> {
+  const v = await getConfig(db, 'ChartOfAccountsType');
+  return v && (CHART_TEMPLATE_TYPES as readonly string[]).includes(v) ? (v as ChartTemplateType) : null;
+}
+
 /**
  * Template selection ("Избор на сметкоплан"): categories are inserted when the
  * table is empty, then template accounts not yet present (by number) are added
  * under their parents and the tree is rebuilt.
  */
 export async function applyChartTemplate(db: DbOrTx, type: ChartTemplateType, isEuro: boolean, onlyNumbers?: string[]) {
-  if (type !== 'commercial') throw badRequest('Този сметкоплан все още не е наличен. Използвайте "Фирмен (Търговски)".');
   const [{ count }] = (await db.select({ count: sql<number>`count(*)::int` }).from(s.accountCategories)) as [{ count: number }];
   if (count === 0) {
     await db.insert(s.accountCategories).values(
@@ -48,33 +53,39 @@ export async function applyChartTemplate(db: DbOrTx, type: ChartTemplateType, is
   }
   const root = await chartRoot(db, isEuro);
   const currencyId = root.currencyId;
-  let template = parseChartTemplate(COMMERCIAL_CHART);
+  let template = chartTemplateAccounts(type);
   if (onlyNumbers) {
     const wanted = new Set(onlyNumbers);
+    const byNumber = new Map(template.map((a) => [a.number, a]));
     // Keep ancestors of wanted accounts so the tree stays connected.
     for (const a of template) if (wanted.has(a.number)) {
       let p = a.parentNumber;
-      while (p !== '0') { wanted.add(p); p = template.find((t) => t.number === p)?.parentNumber ?? '0'; }
+      while (p !== '0') { wanted.add(p); p = byNumber.get(p)?.parentNumber ?? '0'; }
     }
     template = template.filter((a) => wanted.has(a.number));
   }
   const existing = await db.select({ id: s.accounts.id, number: s.accounts.number }).from(s.accounts).where(eq(s.accounts.isEuro, isEuro));
   const idByNumber = new Map(existing.map((e) => [e.number, e.id]));
   idByNumber.set('0', root.id);
+  // Insert level by level, one statement per chunk (the budget chart has ~1150 accounts).
+  let pending = template.filter((a) => !idByNumber.has(a.number));
   let added = 0;
-  for (const a of template) {
-    if (idByNumber.has(a.number)) continue;
-    const parentId = idByNumber.get(a.parentNumber);
-    if (!parentId) continue;
-    const [row] = await db.insert(s.accounts).values({
-      parentId, number: a.number, description: a.description, accountCategoryId: a.categoryId,
-      currencyId, isActive: a.isActive, isEuro,
-    }).returning({ id: s.accounts.id });
-    idByNumber.set(a.number, row!.id);
-    added++;
+  for (;;) {
+    const ready = pending.filter((a) => idByNumber.has(a.parentNumber));
+    if (!ready.length) break;
+    for (let i = 0; i < ready.length; i += 500) {
+      const rows = await db.insert(s.accounts).values(ready.slice(i, i + 500).map((a) => ({
+        parentId: idByNumber.get(a.parentNumber)!, number: a.number, description: a.description, accountCategoryId: a.categoryId,
+        currencyId, isActive: a.isActive, isEuro,
+      }))).returning({ id: s.accounts.id, number: s.accounts.number });
+      for (const r of rows) idByNumber.set(r.number, r.id);
+      added += rows.length;
+    }
+    pending = pending.filter((a) => !idByNumber.has(a.number));
   }
   await rebuildAccountsTree(db);
   await setConfig(db, 'ChartOfAccountsType', type);
+  for (const [key, value] of Object.entries(chartTemplateSettings(type))) await setConfig(db, key, value);
   return { added };
 }
 
@@ -367,13 +378,15 @@ export async function deleteAccount(db: DbOrTx, id: number) {
 
 /**
  * Account templates (F4, ChooseAccountTemplateCommand, 03a 1.6): accounts of
- * the commercial template that are not in the chart yet.
+ * the company's template (ChartOfAccountsType, commercial when none is chosen)
+ * that are not in the chart yet.
  */
 export async function accountTemplates(db: DbOrTx, isEuro: boolean, q?: string) {
+  const type = (await chartTemplateType(db)) ?? 'commercial';
   const existing = await db.select({ number: s.accounts.number }).from(s.accounts).where(eq(s.accounts.isEuro, isEuro));
   const have = new Set(existing.map((e) => e.number));
   const needle = q?.trim().toLowerCase() ?? '';
-  return parseChartTemplate(COMMERCIAL_CHART)
+  return chartTemplateAccounts(type)
     .filter((a) => !have.has(a.number))
     .filter((a) => !needle || a.number.startsWith(needle) || a.description.toLowerCase().includes(needle))
     .map((a) => ({ number: a.number, description: a.description, categoryId: a.categoryId, isActive: a.isActive, parentNumber: a.parentNumber }));
