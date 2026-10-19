@@ -221,6 +221,11 @@ export const BANKS: { code: string; name: string }[] = [
   ['CITIBGSF', 'Ситибанк Европа АД - клон България'],
   ['INGBBGSF', 'ING Bank N.V. - клон София'],
   ['BNPABGSX', 'БНП Парибас С.А. - клон София'],
+  ['SOMBBGSF', 'Общинска банка АД'],
+  ['INTFBGSF', 'myPOS'],
+  ['ESPYBGS1', 'Изипей АД'],
+  ['ECFEBG22', 'Еконт Файненшъл Сървисис'],
+  ['EVIULT2V', 'Paysera LT'],
 ].map(([code, name]) => ({ code: code!, name: name! }));
 
 export const ADDRESS_TYPES = [

@@ -154,6 +154,16 @@ export const EXCHANGE_MESSAGES = {
   strMissingCompanyAccount: 'Липсва партньорна сметка на ред, където има избран партньор!',
   strCompanyAccountsOnBothSidesWarning: 'Въведени са сметки с партньори и в дебита и в кредита.',
   strCurrencyAccountsNotFound: 'Не са намерени сметки за приходи и разходи от валутни операции.', // no text
+  strBankTaxAccountsMissing: 'Не е намерена сметка за банкови такси (629)!', // no text
+  strBankTaxZeroSum: 'Сумата на банковата такса е нула!', // no text
+  strBankTaxZeroCurrencySum: 'Валутната сума на банковата такса е нула!', // no text
+  strBankTaxZeroExchangeRate: 'Курсът на банковата такса е нула!', // no text
+  strAutomaticFillExchangeRate: 'Автоматично попълване на курса за датата на движението', // no text
+  // corrected D-04b-6 (Delta has no duplicate detection)
+  strBankStatementRowAlreadyImported: 'Движението вече е импортирано от банково извлечение. Повторният запис ще създаде дублирано контиране.',
+  strBankStatementRowsAlreadyImported: 'Редове, които вече са импортирани: {0}. Желаете ли да ги запишете отново?',
+  strBindIbanSuccess: 'IBAN {0} е обвързан с партньор {1}.',
+  strIbanAlreadyBound: 'IBAN {0} вече е обвързан с партньор {1}.',
   // template editor (03a 9.4)
   strMissingTemplateName: 'Не е въведено валидно име за шаблон!',
   strMissingCondition: 'Не е въведено условие!',

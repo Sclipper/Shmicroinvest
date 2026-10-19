@@ -308,7 +308,12 @@ export function parseStatementTable(rows: string[][], bankCode: string | null | 
   }
   const out: BankStatementRow[] = [];
   if (headerAt < 0) return { format, model: mapper.id, rows: out };
-  for (let r = headerAt + 1; r < rows.length; r++) {
+  const other: number[] = [];
+  for (let r = 0; r < rows.length; r++) {
+    if (r <= headerAt) {
+      if (r < headerAt) other.push(r);
+      continue;
+    }
     const cells = rows[r]!;
     if (!cells.some((c) => c.trim())) continue;
     const m: Model = {};
@@ -317,8 +322,117 @@ export function parseStatementTable(rows: string[][], bankCode: string | null | 
     });
     const row = toRow(mapper, m, out.length);
     if (row) out.push(row);
+    else other.push(r);
   }
-  return withPeriod({ format, model: mapper.id, rows: out });
+  return withPeriod({ format, model: mapper.id, ...readStatementHeader(rows, other, mapper.id), rows: out });
+}
+
+// ---------------------------------------------------------------------------
+// Statement header data of Excel/CSV files (1.3 "Header metadata", 1.4)
+
+export interface StatementHeader {
+  iban?: string;
+  currency?: string;
+  from?: string;
+  to?: string;
+  openingBalance?: string;
+  closingBalance?: string;
+}
+
+const ISO_CURRENCIES = new Set(['BGN', 'EUR', 'USD', 'GBP', 'CHF', 'RON', 'TRY', 'JPY', 'CAD', 'AUD', 'SEK', 'NOK', 'DKK', 'PLN', 'CZK', 'HUF', 'RUB', 'CNY', 'RSD', 'MKD']);
+const IBAN_TOKEN = /^[A-Z]{2}\d{2}[A-Z]{4}[A-Z0-9]{8,26}$/;
+const DATE_TOKEN = /\b\d{1,2}[./-]\d{1,2}[./-]\d{4}\b|\b\d{4}-\d{2}-\d{2}\b/g;
+const OPENING = /начално салдо|старо салдо|начален баланс|салдо в началото|opening balance|beginning balance/i;
+const CLOSING = /крайно салдо|ново салдо|краен баланс|салдо в края|closing balance|ending balance/i;
+const PERIOD = /период|period|от дата|from date|за периода/i;
+
+/** Header rows (1-based) where a bank's Excel layout keeps period and currency (1.3); others: every row above the table. */
+const HEADER_ROWS: Record<string, number[]> = {
+  Allianz: [3, 4], Asset: [9], Investbank: [6, 10], Zirat: [5, 8], Procredit: [2, 3], Teksim: [2, 3],
+};
+
+const cellAt = (rows: string[][], row1: number, col: number) => (rows[row1 - 1]?.[col] ?? '').trim();
+const tokens = (t: string) => t.toUpperCase().split(/[\s,;:()]+/).filter(Boolean);
+const ibanIn = (t: string) => tokens(t).find((x) => IBAN_TOKEN.test(x));
+const datesIn = (t: string) => [...t.matchAll(DATE_TOKEN)].map((m) => parseImportDate(m[0])).filter((d): d is string => !!d);
+const amountText = (t: string) => {
+  const v = parseDecimalText(t.replace(/[^\d,.\-+\s]/g, ''));
+  return v === null ? undefined : dec(v).toFixed(2);
+};
+
+function currencyIn(t: string, afterIban?: string): string | undefined {
+  const paren = /\(([A-Z]{3})\)/.exec(t.toUpperCase()); // Postbank "(EUR)"
+  if (paren && ISO_CURRENCIES.has(paren[1]!)) return paren[1];
+  const tok = tokens(t);
+  if (afterIban) {
+    const i = tok.indexOf(afterIban);
+    if (i >= 0 && ISO_CURRENCIES.has(tok[i + 1] ?? '')) return tok[i + 1];
+  }
+  if (/валута|currency/i.test(t)) return tok.find((x) => ISO_CURRENCIES.has(x));
+  return undefined;
+}
+
+/**
+ * Reads the statement header block: IBAN, currency, period and balances.
+ * DSK has fixed cells (col A rows 3-10: client block ending with the account
+ * "IBAN CUR"; col B rows 12-17: start, end, BeginSum, TurnoverDR, TurnoverCR,
+ * EndSum). Other layouts are scanned by content in the bank's header rows, or
+ * in every row outside the movements table: an IBAN token, the currency by
+ * caption, "(XXX)" or after the IBAN, the period (a "Период" cell or the last
+ * two dates) and balances by caption ("Начално/Старо салдо", "Крайно/Ново салдо").
+ */
+export function readStatementHeader(rows: string[][], otherRows: number[], mapperId: string): StatementHeader {
+  const h: StatementHeader = {};
+  if (mapperId === 'DSK') {
+    for (let r = 3; r <= 10; r++) {
+      const t = cellAt(rows, r, 0);
+      const iban = ibanIn(t);
+      if (iban) {
+        h.iban = iban;
+        h.currency = currencyIn(t, iban);
+      }
+    }
+    const d1 = parseImportDate(cellAt(rows, 12, 1)) ?? parseStatementDate(cellAt(rows, 12, 1));
+    const d2 = parseImportDate(cellAt(rows, 13, 1)) ?? parseStatementDate(cellAt(rows, 13, 1));
+    if (d1 && d2) {
+      h.from = d1;
+      h.to = d2;
+      h.openingBalance = amountText(cellAt(rows, 14, 1));
+      h.closingBalance = amountText(cellAt(rows, 17, 1));
+      return h;
+    }
+  }
+  const scan = HEADER_ROWS[mapperId]?.map((r) => r - 1) ?? otherRows;
+  const scanSet = new Set([...scan, ...otherRows]);
+  const dates: string[] = [];
+  for (const r of [...scanSet].sort((a, b) => a - b)) {
+    const cells = rows[r] ?? [];
+    const inHeader = scan.includes(r);
+    cells.forEach((raw, i) => {
+      const t = raw.trim();
+      if (!t) return;
+      const iban = ibanIn(t);
+      if (iban && !h.iban) h.iban = iban;
+      if (!h.currency) h.currency = currencyIn(t, iban) ?? (/^(валута|currency)\s*:?$/i.test(t) ? tokens(cells[i + 1] ?? '').find((x) => ISO_CURRENCIES.has(x)) : undefined);
+      const next = () => cells.slice(i + 1).map((c) => amountText(c)).find((v) => v !== undefined);
+      if (OPENING.test(t) && !h.openingBalance) h.openingBalance = amountText(t.replace(OPENING, '')) ?? next();
+      if (CLOSING.test(t) && !h.closingBalance) h.closingBalance = amountText(t.replace(CLOSING, '')) ?? next();
+      if (!inHeader) return;
+      const ds = datesIn(t);
+      if (PERIOD.test(t) && ds.length >= 2 && !h.from) {
+        h.from = ds[0];
+        h.to = ds[1];
+      }
+      dates.push(...ds);
+    });
+  }
+  if (!h.from && dates.length >= 2) {
+    // Zirat and the like: the last two date tokens of the header block.
+    const [a, b] = dates.slice(-2) as [string, string];
+    h.from = a < b ? a : b;
+    h.to = a < b ? b : a;
+  }
+  return h;
 }
 
 function withPeriod(s: ParsedStatement): ParsedStatement {
@@ -510,6 +624,142 @@ export function parseBakbXml(text: string): ParsedStatement | null {
   return withPeriod({ format: 'BAKB XML', model: 'BAKB', iban: root.attrs.IBAN ? normalizeIban(root.attrs.IBAN) : undefined, currency: root.attrs.Currency, rows });
 }
 
+// ---------------------------------------------------------------------------
+// Fibank, Raiffeisen and Unicredit XML (1.13)
+
+const lc = (s: string) => s.toLowerCase();
+/** Child elements by local name, case-insensitive. */
+const kid = (el: XmlElement | undefined, ...names: string[]) => el?.children.find((c) => names.some((n) => lc(c.local) === lc(n)));
+const kidText = (el: XmlElement | undefined, ...names: string[]) => kid(el, ...names)?.text.trim() ?? '';
+const DATE_NAMES = ['Date', 'ValueDate', 'TrnDate', 'TransactionDate', 'OperationDate', 'DateOperation', 'ProcessingDate', 'ProcessDate', 'BookingDate', 'PostingDate', 'DateTime'];
+const REF_NAMES = ['DocRegNumber', 'Reference', 'RefNo', 'TrnReference', 'TransactionReference', 'DocumentNumber', 'Number'];
+
+/** Header values found anywhere outside the movement elements, by element name. */
+function xmlHeader(root: XmlElement, skip: Set<XmlElement>): StatementHeader {
+  const h: StatementHeader = {};
+  const visit = (el: XmlElement) => {
+    if (skip.has(el)) return;
+    const n = lc(el.local);
+    const t = el.text.trim();
+    if (t) {
+      if (!h.iban && /iban|accountnumber|^account$/.test(n) && IBAN_TOKEN.test(normalizeIban(t))) h.iban = normalizeIban(t);
+      else if (!h.currency && /^(currency|ccy|currencycode|valuta)$/.test(n) && ISO_CURRENCIES.has(t.toUpperCase())) h.currency = t.toUpperCase();
+      else if (!h.from && /^(fromdate|startdate|datefrom|periodfrom|begindate)$/.test(n)) h.from = parseStatementDate(t) ?? undefined;
+      else if (!h.to && /^(todate|enddate|dateto|periodto)$/.test(n)) h.to = parseStatementDate(t) ?? undefined;
+      else if (!h.openingBalance && /^(openingbalance|beginsum|beginbalance|oldbalance|startbalance|initialbalance)$/.test(n)) h.openingBalance = amountText(t);
+      else if (!h.closingBalance && /^(closingbalance|endsum|endbalance|newbalance|finalbalance)$/.test(n)) h.closingBalance = amountText(t);
+    }
+    el.children.forEach(visit);
+  };
+  visit(root);
+  return h;
+}
+
+/** Leaf texts of a movement element by local name; one nested level is flattened (OperationReason.Description, MovementDocument.DescriptionAdditional). */
+function flatModel(el: XmlElement): Model {
+  const m: Model = {};
+  for (const c of el.children) {
+    if (c.children.length) {
+      for (const g of c.children) if (!g.children.length) m[g.local] ??= g.text.trim();
+    } else m[c.local] = c.text.trim();
+  }
+  return m;
+}
+
+/** Model property by case-insensitive name. */
+function prop(m: Model, ...names: string[]) {
+  for (const n of names) {
+    const k = Object.keys(m).find((x) => lc(x) === lc(n));
+    if (k !== undefined && m[k]) return m[k]!;
+  }
+  return '';
+}
+
+/**
+ * Fibank statement XML: the file is `<ROWSET><ROW><XML>` + the statement +
+ * `</XML></ROW></ROWSET>`; the inner root `statement` has `system`, `header`
+ * and the movements. The spec documents the Fibank model fields (DebitTov,
+ * CreditTov, Amount, OperationReason.RecipientAccount / RecipientName /
+ * Description, REMIII); movement elements are the ones carrying DebitTov or
+ * CreditTov, and their date is the first child named like a date.
+ */
+export function parseFibankXml(text: string): ParsedStatement | null {
+  const t = text.trim().replace(/^<\?xml[^>]*\?>\s*/, '');
+  if (!/^<ROWSET>\s*<ROW>\s*<XML>/i.test(t) || !/<\/XML>\s*<\/ROW>\s*<\/ROWSET>$/i.test(t)) return null;
+  let root: XmlElement;
+  try {
+    root = parseXml(t.replace(/^<ROWSET>\s*<ROW>\s*<XML>/i, '').replace(/<\/XML>\s*<\/ROW>\s*<\/ROWSET>$/i, ''));
+  } catch {
+    return null;
+  }
+  if (lc(root.local) !== 'statement') return null;
+  const mapper = MAPPER_BY_ID.get('Fibank')!;
+  const items: XmlElement[] = [];
+  const find = (el: XmlElement) => {
+    if (kid(el, 'DebitTov', 'CreditTov')) items.push(el);
+    else el.children.forEach(find);
+  };
+  find(root);
+  const rows: BankStatementRow[] = [];
+  for (const el of items) {
+    const f = flatModel(el);
+    const model: Model = {
+      Date: prop(f, ...DATE_NAMES), ValueDate: prop(f, 'ValueDate', 'DateValue'), DocRegNumber: prop(f, ...REF_NAMES),
+      DebitTov: prop(f, 'DebitTov'), CreditTov: prop(f, 'CreditTov'), Amount: prop(f, 'Amount'),
+      RecipientAccount: prop(f, 'RecipientAccount') || kidText(kid(el, 'OperationReason'), 'RecipientAccount'),
+      RecipientName: prop(f, 'RecipientName') || kidText(kid(el, 'OperationReason'), 'RecipientName'),
+      Description: prop(f, 'Description') || kidText(kid(el, 'OperationReason'), 'Description'),
+      TRNAccount: prop(f, 'REMIII'),
+    };
+    const row = toRow(mapper, model, rows.length);
+    if (row) rows.push(row);
+  }
+  const head = xmlHeader(kid(root, 'header') ?? root, new Set(items));
+  return withPeriod({ format: 'Fibank XML', model: mapper.id, ...head, rows });
+}
+
+/**
+ * Raiffeisen / Unicredit data-contract XML (`d3p1:`-prefixed elements named
+ * after the model properties). Movement elements are found by their
+ * properties: Unicredit's carry AmountInMovementCCY, Raiffeisen's Narrative or
+ * OppositeSideAccount with an Amount.
+ */
+export function parseDataContractXml(root: XmlElement, bankCode: string | null | undefined): ParsedStatement | null {
+  const isUni = (el: XmlElement) => !!kid(el, 'AmountInMovementCCY');
+  const isRzb = (el: XmlElement) => !!kid(el, 'Amount') && !!kid(el, 'Narrative', 'OppositeSideAccount');
+  const items: XmlElement[] = [];
+  let kind: 'Unicredit' | 'Raiffeisen' | null = null;
+  const find = (el: XmlElement) => {
+    const k = isUni(el) ? 'Unicredit' : isRzb(el) ? 'Raiffeisen' : null;
+    if (k && (!kind || kind === k)) {
+      kind = k;
+      items.push(el);
+    } else el.children.forEach(find);
+  };
+  find(root);
+  if (!kind || !items.length) return null;
+  const preferred = mapperForBank(bankCode).id;
+  const mapper = MAPPER_BY_ID.get(preferred === 'Unicredit' || preferred === 'Raiffeisen' ? (kind === preferred ? preferred : kind) : kind)!;
+  const rows: BankStatementRow[] = [];
+  for (const el of items) {
+    const f = flatModel(el);
+    const model: Model = mapper.id === 'Unicredit'
+      ? {
+          Date: prop(f, ...DATE_NAMES), ValueDate: prop(f, 'ValueDate'), DocRegNumber: prop(f, ...REF_NAMES), MovementType: prop(f, 'MovementType'),
+          AmountInMovementCCY: prop(f, 'AmountInMovementCCY'), OppositeSideAccount: prop(f, 'OppositeSideAccount', 'BeneficiaryAccount', 'IBAN'),
+          OppositeSideName: prop(f, 'OppositeSideName', 'BeneficiaryName', 'Beneficiary'), Reason: prop(f, 'Reason'), ReasonI02: prop(f, 'ReasonI02'),
+        }
+      : {
+          Date: prop(f, ...DATE_NAMES), ValueDate: prop(f, 'ValueDate'), DocRegNumber: prop(f, ...REF_NAMES), MovementType: prop(f, 'MovementType'),
+          Amount: prop(f, 'Amount'), OppositeSideAccount: prop(f, 'OppositeSideAccount'), OppositeSideName: prop(f, 'OppositeSideName'),
+          Narrative: prop(f, 'Narrative'), DescriptionAdditional: prop(f, 'DescriptionAdditional'),
+        };
+    const row = toRow(mapper, model, rows.length);
+    if (row) rows.push(row);
+  }
+  return withPeriod({ format: `${mapper.id} XML`, model: mapper.id, ...xmlHeader(root, new Set(items)), rows });
+}
+
 /** Text decoding: UTF-8 (with or without BOM) when valid, else windows-1251 (Encoding.Default on a Bulgarian Windows). */
 export function decodeText(bytes: Uint8Array): string {
   if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) return new TextDecoder('utf-8').decode(bytes.subarray(3));
@@ -533,6 +783,7 @@ export function parseBankStatement(input: { text?: string; table?: string[][] },
   const text = input.text ?? '';
   const trimmed = text.trimStart();
   if (trimmed.startsWith('<')) {
+    if (/^(<\?xml[^>]*\?>\s*)?<ROWSET>/i.test(trimmed)) return parseFibankXml(text);
     let root: XmlElement | null = null;
     try {
       root = parseXml(text);
@@ -542,6 +793,9 @@ export function parseBankStatement(input: { text?: string; table?: string[][] },
     if (root?.local === 'Document') return parseCamt053(root, bankCode);
     if (root?.local === 'AccountMovementsResult' || /<AccountMovementsResult/.test(text)) return parseDskXml(text);
     if (root?.local === 'AccountsMovements') return parseBakbXml(text);
+    // Fibank movements XML (SYTY_BAL_CUST_MAIN > ACC, ROWSET): the spec gives only the probe, not the fields.
+    if (root?.local === 'SYTY_BAL_CUST_MAIN') return null;
+    if (root) return parseDataContractXml(root, bankCode);
     return null;
   }
   const mt = parseMt940(text);
