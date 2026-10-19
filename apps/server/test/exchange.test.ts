@@ -688,7 +688,7 @@ describe('euro conversion (04b 4)', { timeout: 60_000 }, () => {
     try {
       const asset = await y.call('POST', '/assets', {
         inventoryNumber: 'E-1', name: 'Машина', personInCharge: 'Иван Петров', categoryId: 2, locationId: null, synchronized: false,
-        inventoryAccountId: y.acc('203'), debitAccountId: y.acc('603'), creditAccountId: y.acc('241/2'),
+        inventoryAccountId: y.acc('206'), debitAccountId: y.acc('603'), creditAccountId: y.acc('241/6'),
         accounting: { depreciationAmount: '12000', nonDepreciableAmount: '0', acquisitionDate: '2025-03-15', startDate: '2025-03-15', calcType: 'period', activePeriodLength: 60, annualRate: null, conservation: null, note: '', serialNumber: '' },
         tax: { depreciationAmount: '12000', nonDepreciableAmount: '0', acquisitionDate: '2025-03-15', startDate: '2025-03-15', calcType: 'rate', activePeriodLength: 60, annualRate: '30', conservation: null, note: '', serialNumber: '' },
       });

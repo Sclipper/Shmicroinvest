@@ -157,8 +157,8 @@ test('chart: delete asks with the spec text; a used account lists why it cannot 
   await openApp(page);
   await page.keyboard.press('Control+h');
   const tab = activeTab(page);
-  await tab.getByPlaceholder('Търсене по номер или име').fill('109');
-  await tab.getByRole('cell', { name: '109', exact: true }).click();
+  await tab.getByPlaceholder('Търсене по номер или име').fill('159');
+  await tab.getByRole('cell', { name: '159', exact: true }).click();
   await tab.getByRole('button', { name: 'Изтриване' }).click();
   await expect(page.getByText('Желаете ли да изтриете избраната сметка?')).toBeVisible();
   await page.getByRole('dialog').getByRole('button', { name: 'Не', exact: true }).click();

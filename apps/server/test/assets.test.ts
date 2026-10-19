@@ -30,7 +30,7 @@ function harness() {
       const { accounting, tax, ...rest } = o;
       return {
         inventoryNumber: `T${String(++invSeq).padStart(4, '0')}`, name: 'Машина', personInCharge: 'Иван Петров', categoryId: 2,
-        inventoryAccountId: t.acc('203'), debitAccountId: t.acc('241/2'), creditAccountId: t.acc('603'), locationId: null, synchronized: false,
+        inventoryAccountId: t.acc('206'), debitAccountId: t.acc('241/6'), creditAccountId: t.acc('603'), locationId: null, synchronized: false,
         accounting: h.plan(accounting), tax: h.plan({ calcType: 'rate', annualRate: '30', ...tax }), ...rest,
       };
     },
@@ -262,7 +262,7 @@ describe('monthly posting (03b 12, acceptance 7-8)', () => {
     expect(e.term).toBe('Амортизация');
     expect(e.reference).toMatch(/^Струг; T\d{4}$/);
     expect(e.debits).toEqual([expect.objectContaining({ accountId: h.acc('603'), amount: '200.00' })]);
-    expect(e.credits).toEqual([expect.objectContaining({ accountId: h.acc('241/2'), amount: '200.00' })]);
+    expect(e.credits).toEqual([expect.objectContaining({ accountId: h.acc('241/6'), amount: '200.00' })]);
     expect((await h.call('GET', `/entries/${feb.accountingId}`)).body.accountingDate).toBe('2025-02-28');
     // Posted rows are no longer pending; the December 2024 row still is.
     const after = (await h.pending({ from: '2024-12-01', to: '2025-02-28' })).rows.filter((x) => x.assetId === assetId);
@@ -461,7 +461,7 @@ describe('improvement, revaluation, conservation, write-off (03b 9-11)', () => {
   it('acceptance 14 / 9.3a: impairment 6 000 -> 5 000 posts Dt 631 1 000 / Kt U, slot -1 000, 30 months of 166.66 + 166.86', async () => {
     await h.setDate('2026-06-30');
     const base = { depreciationAmount: '10000', startDate: '2024-10-15', acquisitionDate: '2024-10-15', activePeriodLength: 50 };
-    const created = await h.create({ name: 'Преса', inventoryAccountId: h.acc('203'), accounting: { ...base, manualAccrued: { date: '2026-06-30', amount: '4000' } }, tax: base });
+    const created = await h.create({ name: 'Преса', inventoryAccountId: h.acc('206'), accounting: { ...base, manualAccrued: { date: '2026-06-30', amount: '4000' } }, tax: base });
     const id = created.id;
     // A prior memorial order of 2026 (monthly posting) to check "last memorial number + 1".
     const other = await h.create({ accounting: { startDate: '2025-12-10', acquisitionDate: '2025-12-10' }, tax: { startDate: '2025-12-10', acquisitionDate: '2025-12-10' } });
@@ -469,14 +469,14 @@ describe('improvement, revaluation, conservation, write-off (03b 9-11)', () => {
     expect(prior.posted[0]!.documentNumber).toBe('0000000001');
     const info = (await h.call('GET', `/assets/${id}/ias`)).body;
     expect(info).toMatchObject({ newAmount: '6000.00', operationDate: '2026-06-30' });
-    const tooHigh = await h.call('POST', `/assets/${id}/ias`, { mode: 'revaluation', amount: '7000', withPosting: true, accountId: h.acc('291') });
+    const tooHigh = await h.call('POST', `/assets/${id}/ias`, { mode: 'revaluation', amount: '7000', withPosting: true, accountId: h.acc('241/6') });
     expect(keys(tooHigh)).toEqual(['strAmountIsLessThanRevaluationReserve']);
     expect(tooHigh.body.error).toBe('Внимание! Въведената стойност на преоценка на ДА превишава първоначалната му отчетна стойност. Операцията не може да бъде извършена.');
-    expect(keys(await h.call('POST', `/assets/${id}/ias`, { mode: 'revaluation', amount: '0', withPosting: true, accountId: h.acc('291') }))).toEqual(['strAmountIsLessThanRevaluationReserve']);
-    expect(keys(await h.call('POST', `/assets/${id}/ias`, { mode: 'revaluation', amount: '-1', withPosting: true, accountId: h.acc('291') }))).toEqual(['strNegativeRevaluationReserve']);
+    expect(keys(await h.call('POST', `/assets/${id}/ias`, { mode: 'revaluation', amount: '0', withPosting: true, accountId: h.acc('241/6') }))).toEqual(['strAmountIsLessThanRevaluationReserve']);
+    expect(keys(await h.call('POST', `/assets/${id}/ias`, { mode: 'revaluation', amount: '-1', withPosting: true, accountId: h.acc('241/6') }))).toEqual(['strNegativeRevaluationReserve']);
     // Acceptance 17: nothing was written by the refusals.
     expect((await h.view(id)).revaluationReserve).toBe('0.00');
-    const r = await h.call('POST', `/assets/${id}/ias`, { mode: 'revaluation', amount: '5000', withPosting: true, accountId: h.acc('291') });
+    const r = await h.call('POST', `/assets/${id}/ias`, { mode: 'revaluation', amount: '5000', withPosting: true, accountId: h.acc('241/6') });
     expect(r.status, r.text).toBe(200);
     expect(r.body.nrr).toBe('-1000.00');
     const e = (await h.call('GET', `/entries/${r.body.accountingId}`)).body;
@@ -484,7 +484,7 @@ describe('improvement, revaluation, conservation, write-off (03b 9-11)', () => {
     expect(e.term).toBe('Преоценка по МСС');
     expect(e.documentNumber).toBe('0000000002');
     expect(e.debits).toEqual([expect.objectContaining({ accountId: h.acc('631'), amount: '1000.00' })]);
-    expect(e.credits).toEqual([expect.objectContaining({ accountId: h.acc('291'), amount: '1000.00' })]);
+    expect(e.credits).toEqual([expect.objectContaining({ accountId: h.acc('241/6'), amount: '1000.00' })]);
     const v = await h.view(id);
     expect(v.revaluationReserve).toBe('-1000.00');
     expect(v.accounting.years.find((y) => y.year === 2026)!.revaluationReserve).toBe('-1000.00');
@@ -505,11 +505,11 @@ describe('improvement, revaluation, conservation, write-off (03b 9-11)', () => {
     const info = (await h.call('GET', `/assets/${id}/ias`)).body;
     expect(info.newAmount).toBe('4833.38');
     expect(info.operationDate).toBe('2027-01-31');
-    const r = await h.call('POST', `/assets/${id}/ias`, { mode: 'revaluation', amount: '5433.38', withPosting: true, accountId: h.acc('291') });
+    const r = await h.call('POST', `/assets/${id}/ias`, { mode: 'revaluation', amount: '5433.38', withPosting: true, accountId: h.acc('241/6') });
     expect(r.status, r.text).toBe(200);
     expect([r.body.nrr, r.body.totalReserve]).toEqual(['600.00', '-400.00']);
     const e = (await h.call('GET', `/entries/${r.body.accountingId}`)).body;
-    expect(e.debits).toEqual([expect.objectContaining({ accountId: h.acc('291'), amount: '600.00' })]);
+    expect(e.debits).toEqual([expect.objectContaining({ accountId: h.acc('241/6'), amount: '600.00' })]);
     expect(e.credits).toEqual([expect.objectContaining({ accountId: h.acc('731'), amount: '600.00' })]);
     const v = await h.view(id);
     expect(v.accounting.years.find((y) => y.year === 2027)!.revaluationReserve).toBe('600.00');
@@ -525,8 +525,8 @@ describe('improvement, revaluation, conservation, write-off (03b 9-11)', () => {
     await h.setDate('2026-06-30');
     const base = { depreciationAmount: '10000', startDate: '2024-10-15', acquisitionDate: '2024-10-15', activePeriodLength: 50 };
     const { id } = await h.create({ accounting: { ...base, manualAccrued: { date: '2026-06-30', amount: '4000' } }, tax: base });
-    const a = await h.call('POST', `/assets/${id}/ias`, { mode: 'revaluation', amount: '5000', withPosting: true, accountId: h.acc('291') });
-    const b = await h.call('POST', `/assets/${id}/ias`, { mode: 'revaluation', amount: '4500', withPosting: true, accountId: h.acc('291') });
+    const a = await h.call('POST', `/assets/${id}/ias`, { mode: 'revaluation', amount: '5000', withPosting: true, accountId: h.acc('241/6') });
+    const b = await h.call('POST', `/assets/${id}/ias`, { mode: 'revaluation', amount: '4500', withPosting: true, accountId: h.acc('241/6') });
     expect(b.status, b.text).toBe(200);
     const amountOf = async (aid: number) => (await h.call('GET', `/entries/${aid}`)).body.debits[0].amount;
     expect([await amountOf(a.body.accountingId), await amountOf(b.body.accountingId)]).toEqual(['1000.00', '1500.00']);
@@ -540,10 +540,10 @@ describe('improvement, revaluation, conservation, write-off (03b 9-11)', () => {
   it('R3 (defect D6 corrected): a revaluation in a locked month is refused and nothing changes; R4: zero is refused', async () => {
     const base = { depreciationAmount: '10000', startDate: '2024-10-15', acquisitionDate: '2024-10-15', activePeriodLength: 50 };
     const { id } = await h.create({ accounting: { ...base, manualAccrued: { date: '2026-06-30', amount: '4000' } }, tax: base });
-    const zero = await h.call('POST', `/assets/${id}/ias`, { mode: 'revaluation', amount: '6000', withPosting: true, accountId: h.acc('291') });
+    const zero = await h.call('POST', `/assets/${id}/ias`, { mode: 'revaluation', amount: '6000', withPosting: true, accountId: h.acc('241/6') });
     expect(keys(zero)).toEqual(['strZeroReevaluationSumError']);
     await h.call('PUT', `/years/${fy[2026]}/locks`, { months: [6] });
-    const r = await h.call('POST', `/assets/${id}/ias`, { mode: 'revaluation', amount: '5000', withPosting: true, accountId: h.acc('291') });
+    const r = await h.call('POST', `/assets/${id}/ias`, { mode: 'revaluation', amount: '5000', withPosting: true, accountId: h.acc('241/6') });
     expect(r.status).toBe(422);
     await h.call('PUT', `/years/${fy[2026]}/locks`, { months: [] });
     const v = await h.view(id);
@@ -580,8 +580,8 @@ describe('improvement, revaluation, conservation, write-off (03b 9-11)', () => {
     const e = (await h.call('GET', `/entries/${r.body.accountingId}`)).body;
     expect(e.term).toBe('Бракуване на дълготраен актив');
     expect(e.reference).toBe(`Машина, Инв. номер ${body.inventoryNumber}`);
-    expect(e.debits).toEqual([expect.objectContaining({ accountId: h.acc('241/2'), amount: '7200.00' }), expect.objectContaining({ accountId: h.acc('609'), amount: '4800.00' })]);
-    expect(e.credits).toEqual([expect.objectContaining({ accountId: h.acc('203'), amount: '12000.00' })]);
+    expect(e.debits).toEqual([expect.objectContaining({ accountId: h.acc('241/6'), amount: '7200.00' }), expect.objectContaining({ accountId: h.acc('609'), amount: '4800.00' })]);
+    expect(e.credits).toEqual([expect.objectContaining({ accountId: h.acc('206'), amount: '12000.00' })]);
     const v = await h.view(id);
     expect(v.isTerminated).toBe(true);
     expect(v.accounting.finalDate).toBe('2026-06-15');
@@ -640,11 +640,11 @@ describe('improvement, revaluation, conservation, write-off (03b 9-11)', () => {
     const ias = await h.call('POST', `/assets/${id}/ias`, { mode: 'revaluation', amount: '6600', withPosting: false });
     expect(ias.status, ias.text).toBe(200);
     expect(keys(await h.call('POST', `/assets/${id}/terminate`, { type: 3, sapDate: '2027-02-15', dapDate: '2027-02-15', operationAccountId: h.acc('609') }))).toEqual(['strMissingRevaluationAccount']);
-    const r = await h.call('POST', `/assets/${id}/terminate`, { type: 3, sapDate: '2027-02-15', dapDate: '2027-02-15', operationAccountId: h.acc('609'), revaluationAccountId: h.acc('291') });
+    const r = await h.call('POST', `/assets/${id}/terminate`, { type: 3, sapDate: '2027-02-15', dapDate: '2027-02-15', operationAccountId: h.acc('609'), revaluationAccountId: h.acc('112') });
     expect(r.status, r.text).toBe(200);
     const e = (await h.call('GET', `/entries/${r.body.accountingId}`)).body;
-    // cost 12 000, accrued 4 400, reserve -1 000: Dt 241 4 400, Dt 609 6 600, Dt 291 1 000, Kt 203 12 000.
-    expect(e.debits.map((l: { accountId: number; amount: string }) => [l.accountId, l.amount])).toEqual([[h.acc('241/2'), '4400.00'], [h.acc('609'), '6600.00'], [h.acc('291'), '1000.00']]);
+    // cost 12 000, accrued 4 400, reserve -1 000: Dt 241/6 4 400, Dt 609 6 600, Dt 112 1 000, Kt 206 12 000.
+    expect(e.debits.map((l: { accountId: number; amount: string }) => [l.accountId, l.amount])).toEqual([[h.acc('241/6'), '4400.00'], [h.acc('609'), '6600.00'], [h.acc('112'), '1000.00']]);
   });
 });
 
@@ -713,7 +713,7 @@ describe('EUR changeover (03b 13, acceptance 15)', () => {
     expect(r.body.created).toHaveLength(1);
     const list = (await h.call('GET', '/assets')).body as { id: number; inventoryNumber: string; cost: string; accrued: string; inventoryAccount: string }[];
     expect(list).toHaveLength(1);
-    expect(list[0]).toMatchObject({ inventoryNumber: '0000000001', cost: '6135.50', accrued: '920.33', inventoryAccount: '203' });
+    expect(list[0]).toMatchObject({ inventoryNumber: '0000000001', cost: '6135.50', accrued: '920.33', inventoryAccount: '206' });
     const v = await h.view(list[0]!.id);
     const m = v.accounting.months;
     expect(m[0]!.amount).toBe('102.26');
@@ -744,7 +744,7 @@ describe('reconciliation, reports, protocols, bulk change (03b 14-15, 05 7.10)',
     const loc = await h.call('POST', '/asset-locations', { name: 'Цех', parentId: 1 });
     a = (await h.create({ name: 'Машина А', personInCharge: 'Иван Петров', locationId: loc.body.id, accounting: { serialNumber: 'SN-1', note: 'Цех 1' } })).id;
     b = (await h.create({
-      name: 'Компютър Б', personInCharge: 'Мария Иванова', categoryId: 4, inventoryAccountId: h.acc('207'), debitAccountId: h.acc('241/6'),
+      name: 'Компютър Б', personInCharge: 'Мария Иванова', categoryId: 4, inventoryAccountId: h.acc('207'), debitAccountId: h.acc('241/7'),
       accounting: { depreciationAmount: '2400', startDate: '2025-06-10', acquisitionDate: '2025-06-10', activePeriodLength: 24 },
       tax: { depreciationAmount: '2400', startDate: '2025-06-10', acquisitionDate: '2025-06-10', annualRate: '50' },
     })).id;
@@ -757,11 +757,11 @@ describe('reconciliation, reports, protocols, bulk change (03b 14-15, 05 7.10)',
     const r = (await h.call('GET', '/assets/check?from=2025-01-01&to=2025-12-31')).body;
     expect(r.ok).toBe(false);
     expect(r.mismatches).toEqual([
-      { kind: 'cost', account: '203', assets: '12000.00', balance: '0.00', difference: '12000.00' },
+      { kind: 'cost', account: '206', assets: '12000.00', balance: '0.00', difference: '12000.00' },
       { kind: 'cost', account: '207', assets: '2400.00', balance: '0.00', difference: '2400.00' },
     ]);
     expect(r.lines[0]).toBe('Несъответствие между отчетната стойност на активите и салдата на сметките:');
-    await h.t.post({ date: '2025-03-15', dr: [['203', 12000]], cr: [['101', 12000]] });
+    await h.t.post({ date: '2025-03-15', dr: [['206', 12000]], cr: [['101', 12000]] });
     await h.t.post({ date: '2025-06-10', dr: [['207', 2400]], cr: [['101', 2400]] });
     const ok = (await h.call('GET', '/assets/check?from=2025-01-01&to=2025-12-31')).body;
     expect(ok).toMatchObject({ ok: true, lines: ['Всички дълготрайни активи и амортизационни отчисления са отразени коректно в счетоводството.'] });
@@ -823,7 +823,7 @@ describe('reconciliation, reports, protocols, bulk change (03b 14-15, 05 7.10)',
   it('protocols: чл. 58 ЗКПО and scrapping', async () => {
     const p58 = (await h.call('GET', `/assets/protocol58?ids=${a}`)).body;
     expect(p58.companyName).toBe('Тест ООД');
-    expect(p58.rows[0]).toMatchObject({ dateOfCommissioning: '2025-03-15', depreciableAmount: '12000.00', currency: 'BGN', percentage: '30.00', accountNumber: '203', category: 'II - Машини, оборудване', location: 'Тест ООД / Цех' });
+    expect(p58.rows[0]).toMatchObject({ dateOfCommissioning: '2025-03-15', depreciableAmount: '12000.00', currency: 'BGN', percentage: '30.00', accountNumber: '206', category: 'II - Машини, оборудване', location: 'Тест ООД / Цех' });
     const sc = (await h.call('GET', `/assets/scrapping-protocol?ids=${a},${b}`)).body;
     expect(sc.rows).toHaveLength(2);
     expect(sc.rows[0]).toMatchObject({ depreciationAmount: '12000.00', dateOfCommissioning: '2025-03-15', terminationDate: null });
@@ -859,15 +859,15 @@ describe('asset-linked postings in the journal (03b 12.3, 14.1)', () => {
   afterAll(() => h.t.close());
 
   it('strAddFixedAssetData: a 2xx debit without a partner credit prefills the new asset from the posting (6.1)', async () => {
-    const e = await h.t.post({ date: '2025-06-10', term: 'Лаптоп Dell', dr: [['203', 1200]], cr: [['503', 1200]] });
+    const e = await h.t.post({ date: '2025-06-10', term: 'Лаптоп Dell', dr: [['207', 1200]], cr: [['503', 1200]] });
     const r = await h.call('GET', `/assets/new?accountingId=${e.id}`);
     expect(r.status, r.text).toBe(200);
     expect(r.body.fromPosting).toEqual({
-      accountingId: e.id, accountingNumber: e.number, inventoryAccountId: h.acc('203'), name: 'Лаптоп Dell', acquisitionDate: '2025-06-10', startDate: '2025-06-10', depreciationAmount: '1200.00',
+      accountingId: e.id, accountingNumber: e.number, inventoryAccountId: h.acc('207'), name: 'Лаптоп Dell', acquisitionDate: '2025-06-10', startDate: '2025-06-10', depreciationAmount: '1200.00',
     });
     expect(r.body.inventoryNumber).toMatch(/^\d{10}$/);
     const supplier = await h.t.partner('Доставчик ДА ООД', ['401']);
-    const onCredit = await h.t.post({ date: '2025-06-10', partner: supplier, dr: [['203', 500]], cr: [['401', 500]] });
+    const onCredit = await h.t.post({ date: '2025-06-10', partner: supplier, dr: [['207', 500]], cr: [['401', 500]] });
     expect((await h.call('GET', `/assets/new?accountingId=${onCredit.id}`)).body.fromPosting).toBeNull();
     expect((await h.call('GET', '/assets/new')).body.fromPosting).toBeNull();
   });

@@ -19,7 +19,7 @@ test.describe('fixed assets', () => {
     await tab.getByLabel('МОЛ', { exact: true }).fill('Иван Петров');
     await tab.getByLabel('Категория по ЗКПО').selectOption({ label: 'II - Машини, оборудване' });
     const accounts = tab.getByPlaceholder('Сметка (F4)');
-    for (const [i, n] of [[0, '203'], [1, '241/2'], [2, '603']] as const) {
+    for (const [i, n] of [[0, '206'], [1, '241/6'], [2, '603']] as const) {
       await accounts.nth(i).fill(n);
       await accounts.nth(i).press('Enter');
     }

@@ -19,7 +19,7 @@ const DAP_HEADER = ['InventoryNumber', 'Name', 'DepreciationCategory', 'Acquisit
 type Row = Partial<Record<'name' | 'location' | 'life' | 'rate' | 'accrued' | 'reserve' | 'account' | 'sync' | 'to' | 'end', string | number>>;
 const sapRow = (inv: string, o: Row = {}) => [
   inv, o.name ?? `Машина ${inv}`, 'Иван Петров', o.location ?? '', 'Категория 2', '10.01.2025', '15.01.2025', o.end ?? '', o.to ?? '31.12.2025',
-  o.life ?? 24, o.rate ?? '', o.accrued ?? 1100, 0, 2400, o.reserve ?? 0, o.account ?? '203', '241/2', '603', o.sync ?? 'Не',
+  o.life ?? 24, o.rate ?? '', o.accrued ?? 1100, 0, 2400, o.reserve ?? 0, o.account ?? '206', '241/6', '603', o.sync ?? 'Не',
 ];
 const dapRow = (inv: string, o: Row = {}) => [inv, `Машина ${inv}`, 'Категория 2', '10.01.2025', '15.01.2025', o.end ?? '', o.to ?? '31.12.2025', o.life ?? 24, o.rate ?? '', o.accrued ?? 1200, 0, 2400];
 

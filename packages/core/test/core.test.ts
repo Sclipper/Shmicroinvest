@@ -237,12 +237,15 @@ describe('chart-of-accounts templates (01a 7, 03a 1.3)', () => {
     expect(checkChartTemplate(parseChartTemplate('4|Разчети\n40|Доставчици\n401|Доставчици|4\n401/1|Аванси|5'))).toEqual(['401/1: category 5 differs from parent 401 (4)']);
   });
 
-  it('commercial: the 61 category attachments on 50 categories of Delta; existing numbers keep their meaning', () => {
+  it('commercial: the 61 category attachments on 50 categories of Delta', () => {
     const c = shape('commercial');
     expect(c.withCategory).toHaveLength(61);
     expect(c.distinct.size).toBe(50);
-    expect(c.accs.length).toBeGreaterThanOrEqual(300);
-    expect(c.levels[2]).toBe(8);
+    // 260 accounts (was 309): the accounts no seeded balance-sheet formula reads (groups 16, 27, 28,
+    // 29, 48, 52, the old 31 impairment group, 103-109, 117, 124-125, 154-157, ...) were merged into
+    // the accounts the formulas read or dropped (chartStatements.test.ts).
+    expect(c.accs).toHaveLength(260);
+    expect(c.levels).toEqual({ 2: 8, 3: 38, 4: 175, 5: 39 });
     expect(c.accs.filter((a) => a.categoryId === 40).map((a) => a.number)).toEqual(['604', '604/1', '604/2', '604/3', '604/4', '604/5']);
     expect(c.accs.filter((a) => a.categoryId === 41).map((a) => a.number)).toEqual(['605', '605/1', '605/2', '605/3', '605/4', '605/5', '605/6']);
     expect(c.byNumber.get('411')).toMatchObject({ description: 'Клиенти', categoryId: 10 });
@@ -251,10 +254,13 @@ describe('chart-of-accounts templates (01a 7, 03a 1.3)', () => {
     for (const a of TRZ_REQUIRED_ACCOUNTS) expect(c.byNumber.has(a.number), a.number).toBe(true);
   });
 
-  it('non-profit: Delta\'s shape (302 accounts with the root) and category attachments', () => {
+  it('non-profit: shape and category attachments', () => {
     const n = shape('nonProfit');
-    expect(n.accs).toHaveLength(301);
-    expect(n.levels).toEqual({ 2: 8, 3: 43, 4: 181, 5: 65, 6: 4 });
+    // Delta has 302 accounts with the root ({ 3: 43, 4: 181, 5: 65 }). This template has 289: groups
+    // 13, 23, 29, 48 and the impairment group 31 went (funds -> 119/x, 48x -> 473-476, 32x -> 31x),
+    // 26 is new, as the seeded balance sheet reads no other numbers (chartStatements.test.ts).
+    expect(n.accs).toHaveLength(289);
+    expect(n.levels).toEqual({ 2: 8, 3: 39, 4: 166, 5: 72, 6: 4 });
     expect(n.withCategory).toHaveLength(71);
     expect(n.distinct.size).toBe(47);
     // No internal settlements / related-party suppliers and clients (01a 6.3).

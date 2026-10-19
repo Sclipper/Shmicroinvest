@@ -1,5 +1,4 @@
 import { randomBytes } from 'node:crypto';
-import { PGlite } from '@electric-sql/pglite';
 import { drizzle as drizzlePglite } from 'drizzle-orm/pglite';
 import { and, desc, eq, or, sql } from 'drizzle-orm';
 import {
@@ -8,6 +7,7 @@ import {
 import * as cat from '../../db/catalog/schema.ts';
 import * as s from '../../db/company/schema/index.ts';
 import type { CompanyDb, DbDriver } from '../../db/provider.ts';
+import { newPglite } from '../../db/provider.ts';
 import { decodeLogicalDump, encodeLogicalDump, logicalDump, logicalRestore } from '../../db/logicalDump.ts';
 import { PRODUCT_VERSION } from '../companySetup.ts';
 
@@ -128,7 +128,7 @@ async function restoreInto(driver: DbDriver, name: string, header: BackupHeader,
   let logical = payload;
   if (header.kind === 'pglite-datadir') {
     // Data directory on a Postgres server: read it with a temporary PGlite.
-    const tmp = new PGlite({ loadDataDir: new Blob([payload as Uint8Array<ArrayBuffer>]) });
+    const tmp = newPglite(undefined, { loadDataDir: new Blob([payload as Uint8Array<ArrayBuffer>]) });
     try {
       logical = encodeLogicalDump(await logicalDump(drizzlePglite(tmp) as unknown as CompanyDb));
     } finally {
