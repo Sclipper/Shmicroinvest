@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestCompany, type TestCompany } from './helpers.ts';
+import { findSequence, reserveNumber } from '../src/services/sequences.ts';
 
 let t: TestCompany;
 let call: TestCompany['call'];
@@ -119,5 +120,30 @@ describe('api', () => {
     expect((await call('DELETE', `/roles/${role.body.id}`)).status).toBe(400);
     await call('DELETE', `/users/${temp.body.id}`);
     expect((await call('DELETE', `/roles/${role.body.id}`)).status).toBe(200);
+  });
+
+  it('reserves entry numbers atomically (01b 9 spGetNextNumber)', async () => {
+    const db = await t.driver.company(t.companyDb);
+    const year = (await call('GET', '/session')).body.year as { id: number };
+    const start = (await findSequence(db, 1, year.id))!.lastNumber;
+    // Another session reserves a number while this one is between "read" and "write":
+    // the increment works on the stored value, so both get different numbers.
+    let other: string | null = null;
+    const mine = await reserveNumber(db, 1, year.id, async (n) => {
+      if (!other) other = (await reserveNumber(db, 1, year.id, async () => false)).number;
+      return n === other;
+    });
+    expect(other).toBe(String(start + 2).padStart(10, '0'));
+    expect(mine.number).toBe(String(start + 1).padStart(10, '0'));
+
+    // Parallel saves through the API: every entry gets its own number.
+    const posts = await Promise.all(Array.from({ length: 8 }, (_, i) => call('POST', '/entries', {
+      accountingDate: '2026-04-01', documentTypeId: 1, documentNumber: `P-${i}`, term: 'Паралелно',
+      debits: [{ accountId: acc('501'), amount: '1' }], credits: [{ accountId: acc('101'), amount: '1' }],
+    })));
+    for (const p of posts) expect(p.status, p.text).toBe(201);
+    const numbers = posts.map((p) => p.body.number as string);
+    expect(new Set(numbers).size).toBe(8);
+    expect(numbers.map(Number).sort((a, b) => a - b)).toEqual(Array.from({ length: 8 }, (_, i) => start + 3 + i));
   });
 });
