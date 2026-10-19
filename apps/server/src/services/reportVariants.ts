@@ -275,7 +275,7 @@ export async function ledgerZeroTurnoverAccounts(db: DbOrTx, o: LedgerOptions, p
   for (const a of [...found.values()].sort((p, q) => compareAccountNumbers(p.number, q.number))) {
     const balances = await accountBalances(db, a.number, o);
     if ([balances.openingDebit, balances.openingCredit].every((v) => v === '0.00')) continue;
-    out.push({ number: a.number, description: a.description, counters: [] as { number: string; description: string; debit: string; credit: string }[], totalDebit: '0.00', totalCredit: '0.00', balances });
+    out.push({ number: a.number, description: a.description, englishDescription: a.englishDescription ?? '', counters: [] as { number: string; description: string; englishDescription: string; debit: string; credit: string }[], totalDebit: '0.00', totalCredit: '0.00', balances });
   }
   return out;
 }
