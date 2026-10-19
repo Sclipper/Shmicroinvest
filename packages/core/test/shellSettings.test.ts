@@ -92,8 +92,8 @@ describe('04b 3 report e-mail', () => {
     expect(validateSmtpSettings({ host: 'smtp.abv.bg', port: 465, email: 'office@firma.bg' })).toEqual([]);
     expect(validateSmtpSettings({ host: '', port: '0', email: 'x' }).map((m) => m.key)).toEqual(['strSmtpHostMissing', 'strSmtpPortInvalid', 'strSmtpEmailInvalid']);
     expect(maskSecret('')).toBe('');
-    expect(maskSecret('tajna-parola')).toBe('••••••la');
-    expect(maskSecret('abc')).not.toContain('abc');
+    expect(maskSecret('tajna-parola')).toBe('••••••••');
+    expect(maskSecret('abc')).toBe('••••••••');
   });
   it('attachment name: short name and end date', () => {
     expect(reportAttachmentName('Оборотна ведомост', '2026-03-31')).toBe('Оборотна ведомост 2026.03.31.xlsx');

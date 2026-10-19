@@ -21,7 +21,7 @@ export const entryFollowUpRoutes = new Hono<AppEnv>()
   })), async (c) => {
     const q = c.req.valid('query');
     const ids = q.currencyIds.split(',').map(Number);
-    return c.json(await c.var.db.transaction((tx) => entryFixing(tx, c.var.year.year, q.date, ids, { download: q.download !== '0' })));
+    return c.json(await c.var.db.transaction((tx) => entryFixing(tx, c.var.year.year, q.date, ids, { download: q.download === '1' })));
   })
 
   /** "Обновяване на фиксингите от БНБ" of the currencies screen (03a 5.4), for the working date by default. */

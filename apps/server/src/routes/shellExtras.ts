@@ -1,16 +1,24 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { USER_ACTIVITY_CODES } from '@shmi/core';
+import { parseEmailList, USER_ACTIVITY_CODES } from '@shmi/core';
 import type { AppEnv } from '../context.ts';
 import { zValidator } from '../lib/validate.ts';
-import { badRequest } from '../lib/errors.ts';
-import { requirePermission, workingDate } from '../session.ts';
+import { ApiError, badRequest } from '../lib/errors.ts';
+import { requireAnyPermission, requirePermission, workingDate } from '../session.ts';
 import { logActivity } from '../services/audit.ts';
 import { shellNotices } from '../services/notices.ts';
 import { activityDocuments, activityLog } from '../services/userActivities.ts';
 import { saveSmtpSettings, sendReportEmail, sendTestEmail, smtpSettingsView } from '../services/email.ts';
 
 const ACTIVITY_REPORT = 'UI_Reporting_UsersActivitiesReport';
+/** Report e-mail: the report's permission by its activity-log entity, recipients and hourly limit per user. */
+const REPORT_PERMISSIONS: Record<string, string> = {
+  turnoverReport: 'UI_Reporting_TurnoverReport', chronologicalReport: 'UI_Reporting_ChronologicalReport',
+  analyticalReport: 'UI_Reporting_AnalyticalReport', icaReport: 'UI_Reporting_ICAReport', usersActivitiesReport: ACTIVITY_REPORT,
+};
+const MAX_RECIPIENTS = 10;
+const MAX_PER_HOUR = 30;
+const sentAt = new Map<string, number[]>();
 const SETTINGS = 'UI_Other_Settings';
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const num = (v: string | undefined) => (v && /^\d+$/.test(v) ? Number(v) : undefined);
@@ -76,7 +84,7 @@ export const shellExtraRoutes = new Hono<AppEnv>()
     email: z.string().max(255).default(''),
     enableSsl: z.boolean().default(true),
   })), async (c) => {
-    await saveSmtpSettings(c.var.db, c.req.valid('json'));
+    await c.var.db.transaction((tx) => saveSmtpSettings(tx, c.req.valid('json')));
     await logActivity(c.var.db, c.var.user.id, 'edit', 'smtpConfiguration', null, 'Настройки за изпращане на e-mail');
     return c.json(await smtpSettingsView(c.var.db));
   })
@@ -85,7 +93,7 @@ export const shellExtraRoutes = new Hono<AppEnv>()
     c.json(await sendTestEmail(c.var.db, c.var.session.companyDb ?? '', c.req.valid('json').to)))
 
   /** "Изпращане по e-mail" from the report frame: the report as an .xlsx attachment. */
-  .post('/email/report', zValidator('json', z.object({
+  .post('/email/report', requireAnyPermission('UI_Reporting', 'UI_Operations'), zValidator('json', z.object({
     to: z.string().max(2000),
     cc: z.string().max(2000).optional(),
     subject: z.string().max(255),
@@ -95,6 +103,15 @@ export const shellExtraRoutes = new Hono<AppEnv>()
     attachment: z.object({ fileName: z.string().min(1).max(255), contentBase64: z.string().max(15_000_000) }),
   })), async (c) => {
     const b = c.req.valid('json');
+    // The report's own right when it is known; the rest need a report or operations right (route guard).
+    const key = b.entityType ? REPORT_PERMISSIONS[b.entityType] : undefined;
+    if (key && !(await c.var.can(key))) throw new ApiError(403, 'Нямате права за тази операция.');
+    if (parseEmailList(b.to).length + parseEmailList(b.cc ?? '').length > MAX_RECIPIENTS) throw badRequest(`Може да изпратите до ${MAX_RECIPIENTS} получатели.`);
+    const rateKey = `${c.var.session.companyDb}:${c.var.user.id}`;
+    const now = Date.now();
+    const recent = (sentAt.get(rateKey) ?? []).filter((t) => now - t < 3_600_000);
+    if (recent.length >= MAX_PER_HOUR) throw new ApiError(429, 'Достигнат е лимитът за изпращане на e-mail. Опитайте отново по-късно.');
+    sentAt.set(rateKey, [...recent, now]);
     const r = await sendReportEmail(c.var.db, b, c.var.session.companyDb ?? '');
     await logActivity(c.var.db, c.var.user.id, 'export', b.entityType ?? 'report', null, `${b.report ?? b.attachment.fileName}: e-mail до ${b.to}`);
     return c.json(r);

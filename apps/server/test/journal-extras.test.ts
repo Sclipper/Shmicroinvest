@@ -836,11 +836,11 @@ describe('02a 2 / 03a 5.4 fixing of the accounting date', () => {
     const stored = await call('GET', '/journal/fixing?date=2026-03-10&currencyIds=3');
     expect(stored.status, stored.text).toBe(200);
     expect([stored.body.rates[0].rate, stored.body.message]).toEqual(['0.92', null]);
-    const holiday = await withEcb(DEAD_ECB, () => call('GET', '/journal/fixing?date=2026-03-14&currencyIds=3'));
+    const holiday = await withEcb(DEAD_ECB, () => call('GET', '/journal/fixing?date=2026-03-14&currencyIds=3&download=1'));
     expect([holiday.body.rates[0].rate, holiday.body.message]).toEqual([null, 'Избраната дата на осчетоводяване е почивен ден или услугата за валутни справки е временно неактивна.']);
-    const noDownload = await withEcb(ecbXml('2026-03-12', '1.0810'), () => call('GET', '/journal/fixing?date=2026-03-12&currencyIds=3&download=0'));
+    const noDownload = await withEcb(ecbXml('2026-03-12', '1.0810'), () => call('GET', '/journal/fixing?date=2026-03-12&currencyIds=3'));
     expect(noDownload.body.rates[0].rate).toBeNull();
-    const downloaded = await withEcb(ecbXml('2026-03-12', '1.0810'), () => call('GET', '/journal/fixing?date=2026-03-12&currencyIds=3'));
+    const downloaded = await withEcb(ecbXml('2026-03-12', '1.0810'), () => call('GET', '/journal/fixing?date=2026-03-12&currencyIds=3&download=1'));
     expect([downloaded.body.rates[0].rate, downloaded.body.rates[0].source, downloaded.body.message]).toEqual(['0.92507', 'ecb', null]);
     // The downloaded rate is stored: the save of that date uses it.
     const e = await t.post({ date: '2026-03-12', dr: [[usd, 92.51, { currencyAmount: '100' }]], cr: [['702', 92.51]] });

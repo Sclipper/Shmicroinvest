@@ -200,7 +200,7 @@ export const journalExtraRoutes = new Hono<AppEnv>()
     })
 
   // ---- 4.7 group 60, 4.5 expenses distribution ----------------------------
-  .get('/journal/entries/:id/group60-drafts', async (c) => c.json({ drafts: await group60Drafts(c.var.db, Number(c.req.param('id'))) }))
+  .get('/journal/entries/:id/group60-drafts', requireAnyPermission(ADD, EDIT), async (c) => c.json({ drafts: await group60Drafts(c.var.db, Number(c.req.param('id'))) }))
 
   .post('/journal/entries/:id/expenses-draft', requirePermission(ADD),
     zValidator('json', z.object({ amount, side: z.enum(['debit', 'credit']), base: z.enum(['amount', 'quantity']) })), async (c) =>

@@ -6,7 +6,7 @@ import { ACCOUNT_CATEGORIES, isLeaf } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import { exec } from '../db/provider.ts';
 import type { AppEnv } from '../context.ts';
-import { requirePermission } from '../session.ts';
+import { requireAnyPermission, requirePermission } from '../session.ts';
 import { accountTemplates, addAccount, applyChartTemplate, copyAccounts, deleteAccount, deleteInfo, editAccount, suggestSubAccountNumber } from '../services/chart.ts';
 import { baseCurrencyId } from '../services/journal.ts';
 import { accountBalances } from '../services/reports.ts';
@@ -68,7 +68,7 @@ export const chartRoutes = new Hono<AppEnv>()
 
   .get('/accounts/:id/next-number', async (c) => c.json({ number: await suggestSubAccountNumber(c.var.db, Number(c.req.param('id'))) }))
 
-  .get('/accounts/:id/balance', async (c) => {
+  .get('/accounts/:id/balance', requireAnyPermission('UI_Operations_ChartOfAccounts', 'UI_Operations_Accounting', 'UI_Edit_Accountings', 'UI_Reporting_AnalyticalReport'), async (c) => {
     const { db, year } = c.var;
     const [acc] = await db.select().from(s.accounts).where(eq(s.accounts.id, Number(c.req.param('id'))));
     if (!acc) return c.json(null);

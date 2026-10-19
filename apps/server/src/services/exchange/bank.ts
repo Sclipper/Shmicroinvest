@@ -285,6 +285,7 @@ interface MappingContext {
   ctx: Parameters<typeof mapStatementRows>[1];
   pidx: Awaited<ReturnType<typeof partnerIndex>>;
   bindingEnabled: boolean;
+  yearId: number;
 }
 
 async function mappingContext(db: DbOrTx, o: { bankAccountId: number; termProperty?: string; referenceProperty?: string }, ctx: ImportCtx): Promise<MappingContext> {
@@ -299,7 +300,7 @@ async function mappingContext(db: DbOrTx, o: { bankAccountId: number; termProper
   const pidx = await partnerIndex(db);
   const templates = ba.bankId ? await loadTemplateDefs(db, ba.bankId, chart.isEuro) : [];
   return {
-    ba: { ...ba, accountId: ba.accountId }, chart, templates, pidx, bindingEnabled: await getBoolConfig(db, BANK_BINDING_KEY, true),
+    ba: { ...ba, accountId: ba.accountId }, chart, templates, pidx, bindingEnabled: await getBoolConfig(db, BANK_BINDING_KEY, true), yearId: ctx.year.id,
     ctx: {
       bankAccountId: ba.accountId, templates, accountByNumber: (n) => chart.byNumber.get(n)?.id ?? null,
       isCompanyAccount: (id) => isCompanyCategory(chart.byId.get(id)?.categoryId), findCompany: pidx.findCompany, isPartnerValue: pidx.isPartnerValue,
@@ -324,7 +325,7 @@ async function enrichRows(db: DbOrTx, m: MappingContext, rows: MappedBankRow[], 
     const partnerAcc = [r.debitAccountId, r.creditAccountId].find((id) => id && isCompanyCategory(m.chart.byId.get(id)?.categoryId));
     if (m.bindingEnabled && autoBind && r.companyId && partnerAcc) {
       const isClient = isClientCategory(m.chart.byId.get(partnerAcc)?.categoryId);
-      const open = await openDocuments(db, r.companyId, partnerAcc, isClient ? 1 : -1);
+      const open = await openDocuments(db, m.yearId, r.companyId, partnerAcc, isClient ? 1 : -1);
       const chosen = new Set(autoBindDocuments(r.reason, r.postAmount, open, words, bySum));
       documents = open.map((d, i) => ({ ...d, selected: chosen.has(i) }));
     }
@@ -374,14 +375,17 @@ export async function applyTemplateToRow(db: DbOrTx, row: BankStatementRow, temp
   return (await enrichRows(db, m, [mapped], o.autoBind !== false))[0]!;
 }
 
-/** Open documents of a partner on a partner account (debit side for clients, credit side for suppliers). */
-export async function openDocuments(db: DbOrTx, companyId: number, accountId: number, sign: 1 | -1): Promise<OpenDocument[]> {
+/**
+ * Open documents of a partner on a partner account (debit side for clients, credit side for suppliers),
+ * in the active year only: a closed year's documents live on as the year's openings.
+ */
+export async function openDocuments(db: DbOrTx, yearId: number, companyId: number, accountId: number, sign: 1 | -1): Promise<OpenDocument[]> {
   const rows = (await db.execute(sql`
     SELECT a.id, coalesce(doc.number, '') AS number, doc.document_type_id AS type,
       sum(CASE WHEN ${sign} = 1 THEN d.amount ELSE d.ref_amount END) AS total,
       coalesce((SELECT sum(p.amount) FROM accounting_payment_details p WHERE p.ref_accounting_id = a.id AND p.account_id = ${accountId}), 0) AS paid
     FROM accounting_details d JOIN accountings a ON a.id = d.accounting_id LEFT JOIN documents doc ON doc.id = a.document_id
-    WHERE d.company_id = ${companyId} AND d.account_id = ${accountId} AND d.sign = ${sign}
+    WHERE a.financial_year_id = ${yearId} AND d.company_id = ${companyId} AND d.account_id = ${accountId} AND d.sign = ${sign}
     GROUP BY a.id, doc.number, doc.document_type_id, a.accounting_date ORDER BY a.accounting_date, a.id`)) as unknown as { rows: { id: number; number: string; type: number | null; total: string; paid: string }[] };
   return rows.rows
     .map((r) => ({ accountingId: r.id, documentNumber: r.number, amount: round2(dec(r.total).minus(r.paid)).toFixed(2), isInvoice: r.type === DOCUMENT_TYPE.Invoice }))
@@ -389,10 +393,10 @@ export async function openDocuments(db: DbOrTx, companyId: number, accountId: nu
 }
 
 /** Open documents of a row's partner and partner account (binding in the preview, 06 3.4). */
-export async function rowOpenDocuments(db: DbOrTx, companyId: number, accountId: number) {
+export async function rowOpenDocuments(db: DbOrTx, yearId: number, companyId: number, accountId: number) {
   const [a] = await db.select({ categoryId: s.accounts.accountCategoryId }).from(s.accounts).where(eq(s.accounts.id, accountId));
   if (!a || !isCompanyCategory(a.categoryId)) return [];
-  return openDocuments(db, companyId, accountId, isClientCategory(a.categoryId) ? 1 : -1);
+  return openDocuments(db, yearId, companyId, accountId, isClientCategory(a.categoryId) ? 1 : -1);
 }
 
 export interface PostRow {
@@ -487,7 +491,7 @@ export async function postStatementRows(
     // Payment binding of the selected documents (debit side if it is a partner account, else the credit side).
     const partnerAcc = isCompanyCategory(dAcc.categoryId) ? dAcc : isCompanyCategory(cAcc.categoryId) ? cAcc : null;
     if (r.documents?.length && partnerAcc && r.companyId) {
-      const open = await openDocuments(db, r.companyId, partnerAcc.id, isClientCategory(partnerAcc.categoryId) ? 1 : -1);
+      const open = await openDocuments(db, ctx.year.id, r.companyId, partnerAcc.id, isClientCategory(partnerAcc.categoryId) ? 1 : -1);
       let left = dec(round2(r.postAmount));
       for (const ref of r.documents) {
         const accId = typeof ref === 'number' ? ref : ref.accountingId;

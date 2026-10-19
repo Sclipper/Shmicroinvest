@@ -87,7 +87,7 @@ export const bankRoutes = new Hono<AppEnv>()
     const companyId = Number(c.req.query('companyId'));
     const accountId = Number(c.req.query('accountId'));
     if (!companyId || !accountId) throw new ApiError(400, 'Изберете партньор и партньорска сметка.');
-    return c.json(await rowOpenDocuments(c.var.db, companyId, accountId));
+    return c.json(await rowOpenDocuments(c.var.db, c.var.year.id, companyId, accountId));
   })
   /** Apply: posts the given rows (the current page). */
   .post('/bank-statements/post', requirePermission(IMPORT), zValidator('json', z.object({

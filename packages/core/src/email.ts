@@ -67,10 +67,9 @@ export function validateSmtpSettings(s: SmtpSettingsInput): EmailMessage[] {
   return out;
 }
 
-/** A secret shown to the client: never the value, only that one is set and its last two characters. */
+/** A secret shown to the client: never any part of the value, only that one is set. */
 export function maskSecret(secret: string | null | undefined): string {
-  if (!secret) return '';
-  return `${'•'.repeat(6)}${secret.length > 6 ? secret.slice(-2) : ''}`;
+  return secret ? '•'.repeat(8) : '';
 }
 
 /** Attachment name of a report: short name + end date "yyyy.MM.dd" + .xlsx (05 11.1). */

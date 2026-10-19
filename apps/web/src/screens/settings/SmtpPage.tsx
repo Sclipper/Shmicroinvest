@@ -24,6 +24,7 @@ export function SmtpPage() {
   useEffect(() => {
     if (q.data) setF({ host: q.data.host, port: String(q.data.port), userName: q.data.userName, password: '', email: q.data.email, enableSsl: q.data.enableSsl, clearPassword: false });
   }, [q.data]);
+  if (q.isError) return <Empty>{q.error.message}</Empty>;
   if (!q.data) return <Empty><Spinner /></Empty>;
 
   const save = async () => {

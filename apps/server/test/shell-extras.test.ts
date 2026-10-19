@@ -188,6 +188,27 @@ describe('04b 3 e-mail of reports', { timeout: 30_000 }, () => {
     expect(keys(r)).toEqual(['strEmailSendingFailed']);
   });
 
+  it('limits recipients and checks the permission of the report', async () => {
+    setMailTransportFactory(() => ({ sendMail: async () => ({}) }) as never);
+    await t.call('PUT', '/settings/smtp', { host: 'smtp.firma.bg', port: 465, userName: 'office', password: 'Tajna-1234', email: 'office@firma.bg', enableSsl: true });
+    const attachment = { fileName: 'a.xlsx', contentBase64: '' };
+    const many = Array.from({ length: 11 }, (_, i) => `u${i}@firma.bg`).join('; ');
+    expect((await t.call('POST', '/email/report', { to: many, subject: 'x', attachment })).status).toBe(400);
+
+    const role = await t.call('POST', '/roles', { name: 'Без оборотна ведомост' });
+    await t.call('PUT', `/roles/${role.body.id}/permissions`, { 33: false, 7: true, 34: true });
+    const u = await t.call('POST', '/users', { name: 'Справки', password: 'secret1', roleId: role.body.id });
+    expect(u.status, u.text).toBe(201);
+    const adminId = (await t.call('GET', '/session')).body.user.id;
+    expect((await t.call('POST', '/login', { companyDb: t.companyDb, userId: u.body.id, password: 'secret1' })).status).toBe(200);
+    try {
+      expect((await t.call('POST', '/email/report', { to: 'boss@firma.bg', subject: 'x', entityType: 'turnoverReport', attachment })).status).toBe(403);
+      expect((await t.call('POST', '/email/report', { to: 'boss@firma.bg', subject: 'x', entityType: 'chronologicalReport', attachment })).status).toBe(200);
+    } finally {
+      expect((await t.call('POST', '/login', { companyDb: t.companyDb, userId: adminId, password: 'secret1' })).status).toBe(200);
+    }
+  });
+
   it('without an SMTP server: strNotConnectedToSenderaOrMissingSMTP', async () => {
     await t.call('PUT', '/settings/smtp', { host: '', port: 25 });
     expect((await t.call('GET', '/settings/smtp')).body).toMatchObject({ host: '', hasPassword: false });

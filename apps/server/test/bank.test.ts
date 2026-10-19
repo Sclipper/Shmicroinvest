@@ -314,3 +314,18 @@ describe('Excel statement header (04b 1.3, 1.4)', { timeout: 30_000 }, () => {
     expect(r.body.rows).toHaveLength(1);
   });
 });
+
+describe('open documents of the active year only', { timeout: 60_000 }, () => {
+  it('a 2026 document is not offered while 2027 is active', async () => {
+    const inv = await t.post({ date: '2026-11-02', docType: 1, docNumber: '0000000999', partner: partnerId, dr: [['411', 70]], cr: [['702', 70]] });
+    const ids = async () => ((await call('GET', `/bank-statements/open-documents?companyId=${partnerId}&accountId=${acc('411')}`)).body as { accountingId: number }[]).map((d) => d.accountingId);
+    expect(await ids()).toContain(inv.id);
+    expect((await call('POST', '/years', { year: 2027, force: true })).status).toBe(201);
+    expect((await call('PUT', '/years/active', { year: 2027 })).status).toBe(200);
+    try {
+      expect(await ids()).not.toContain(inv.id);
+    } finally {
+      expect((await call('PUT', '/years/active', { year: 2026 })).status).toBe(200);
+    }
+  });
+});

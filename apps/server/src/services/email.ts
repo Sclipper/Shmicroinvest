@@ -1,4 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import nodemailer, { type Transporter } from 'nodemailer';
 import { EMAIL_MESSAGES, maskSecret, parseEmailList, validateReportEmail, validateSmtpSettings, type EmailMessage } from '@shmi/core';
 import type { DbOrTx } from '../db/provider.ts';
@@ -27,7 +29,24 @@ export interface SmtpConfig {
 
 /* ---- password encryption (AES-256-GCM) --------------------------------- */
 
-const secretKey = () => createHash('sha256').update(process.env.SHMI_SECRET ?? 'Shmelta Pro SMTP configuration').digest();
+/**
+ * The key is SHMI_SECRET when set; otherwise a random key kept in a file next
+ * to the data (SHMI_SECRET_FILE, default <DATA_DIR>/secret.key), created on
+ * first use. It is never stored in a company database, so backups and dumps
+ * do not carry what is needed to decrypt the password. Tests use a per-process key.
+ */
+let cachedKey: Buffer | null = null;
+function secretKey(): Buffer {
+  if (cachedKey) return cachedKey;
+  if (process.env.SHMI_SECRET) return (cachedKey = createHash('sha256').update(process.env.SHMI_SECRET).digest());
+  if (process.env.VITEST) return (cachedKey = randomBytes(32));
+  const file = process.env.SHMI_SECRET_FILE ?? path.join(process.env.DATA_DIR ?? path.resolve(import.meta.dirname, '../../.data'), 'secret.key');
+  if (!existsSync(file)) {
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, randomBytes(32).toString('base64'), { mode: 0o600, flag: 'wx' });
+  }
+  return (cachedKey = Buffer.from(readFileSync(file, 'utf8').trim(), 'base64'));
+}
 
 export function encryptSecret(plain: string): string {
   if (!plain) return '';
