@@ -1,7 +1,49 @@
 import ExcelJS from 'exceljs';
+import * as XLSX from 'xlsx';
+import * as cpexcel from 'xlsx/dist/cpexcel.full.mjs';
 import { DataImportError, critical, type ExcelCell, type ExcelSheet } from '@shmi/core';
 
-/** xlsx reading / writing (exceljs). Legacy BIFF .xls files are not supported. */
+/**
+ * Workbook reading / writing: .xlsx through exceljs, legacy BIFF .xls
+ * (Excel 97-2003, 04a 5.1 "otherwise 2003") through SheetJS.
+ */
+
+XLSX.set_cptable(cpexcel);
+
+/** OLE2 compound file (BIFF .xls) signature D0 CF 11 E0. */
+const isOle2 = (b: Uint8Array) => b.length >= 4 && b[0] === 0xd0 && b[1] === 0xcf && b[2] === 0x11 && b[3] === 0xe0;
+
+/** Excel serial date -> UTC midnight-based Date (1900 date system, as the import's OADate). */
+function serialToDate(v: number): Date {
+  const p = XLSX.SSF.parse_date_code(v);
+  return new Date(Date.UTC(p.y, p.m - 1, p.d, p.H, p.M, Math.floor(p.S)));
+}
+
+function legacyCell(c: XLSX.CellObject | undefined): ExcelCell {
+  if (!c || c.v === undefined || c.v === null) return null;
+  if (c.t === 'e' || c.t === 'z') return null;
+  if (c.t === 'n' && typeof c.v === 'number' && c.z && XLSX.SSF.is_date(c.z)) return serialToDate(c.v);
+  if (c.v instanceof Date) return c.v;
+  return c.v as string | number | boolean;
+}
+
+function readLegacyWorkbook(bytes: Uint8Array): ExcelSheet[] {
+  let wb: XLSX.WorkBook;
+  try {
+    // A damaged compound file would otherwise be read as one text cell.
+    const cfb = XLSX.CFB.read(bytes, { type: 'array' });
+    if (!XLSX.CFB.find(cfb, 'Workbook') && !XLSX.CFB.find(cfb, 'Book')) throw new Error('no workbook stream');
+    wb = XLSX.read(bytes, { type: 'array', cellNF: true, cellDates: false });
+  } catch {
+    throw new DataImportError(critical('strWrongFileOrBrokenStructures'));
+  }
+  return wb.SheetNames.map((name) => {
+    const ws = wb.Sheets[name]!;
+    const ref = ws['!ref'];
+    const rowCount = ref ? XLSX.utils.decode_range(ref).e.r + 1 : 0;
+    return { name, rowCount, cell: (row: number, col: number) => legacyCell(ws[XLSX.utils.encode_cell({ r: row - 1, c: col - 1 })] as XLSX.CellObject | undefined) };
+  });
+}
 
 function plain(v: ExcelJS.CellValue): ExcelCell {
   if (v === null || v === undefined) return null;
@@ -17,6 +59,7 @@ function plain(v: ExcelJS.CellValue): ExcelCell {
 }
 
 export async function readWorkbook(bytes: Uint8Array): Promise<ExcelSheet[]> {
+  if (isOle2(bytes)) return readLegacyWorkbook(bytes);
   const wb = new ExcelJS.Workbook();
   try {
     await wb.xlsx.load(Buffer.from(bytes) as unknown as ArrayBuffer);

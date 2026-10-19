@@ -316,7 +316,7 @@ export function ExcelImport() {
                 {entities.data?.map((e) => <option key={e.entity} value={e.entity}>{e.title}</option>)}
               </Select>
             </Field>
-            <Field label="Файл на Excel (*.xlsx)"><FileInput file={file} onChange={setFile} accept=".xlsx,.xls" /></Field>
+            <Field label="Файл на Excel (*.xlsx, *.xls)"><FileInput file={file} onChange={setFile} accept=".xlsx,.xls" /></Field>
           </>
         )}
         {step === 1 && def && (

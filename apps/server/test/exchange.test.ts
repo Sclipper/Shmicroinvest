@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
 import ExcelJS from 'exceljs';
+import * as XLSX from 'xlsx';
 import { BACKUP_FORMAT_VERSION, CHANNEL, DOCUMENT_TYPE, formatTextImportLine, parseTransferXml, writeTransferXml, type TransferData } from '@shmi/core';
 import { createTestCompany, type TestCompany } from './helpers.ts';
 import { encodeBackup } from '../src/services/exchange/backup.ts';
@@ -8,6 +9,7 @@ import { encodeLogicalDump, logicalDump } from '../src/db/logicalDump.ts';
 import { queryRows } from '../src/db/provider.ts';
 import { insertPaymentLinks, openItems } from '../src/services/openItems.ts';
 import { peekNextNumber } from '../src/services/sequences.ts';
+import { readWorkbook } from '../src/services/exchange/xlsx.ts';
 
 let t: TestCompany;
 let call: TestCompany['call'];
@@ -432,6 +434,31 @@ describe('Excel import (04a 5)', () => {
     await t.reloadAccounts();
     const a = ((await call('GET', '/accounts')).body as { id: number; number: string; description: string; isActive: boolean | null }[]).find((x) => x.number === '413/7')!;
     expect([a.description, a.isActive]).toEqual(['Клиенти седем', false]);
+  });
+
+  it('reads a legacy Excel 97-2003 (.xls, BIFF8) workbook', async () => {
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['Сметки', 'Суми', 'Дата', 'Партньор'],
+      ['501-101', 45.5, new Date(Date.UTC(2026, 6, 24)), ''],
+    ], { cellDates: true, dateNF: 'yyyy-mm-dd' });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Данни');
+    const bytes = XLSX.write(wb, { bookType: 'biff8', type: 'buffer' }) as Buffer;
+    expect([...bytes.subarray(0, 4)]).toEqual([0xd0, 0xcf, 0x11, 0xe0]);
+    const sheets = await readWorkbook(new Uint8Array(bytes));
+    expect(sheets.map((x) => x.name)).toEqual(['Данни']);
+    expect(sheets[0]!.rowCount).toBe(2);
+    expect(sheets[0]!.cell(2, 2)).toBe(45.5);
+    expect((sheets[0]!.cell(2, 3) as Date).toISOString().slice(0, 10)).toBe('2026-07-24');
+    expect(sheets[0]!.cell(2, 9)).toBeNull();
+    const r = await call('POST', '/exchange/excel/import', { fileName: 'ops.xls', contentBase64: bytes.toString('base64'), entity: 'operations', mapping: opsMapping });
+    expect(r.status, r.text).toBe(200);
+    expect(r.body.created).toBe(1);
+    const tb = await balances(t, '2026-07-24', '2026-07-24');
+    expect(tb['501']!.dt).toBe('45.50');
+    const broken = await call('POST', '/exchange/excel/inspect', { fileName: 'b.xls', contentBase64: Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 1, 2, 3, 4]).toString('base64'), entity: 'operations' });
+    expect(broken.status).toBe(422);
+    expect(keys(broken)).toEqual(['strWrongFileOrBrokenStructures']);
   });
 
   it('inspects a workbook with a setup sheet and builds a template', async () => {
