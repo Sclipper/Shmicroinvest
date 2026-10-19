@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { and, eq, lt } from 'drizzle-orm';
+import { and, eq, lt, or } from 'drizzle-orm';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { Context, MiddlewareHandler } from 'hono';
 import { defaultActiveYear, resolvePermission } from '@shmi/core';
@@ -9,20 +9,31 @@ import type { AppEnv, SessionInfo, ActiveYear } from './context.ts';
 import { ApiError } from './lib/errors.ts';
 import { getConfig } from './services/config.ts';
 import type { CompanyDb } from './db/provider.ts';
+import { isHttps } from './lib/http.ts';
+import { sessionIdleMs, sessionMaxAgeMs } from './runtime.ts';
 
 const COOKIE = 'shmi_sid';
-const MAX_AGE_DAYS = 14;
+
+/**
+ * The session cookie: HttpOnly, SameSite=Lax, Secure over HTTPS (also behind
+ * a TLS-terminating proxy with TRUST_PROXY=1). A session ends after
+ * SESSION_IDLE_MINUTES without requests (default 12 h) and at the latest
+ * SESSION_MAX_AGE_DAYS after the login (default 14).
+ */
 
 export async function createSession(c: Context<AppEnv>, companyDb: string, userId: number) {
   const catalog = await c.var.driver.catalog();
   const id = randomBytes(32).toString('base64url');
   await catalog.insert(cat.sessions).values({ id, companyDb, userId, userAgent: c.req.header('user-agent') ?? null });
   setCookie(c, COOKIE, id, {
-    httpOnly: true, sameSite: 'Lax', path: '/', secure: c.req.url.startsWith('https:'),
-    maxAge: MAX_AGE_DAYS * 86400,
+    httpOnly: true, sameSite: 'Lax', path: '/', secure: isHttps(c),
+    maxAge: Math.floor(sessionMaxAgeMs() / 1000),
   });
   // Opportunistic clean-up of expired sessions.
-  await catalog.delete(cat.sessions).where(lt(cat.sessions.lastSeenAt, new Date(Date.now() - MAX_AGE_DAYS * 86400_000)));
+  await catalog.delete(cat.sessions).where(or(
+    lt(cat.sessions.lastSeenAt, new Date(Date.now() - sessionIdleMs())),
+    lt(cat.sessions.createdAt, new Date(Date.now() - sessionMaxAgeMs())),
+  ));
   return id;
 }
 
@@ -32,7 +43,7 @@ export async function destroySession(c: Context<AppEnv>) {
     const catalog = await c.var.driver.catalog();
     await catalog.delete(cat.sessions).where(eq(cat.sessions.id, id));
   }
-  deleteCookie(c, COOKIE, { path: '/' });
+  deleteCookie(c, COOKIE, { path: '/', httpOnly: true, sameSite: 'Lax', secure: isHttps(c) });
 }
 
 export async function readSession(c: Context<AppEnv>): Promise<SessionInfo | null> {
@@ -41,7 +52,13 @@ export async function readSession(c: Context<AppEnv>): Promise<SessionInfo | nul
   const catalog = await c.var.driver.catalog();
   const [row] = await catalog.select().from(cat.sessions).where(eq(cat.sessions.id, id));
   if (!row) return null;
-  if (Date.now() - row.lastSeenAt.getTime() > 60_000) {
+  const now = Date.now();
+  if (now - row.lastSeenAt.getTime() > sessionIdleMs() || now - row.createdAt.getTime() > sessionMaxAgeMs()) {
+    await catalog.delete(cat.sessions).where(eq(cat.sessions.id, id));
+    deleteCookie(c, COOKIE, { path: '/', httpOnly: true, sameSite: 'Lax', secure: isHttps(c) });
+    return null;
+  }
+  if (now - row.lastSeenAt.getTime() > 60_000) {
     await catalog.update(cat.sessions).set({ lastSeenAt: new Date() }).where(eq(cat.sessions.id, id));
   }
   return { id: row.id, companyDb: row.companyDb, userId: row.userId, state: row.state ?? {} };

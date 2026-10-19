@@ -7,6 +7,7 @@ import type { DbOrTx } from '../db/provider.ts';
 import { ApiError } from '../lib/errors.ts';
 import { getConfig, setConfig } from './config.ts';
 import { logApp } from './appLog.ts';
+import { PATHS } from '../runtime.ts';
 
 /**
  * Outgoing e-mail (04b 3, 06 3.2 SmtpConfiguration): the company's SMTP
@@ -36,11 +37,26 @@ export interface SmtpConfig {
  * do not carry what is needed to decrypt the password. Tests use a per-process key.
  */
 let cachedKey: Buffer | null = null;
+
+/** The key file used when SHMI_SECRET is not set. */
+export function secretKeyFile() {
+  return process.env.SHMI_SECRET_FILE ?? path.join(process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : PATHS.defaultDataDir, 'secret.key');
+}
+
+/**
+ * Startup check (index.ts): loads or creates the key and tells where it comes
+ * from. Throws when the key file cannot be created or read.
+ */
+export function ensureSecretKey(): { source: 'env' | 'file'; file?: string } {
+  secretKey();
+  return process.env.SHMI_SECRET ? { source: 'env' } : { source: 'file', file: secretKeyFile() };
+}
+
 function secretKey(): Buffer {
   if (cachedKey) return cachedKey;
   if (process.env.SHMI_SECRET) return (cachedKey = createHash('sha256').update(process.env.SHMI_SECRET).digest());
   if (process.env.VITEST) return (cachedKey = randomBytes(32));
-  const file = process.env.SHMI_SECRET_FILE ?? path.join(process.env.DATA_DIR ?? path.resolve(import.meta.dirname, '../../.data'), 'secret.key');
+  const file = secretKeyFile();
   if (!existsSync(file)) {
     mkdirSync(path.dirname(file), { recursive: true });
     try {

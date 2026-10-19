@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import * as s from '../db/company/schema/index.ts';
-import type { DbDriver, DbOrTx } from '../db/provider.ts';
+import { PostgresDriver, type DbDriver, type DbOrTx } from '../db/provider.ts';
 import { getConfig, setConfig } from './config.ts';
 
 /**
@@ -74,13 +74,7 @@ export async function runGdprValidation(db: DbOrTx, driver: DbDriver, opts: { ht
   if (driver.kind === 'pglite') {
     rules.push({ group: S, rule: 'Базата данни е достъпна само за сървъра на програмата', status: 'verified', details: 'Вградена база данни (PGlite) в папката с данни на сървъра.' });
   } else {
-    const url = process.env.DATABASE_URL ?? '';
-    let hasPassword = false;
-    try {
-      hasPassword = !!new URL(url).password || !!process.env.PGPASSWORD;
-    } catch {
-      hasPassword = !!process.env.PGPASSWORD;
-    }
+    const hasPassword = driver instanceof PostgresDriver && driver.connectionHasPassword();
     rules.push({ group: S, rule: 'Връзката към базата данни е защитена с парола', status: hasPassword ? 'verified' : 'error' });
   }
   rules.push({

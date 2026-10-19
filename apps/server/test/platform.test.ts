@@ -36,8 +36,8 @@ describe('GDPR validator (06 9)', () => {
     expect(rule(r.body, 'Поне двама')).toBe('verified');
     expect(rule(r.body, 'Сложни пароли')).toBe('verified');
     expect(rule(r.body, 'Всички потребители имат парола')).toBe('verified');
-    // Embedded database is verified; plain HTTP in tests is only a warning.
-    expect(rule(r.body, 'Базата данни')).toBe('verified');
+    // Embedded database (or a password-protected Postgres connection) is verified; plain HTTP in tests is only a warning.
+    expect(rule(r.body, t.driver.kind === 'pglite' ? 'Базата данни' : 'Връзката към базата данни')).toBe('verified');
     expect(rule(r.body, 'Криптирана')).toBe('warning');
     expect(r.body.overall).toBe('warning');
   });

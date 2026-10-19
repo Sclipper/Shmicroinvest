@@ -112,6 +112,10 @@ export function NewCompanyForm({ firstRun, onDone, onCancel }: { firstRun: boole
   const dupConfirmed = useRef<string | null>(null);
   const [dupWarning, setDupWarning] = useState(false);
   const companies = useQuery({ queryKey: ['companies'], queryFn: () => api.get<CompanyItem[]>('/companies') });
+  // First run on a public server: the setup token (SHMI_SETUP_TOKEN, or the one printed in the server log).
+  const setup = useQuery({ queryKey: ['setup'], queryFn: () => api.get<{ firstRun: boolean; setupTokenRequired: boolean }>('/setup'), enabled: firstRun });
+  const tokenRequired = firstRun && !!setup.data?.setupTokenRequired;
+  const [setupToken, setSetupToken] = useState('');
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => {
     setF({ ...f, [k]: k === 'year' ? Number(e.target.value) : e.target.value });
     if (k === 'companyName') setDupWarning(false);
@@ -128,6 +132,7 @@ export function NewCompanyForm({ firstRun, onDone, onCancel }: { firstRun: boole
       const r = await api.post<{ name: string }>('/companies', {
         companyName: f.companyName, bulstat: f.bulstat || undefined, adminName: f.adminName, adminPassword: f.adminPassword, year: f.year, chartTemplate,
         transfer: firstRun ? undefined : transfer,
+        setupToken: tokenRequired ? setupToken : undefined,
       });
       localStorage.setItem('shmi.lastCompany', r.name);
       onDone();
@@ -140,6 +145,12 @@ export function NewCompanyForm({ firstRun, onDone, onCancel }: { firstRun: boole
   return (
     <form onSubmit={submit} className="flex flex-col gap-3">
       {firstRun && <div className="font-semibold text-slate-700">Създаване на първата фирма</div>}
+      {tokenRequired && (
+        <Field label="Ключ за инсталация">
+          <TextInput type="password" value={setupToken} onChange={(e) => setSetupToken(e.target.value)} autoComplete="off" required />
+        </Field>
+      )}
+      {tokenRequired && <div className="-mt-2 text-[12px] text-slate-500">Ключът е зададен в SHMI_SETUP_TOKEN или е изписан в дневника на сървъра при стартиране.</div>}
       <Field label="Име на фирмата">
         <TextInput autoFocus value={f.companyName} onChange={set('companyName')} required />
       </Field>
