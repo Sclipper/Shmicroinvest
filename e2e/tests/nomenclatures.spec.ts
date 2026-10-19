@@ -127,6 +127,7 @@ test('currency rules come from the server with the spec texts', async ({ page })
   await openApp(page);
   await menu(page, 'Редакция', 'Валути');
   const tab = activeTab(page);
+  await expect(tab.getByRole('row', { name: /ISK/ })).toContainText('БНБ не публикува курс на исландската крона от 01.09.2010 г.');
   await tab.getByRole('button', { name: 'Нова валута' }).click();
   await tab.getByLabel('Код (ISO)').fill('EU');
   await tab.getByLabel('Наименование').fill('Евро-тест');

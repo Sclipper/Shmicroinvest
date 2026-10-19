@@ -174,6 +174,9 @@ interface CurrencyForm { isoCode: string; name: string; exchangeRate: string; fi
 const rate = (v: string) => (v ? Number(v).toLocaleString('bg-BG', { minimumFractionDigits: 5, maximumFractionDigits: 6 }) : '');
 
 /** Валути (Редакция > Валути). BGN and EUR have a fixed rate. */
+/** strMessageCurrencyISKStopped (03a 5.1): BNB stopped publishing ISK on 2010-09-01. */
+const ISK_STOPPED = 'БНБ не публикува курс на исландската крона от 01.09.2010 г.';
+
 export function Currencies() {
   const can = useCan();
   const s = useSession();
@@ -196,7 +199,7 @@ export function Currencies() {
         { label: 'Курс към лев', render: (r) => rate(r.exchangeRate), className: 'num' },
         { label: 'Фиксиран курс', render: (r) => rate(r.fixedRate), className: 'num' },
         { label: 'Дата на курса', render: (r) => (r.rateDate ? bgDate(r.rateDate) : '') },
-        { label: 'Бележка', render: (r) => (r.isoCode === base ? <span className="text-brand-600">основна валута</span> : r.id <= 2 ? <span className="text-slate-500">фиксиран курс</span> : '') },
+        { label: 'Бележка', render: (r) => (r.isoCode === base ? <span className="text-brand-600">основна валута</span> : r.id <= 2 ? <span className="text-slate-500">фиксиран курс</span> : r.isoCode === 'ISK' ? <span className="text-slate-500">{ISK_STOPPED}</span> : '') },
       ]}
       empty={() => ({ isoCode: '', name: '', exchangeRate: '1', fixedRate: '', rateDate: '' })}
       toForm={(r) => ({ isoCode: r.isoCode, name: r.name, exchangeRate: String(Number(r.exchangeRate)), fixedRate: String(Number(r.fixedRate)), rateDate: r.rateDate ?? '' })}
