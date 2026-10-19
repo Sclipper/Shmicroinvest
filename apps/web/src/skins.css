@@ -1,0 +1,224 @@
+/*
+ * Skins (spec 06 2.7, ApplicationSkin): html[data-skin=<id>] redefines the
+ * Tailwind palette variables the app is painted with (brand = accents,
+ * slate = surfaces, borders and text). The default skin sets no attribute.
+ * Generated from a lightness ladder per palette; screen only (print stays plain).
+ */
+@media screen {
+  /* Cherry Mint: cherry-red accents on mint-tinted surfaces */
+  html[data-skin="cherrymint"] {
+    --color-brand-50: oklch(97.0% 0.023 16);
+    --color-brand-100: oklch(93.5% 0.048 16);
+    --color-brand-200: oklch(87.0% 0.086 16);
+    --color-brand-300: oklch(79.0% 0.133 16);
+    --color-brand-400: oklch(70.0% 0.171 16);
+    --color-brand-500: oklch(58.5% 0.190 16);
+    --color-brand-600: oklch(51.5% 0.180 16);
+    --color-brand-700: oklch(44.5% 0.162 16);
+    --color-brand-800: oklch(37.5% 0.133 16);
+    --color-brand-900: oklch(29.0% 0.095 16);
+    --color-slate-50: oklch(98.4% 0.004 172);
+    --color-slate-100: oklch(96.8% 0.010 172);
+    --color-slate-200: oklch(92.9% 0.018 172);
+    --color-slate-300: oklch(86.9% 0.031 172);
+    --color-slate-400: oklch(70.4% 0.056 172);
+    --color-slate-500: oklch(55.4% 0.064 172);
+    --color-slate-600: oklch(44.6% 0.060 172);
+    --color-slate-700: oklch(37.2% 0.062 172);
+    --color-slate-800: oklch(27.9% 0.057 172);
+    --color-slate-900: oklch(20.8% 0.059 172);
+    --color-slate-950: oklch(12.9% 0.059 172);
+  }
+  /* Forest Mist: muted forest green on misty grey-green */
+  html[data-skin="forestmist"] {
+    --color-brand-50: oklch(97.0% 0.013 155);
+    --color-brand-100: oklch(93.5% 0.028 155);
+    --color-brand-200: oklch(87.0% 0.050 155);
+    --color-brand-300: oklch(79.0% 0.077 155);
+    --color-brand-400: oklch(70.0% 0.099 155);
+    --color-brand-500: oklch(58.5% 0.110 155);
+    --color-brand-600: oklch(51.5% 0.104 155);
+    --color-brand-700: oklch(44.5% 0.093 155);
+    --color-brand-800: oklch(37.5% 0.077 155);
+    --color-brand-900: oklch(29.0% 0.055 155);
+    --color-slate-50: oklch(98.4% 0.003 165);
+    --color-slate-100: oklch(96.8% 0.006 165);
+    --color-slate-200: oklch(92.9% 0.012 165);
+    --color-slate-300: oklch(86.9% 0.020 165);
+    --color-slate-400: oklch(70.4% 0.036 165);
+    --color-slate-500: oklch(55.4% 0.041 165);
+    --color-slate-600: oklch(44.6% 0.039 165);
+    --color-slate-700: oklch(37.2% 0.040 165);
+    --color-slate-800: oklch(27.9% 0.037 165);
+    --color-slate-900: oklch(20.8% 0.038 165);
+    --color-slate-950: oklch(12.9% 0.038 165);
+  }
+  /* Lady Pink: rose accents on blush neutrals */
+  html[data-skin="ladypink"] {
+    --color-brand-50: oklch(97.0% 0.019 355);
+    --color-brand-100: oklch(93.5% 0.040 355);
+    --color-brand-200: oklch(87.0% 0.072 355);
+    --color-brand-300: oklch(79.0% 0.112 355);
+    --color-brand-400: oklch(70.0% 0.144 355);
+    --color-brand-500: oklch(58.5% 0.160 355);
+    --color-brand-600: oklch(51.5% 0.152 355);
+    --color-brand-700: oklch(44.5% 0.136 355);
+    --color-brand-800: oklch(37.5% 0.112 355);
+    --color-brand-900: oklch(29.0% 0.080 355);
+    --color-slate-50: oklch(98.4% 0.003 350);
+    --color-slate-100: oklch(96.8% 0.006 350);
+    --color-slate-200: oklch(92.9% 0.012 350);
+    --color-slate-300: oklch(86.9% 0.020 350);
+    --color-slate-400: oklch(70.4% 0.036 350);
+    --color-slate-500: oklch(55.4% 0.041 350);
+    --color-slate-600: oklch(44.6% 0.039 350);
+    --color-slate-700: oklch(37.2% 0.040 350);
+    --color-slate-800: oklch(27.9% 0.037 350);
+    --color-slate-900: oklch(20.8% 0.038 350);
+    --color-slate-950: oklch(12.9% 0.038 350);
+  }
+  /* Lime Tree: leafy lime-olive green on warm neutrals */
+  html[data-skin="limetree"] {
+    --color-brand-50: oklch(97.0% 0.019 128);
+    --color-brand-100: oklch(93.5% 0.040 128);
+    --color-brand-200: oklch(87.0% 0.072 128);
+    --color-brand-300: oklch(79.0% 0.112 128);
+    --color-brand-400: oklch(70.0% 0.144 128);
+    --color-brand-500: oklch(58.5% 0.160 128);
+    --color-brand-600: oklch(51.5% 0.152 128);
+    --color-brand-700: oklch(44.5% 0.136 128);
+    --color-brand-800: oklch(37.5% 0.112 128);
+    --color-brand-900: oklch(29.0% 0.080 128);
+    --color-slate-50: oklch(98.4% 0.003 100);
+    --color-slate-100: oklch(96.8% 0.006 100);
+    --color-slate-200: oklch(92.9% 0.012 100);
+    --color-slate-300: oklch(86.9% 0.020 100);
+    --color-slate-400: oklch(70.4% 0.036 100);
+    --color-slate-500: oklch(55.4% 0.041 100);
+    --color-slate-600: oklch(44.6% 0.039 100);
+    --color-slate-700: oklch(37.2% 0.040 100);
+    --color-slate-800: oklch(27.9% 0.037 100);
+    --color-slate-900: oklch(20.8% 0.038 100);
+    --color-slate-950: oklch(12.9% 0.038 100);
+  }
+  /* Moonlight: dusky indigo on silver-blue */
+  html[data-skin="moonlight"] {
+    --color-brand-50: oklch(97.0% 0.011 270);
+    --color-brand-100: oklch(93.5% 0.022 270);
+    --color-brand-200: oklch(87.0% 0.041 270);
+    --color-brand-300: oklch(79.0% 0.063 270);
+    --color-brand-400: oklch(70.0% 0.081 270);
+    --color-brand-500: oklch(58.5% 0.090 270);
+    --color-brand-600: oklch(51.5% 0.085 270);
+    --color-brand-700: oklch(44.5% 0.076 270);
+    --color-brand-800: oklch(37.5% 0.063 270);
+    --color-brand-900: oklch(29.0% 0.045 270);
+    --color-slate-50: oklch(98.4% 0.004 262);
+    --color-slate-100: oklch(96.8% 0.009 262);
+    --color-slate-200: oklch(92.9% 0.017 262);
+    --color-slate-300: oklch(86.9% 0.029 262);
+    --color-slate-400: oklch(70.4% 0.052 262);
+    --color-slate-500: oklch(55.4% 0.060 262);
+    --color-slate-600: oklch(44.6% 0.056 262);
+    --color-slate-700: oklch(37.2% 0.057 262);
+    --color-slate-800: oklch(27.9% 0.053 262);
+    --color-slate-900: oklch(20.8% 0.055 262);
+    --color-slate-950: oklch(12.9% 0.055 262);
+  }
+  /* Sunset: coral-orange on warm sand */
+  html[data-skin="sunset"] {
+    --color-brand-50: oklch(97.0% 0.020 42);
+    --color-brand-100: oklch(93.5% 0.043 42);
+    --color-brand-200: oklch(87.0% 0.077 42);
+    --color-brand-300: oklch(79.0% 0.119 42);
+    --color-brand-400: oklch(70.0% 0.153 42);
+    --color-brand-500: oklch(58.5% 0.170 42);
+    --color-brand-600: oklch(51.5% 0.162 42);
+    --color-brand-700: oklch(44.5% 0.145 42);
+    --color-brand-800: oklch(37.5% 0.119 42);
+    --color-brand-900: oklch(29.0% 0.085 42);
+    --color-slate-50: oklch(98.4% 0.003 70);
+    --color-slate-100: oklch(96.8% 0.007 70);
+    --color-slate-200: oklch(92.9% 0.013 70);
+    --color-slate-300: oklch(86.9% 0.022 70);
+    --color-slate-400: oklch(70.4% 0.040 70);
+    --color-slate-500: oklch(55.4% 0.046 70);
+    --color-slate-600: oklch(44.6% 0.043 70);
+    --color-slate-700: oklch(37.2% 0.044 70);
+    --color-slate-800: oklch(27.9% 0.041 70);
+    --color-slate-900: oklch(20.8% 0.042 70);
+    --color-slate-950: oklch(12.9% 0.042 70);
+  }
+  /* Violet Lane: violet on lavender greys */
+  html[data-skin="violetlane"] {
+    --color-brand-50: oklch(97.0% 0.020 300);
+    --color-brand-100: oklch(93.5% 0.043 300);
+    --color-brand-200: oklch(87.0% 0.077 300);
+    --color-brand-300: oklch(79.0% 0.119 300);
+    --color-brand-400: oklch(70.0% 0.153 300);
+    --color-brand-500: oklch(58.5% 0.170 300);
+    --color-brand-600: oklch(51.5% 0.162 300);
+    --color-brand-700: oklch(44.5% 0.145 300);
+    --color-brand-800: oklch(37.5% 0.119 300);
+    --color-brand-900: oklch(29.0% 0.085 300);
+    --color-slate-50: oklch(98.4% 0.003 295);
+    --color-slate-100: oklch(96.8% 0.008 295);
+    --color-slate-200: oklch(92.9% 0.014 295);
+    --color-slate-300: oklch(86.9% 0.024 295);
+    --color-slate-400: oklch(70.4% 0.044 295);
+    --color-slate-500: oklch(55.4% 0.051 295);
+    --color-slate-600: oklch(44.6% 0.047 295);
+    --color-slate-700: oklch(37.2% 0.048 295);
+    --color-slate-800: oklch(27.9% 0.045 295);
+    --color-slate-900: oklch(20.8% 0.046 295);
+    --color-slate-950: oklch(12.9% 0.046 295);
+  }
+  /* Moonlight (Experimental): a dark night-blue variant */
+  html[data-skin="moonlightversionexperimental"] {
+    color-scheme: dark;
+    --color-white: oklch(25.5% 0.028 265);
+    --color-slate-50: oklch(28.5% 0.030 265);
+    --color-slate-100: oklch(21.5% 0.030 265);
+    --color-slate-200: oklch(33.0% 0.030 265);
+    --color-slate-300: oklch(40.0% 0.030 265);
+    --color-slate-400: oklch(52.0% 0.030 265);
+    --color-slate-500: oklch(68.0% 0.015 265);
+    --color-slate-600: oklch(78.0% 0.015 265);
+    --color-slate-700: oklch(85.0% 0.015 265);
+    --color-slate-800: oklch(91.0% 0.015 265);
+    --color-slate-900: oklch(95.0% 0.015 265);
+    --color-slate-950: oklch(98.0% 0.015 265);
+    --color-brand-50: oklch(31.0% 0.050 258);
+    --color-brand-100: oklch(37.0% 0.075 258);
+    --color-brand-200: oklch(46.0% 0.100 258);
+    --color-brand-300: oklch(66.0% 0.120 258);
+    --color-brand-400: oklch(70.0% 0.130 258);
+    --color-brand-500: oklch(60.0% 0.150 258);
+    --color-brand-600: oklch(53.0% 0.140 258);
+    --color-brand-700: oklch(46.0% 0.120 258);
+    --color-brand-800: oklch(40.0% 0.100 258);
+    --color-brand-900: oklch(32.0% 0.080 258);
+    --color-red-50: oklch(30.0% 0.050 25);
+    --color-red-100: oklch(34.0% 0.060 25);
+    --color-red-200: oklch(42.0% 0.070 25);
+    --color-red-300: oklch(50.0% 0.090 25);
+    --color-red-400: oklch(60.0% 0.110 25);
+    --color-amber-50: oklch(30.0% 0.050 75);
+    --color-amber-100: oklch(34.0% 0.060 75);
+    --color-amber-200: oklch(42.0% 0.070 75);
+    --color-amber-300: oklch(50.0% 0.090 75);
+    --color-amber-400: oklch(60.0% 0.110 75);
+    --color-emerald-50: oklch(30.0% 0.050 160);
+    --color-emerald-100: oklch(34.0% 0.060 160);
+    --color-emerald-200: oklch(42.0% 0.070 160);
+    --color-emerald-300: oklch(50.0% 0.090 160);
+    --color-emerald-400: oklch(60.0% 0.110 160);
+  }
+  /* Text that sits on dark surfaces in this skin: light tints; white text stays white on accents. */
+  html[data-skin="moonlightversionexperimental"] .text-white { color: #fff; }
+  html[data-skin="moonlightversionexperimental"] :is(.text-brand-600, .text-brand-700, .text-brand-900) { color: oklch(80.0% 0.100 258); }
+  html[data-skin="moonlightversionexperimental"] :is(.text-red-600, .text-red-700, .text-red-800, .text-red-900, .text-red-950) { color: oklch(82.0% 0.100 25); }
+  html[data-skin="moonlightversionexperimental"] :is(.text-amber-600, .text-amber-700, .text-amber-800, .text-amber-900, .text-amber-950) { color: oklch(82.0% 0.100 75); }
+  html[data-skin="moonlightversionexperimental"] :is(.text-emerald-600, .text-emerald-700, .text-emerald-800, .text-emerald-900, .text-emerald-950) { color: oklch(82.0% 0.100 160); }
+  html[data-skin="moonlightversionexperimental"] .bg-slate-900\/30 { background-color: rgb(0 0 0 / 0.55); }
+}

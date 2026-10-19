@@ -340,8 +340,11 @@ async function enrichRows(db: DbOrTx, m: MappingContext, rows: MappedBankRow[], 
 export async function parseStatementFile(db: DbOrTx, file: { fileName: string; bytes: Uint8Array }, o: ParseOptions, ctx: ImportCtx) {
   const m = await mappingContext(db, o, ctx);
   const { ba } = m;
-  const isXlsx = /\.xlsx$/i.test(file.fileName) || (file.bytes[0] === 0x50 && file.bytes[1] === 0x4b);
-  const parsed = isXlsx
+  // Workbooks: .xlsx (zip) and BIFF .xls (OLE2). Everything else is text: HTML, XML, MT940, CSV/TXT
+  // (an ".xls" that a bank writes as an HTML table is read as HTML).
+  const b = file.bytes;
+  const isWorkbook = (b[0] === 0x50 && b[1] === 0x4b) || (b[0] === 0xd0 && b[1] === 0xcf && b[2] === 0x11 && b[3] === 0xe0);
+  const parsed = isWorkbook
     ? parseBankStatement({ table: sheetTable((await readWorkbook(file.bytes))[0]!) }, ba.bankCode)
     : parseBankStatement({ text: decodeText(file.bytes) }, ba.bankCode);
   if (!parsed || !parsed.rows.length) throw new DataImportError(critical('strWrongFileOrBrokenStructures'));

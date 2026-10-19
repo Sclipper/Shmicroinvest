@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { RotateCcw, Save } from 'lucide-react';
-import { parseVatTermConfig, vatTermConfigValue } from '@shmi/core';
+import { DEFAULT_SKIN, parseVatTermConfig, vatTermConfigValue } from '@shmi/core';
 import { api } from '../../api.ts';
 import { useDialogs } from '../../components/dialogs.tsx';
 import { Button, Checkbox, CommandBar, Empty, Panel, Select, Spinner, TextInput, cx } from '../../components/ui.tsx';
@@ -9,6 +9,7 @@ import { useCan, useInvalidate, useLookups } from '../../session.tsx';
 import { DatabasePage, DocumentTypesPage, SequencesPage, useSettingsPages } from '../settings/SettingsPages.tsx';
 import { SmtpPage } from '../settings/SmtpPage.tsx';
 import { LocalPage } from '../settings/LocalPage.tsx';
+import { SkinPanel, useSkinChoice } from '../settings/SkinPanel.tsx';
 
 interface Setting { key: string; label: string; value: string; default: string }
 
@@ -32,6 +33,7 @@ function BasicSettings() {
   const editable = can('UI_Other_Settings');
   const lookups = useLookups();
   const q = useQuery({ queryKey: ['settings'], queryFn: () => api.get<Setting[]>('/settings') });
+  const skin = useSkinChoice();
   const [values, setValues] = useState<Record<string, string>>({});
   useEffect(() => {
     if (q.data) setValues(Object.fromEntries(q.data.map((s) => [s.key, s.value])));
@@ -39,6 +41,7 @@ function BasicSettings() {
 
   if (!q.data) return <Empty><Spinner /></Empty>;
   const changed = q.data.filter((s) => values[s.key] !== undefined && values[s.key] !== s.value);
+  const changeCount = changed.length + (skin.changed ? 1 : 0);
   const set = (k: string, v: string) => setValues((x) => ({ ...x, [k]: v }));
 
   const save = async () => {
@@ -47,8 +50,11 @@ function BasicSettings() {
       if (NUMERIC.has(s.key) && !/^\d$/.test(v)) return dialogs.alert(`„${s.label}“: въведете цяло число от 0 до 9.`);
       if (s.key === 'AccountsSeparator' && v.length !== 1) return dialogs.alert('Разделителят за подсметки трябва да е един символ.');
     }
+    const noSkin = skin.validate();
+    if (noSkin.length) return dialogs.alert(noSkin[0]!.text);
     try {
-      await api.put('/settings', Object.fromEntries(changed.map((s) => [s.key, values[s.key]!])));
+      if (changed.length) await api.put('/settings', Object.fromEntries(changed.map((s) => [s.key, values[s.key]!])));
+      if (skin.changed) await skin.save();
       await invalidate('settings', 'session');
     } catch (e) {
       await dialogs.error(e);
@@ -60,14 +66,20 @@ function BasicSettings() {
   const others = q.data.filter((s) => !isBool(s) && !(s.key in VAT_TERM_SETTINGS));
   return (
     <div className="flex h-full flex-col">
-      <CommandBar right={changed.length ? <span className="text-[12px] text-amber-700">Незаписани промени: {changed.length}</span> : undefined}>
-        <Button variant="primary" icon={<Save className="size-3.5" />} disabled={!editable || !changed.length} onClick={save}>
+      <CommandBar right={changeCount ? <span className="text-[12px] text-amber-700">Незаписани промени: {changeCount}</span> : undefined}>
+        <Button variant="primary" icon={<Save className="size-3.5" />} disabled={!editable || !changeCount} onClick={save}>
           Запис
         </Button>
-        <Button disabled={!changed.length} onClick={() => setValues(Object.fromEntries(q.data!.map((s) => [s.key, s.value])))}>
+        <Button disabled={!changeCount} onClick={() => {
+          setValues(Object.fromEntries(q.data!.map((s) => [s.key, s.value])));
+          skin.cancel();
+        }}>
           Отказ
         </Button>
-        <Button icon={<RotateCcw className="size-3.5" />} disabled={!editable} onClick={() => setValues(Object.fromEntries(q.data!.map((s) => [s.key, s.default])))}>
+        <Button icon={<RotateCcw className="size-3.5" />} disabled={!editable} onClick={() => {
+          setValues(Object.fromEntries(q.data!.map((s) => [s.key, s.default])));
+          skin.set(DEFAULT_SKIN);
+        }}>
           Стойности по подразбиране
         </Button>
       </CommandBar>
@@ -91,6 +103,7 @@ function BasicSettings() {
               })}
             </div>
           </Panel>
+          <SkinPanel choice={skin} disabled={!editable} />
           <Panel title="Операции по ДДС" className="w-[420px]">
             <div className="flex flex-col gap-1.5 p-3">
               {vatTerms.map((s) => {

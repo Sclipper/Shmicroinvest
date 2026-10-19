@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { and, asc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import {
   DEFAULT_SHORTCUTS, duplicateShortcutWarnings, effectiveShortcuts, isAllowedEditableGesture, JOURNAL_EXTRA_MESSAGES as X,
-  MANDATORY_DOCUMENT_TYPES, sequenceEditorValues, sequencePreview, sequenceStorage, validateSequence, type ValidationMessage,
+  MANDATORY_DOCUMENT_TYPES, DEFAULT_SKIN, SKIN_SETTING, sequenceEditorValues, sequencePreview, sequenceStorage, validateSequence, validateSkin, type ValidationMessage,
 } from '@shmi/core';
 import type { AppEnv } from '../context.ts';
 import * as s from '../db/company/schema/index.ts';
@@ -77,6 +77,8 @@ export const SETTING_CHILDREN: Record<string, string[]> = {
 /** Per-user options (Configuration rows with UserID). */
 const USER_SETTINGS: Record<string, string> = {
   KeepAccountingOpen: 'False',
+  // 06 2.7 / 3.2: the skin ("Визуален стил"); Delta keeps it per machine, the web per user.
+  [SKIN_SETTING]: DEFAULT_SKIN,
 };
 
 async function shortcutOverrides(db: DbOrTx, userId: number): Promise<Record<string, string>> {
@@ -254,12 +256,18 @@ export const settingsExtraRoutes = new Hono<AppEnv>()
   })
 
   .put('/settings/user', zValidator('json', z.record(z.string(), z.string())), async (c) => {
-    // Local keys of 06 3.2 (ZIP password, e-mail sender and signature) first; then the screen options.
-    const rest = await c.var.db.transaction((tx) => saveLocalSettings(tx, c.var.user.id, c.req.valid('json')));
-    for (const [k, v] of Object.entries(rest)) {
-      if (!(k in USER_SETTINGS)) throw badRequest(`Непозната настройка ${k}.`);
-      await setConfig(c.var.db, k, v, c.var.user.id);
+    const body = c.req.valid('json');
+    if (SKIN_SETTING in body) {
+      const errs = validateSkin(body[SKIN_SETTING]!);
+      if (errs.length) throw new ApiError(400, errs[0]!.text, errs);
     }
+    // Local keys of 06 3.2 (ZIP password, e-mail sender and signature) first; then the screen options.
+    await c.var.db.transaction(async (tx) => {
+      const rest = await saveLocalSettings(tx, c.var.user.id, body);
+      const unknown = Object.keys(rest).find((k) => !(k in USER_SETTINGS));
+      if (unknown) throw badRequest(`Непозната настройка ${unknown}.`);
+      for (const [k, v] of Object.entries(rest)) await setConfig(tx, k, v, c.var.user.id);
+    });
     return c.json({ ok: true });
   })
 

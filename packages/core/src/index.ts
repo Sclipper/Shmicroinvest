@@ -30,11 +30,13 @@ export * from './reportExport.ts';
 // The PDF and Word writers (pdf.ts, ttf.ts, docx.ts) are imported as
 // '@shmi/core/pdf' and '@shmi/core/docx' so the web app can load them lazily.
 export * from './journalExtras.ts';
+export * from './skins.ts';
 export * from './schedules.ts';
 export * from './stock.ts';
 export * from './vat/index.ts';
 export * from './depreciation.ts';
 export * from './exchange/xml.ts';
+export * from './exchange/html.ts';
 export * from './exchange/messages.ts';
 export * from './exchange/transfer.ts';
 export * from './exchange/formula.ts';

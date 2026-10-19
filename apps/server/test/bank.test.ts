@@ -315,6 +315,47 @@ describe('Excel statement header (04b 1.3, 1.4)', { timeout: 30_000 }, () => {
   });
 });
 
+describe('HTML statement (04b 1.13)', { timeout: 30_000 }, () => {
+  /** windows-1251 bytes (ASCII and Cyrillic А-я): the encoding of a DSK export on a Bulgarian Windows. */
+  const cp1251 = (s: string) => Uint8Array.from([...s].map((ch) => {
+    const c = ch.codePointAt(0)!;
+    return c < 0x80 ? c : c >= 0x410 && c <= 0x44f ? c - 0x410 + 0xc0 : c === 0xa0 ? 0xa0 : 0x3f;
+  }));
+  const html = (currency: string) => `<!DOCTYPE html><html><head><meta http-equiv="Content-Type" content="text/html; charset=windows-1251"><title>Банка ДСК</title></head><body>
+    <table>
+      <tr><td colspan="6">ОТЧЕТ ПО СМЕТКА ${OWN_IBAN} ${currency}</td></tr>
+      <tr><td>Период:</td><td colspan="5">01.10.2026 - 31.10.2026</td></tr>
+      <tr><td>Старо салдо</td><td class="amt">5&nbsp;000,00</td></tr>
+      <tr><th>Дата</th><th>Референция</th><th>Дебит</th><th>Кредит</th><th>Наредител / Получател</th><th>Сметка</th><th>Описание</th></tr>
+      <tr><td>06.10.2026</td><td>FT2610061</td><td class="amt"></td><td class="amt">1 234,56</td><td>Банков Клиент ООД</td><td>${PARTNER_IBAN}</td><td>Плащане по фактура 0000000901</td></tr>
+      <tr><td>Ново салдо</td><td class="amt">6 234,56</td></tr>
+    </table></body></html>`;
+  const base64 = (s: string) => Buffer.from(cp1251(s)).toString('base64');
+
+  it('reads a windows-1251 DSK HTML export, matches the partner by IBAN and posts the row', async () => {
+    let r = await call('POST', '/bank-statements/parse', { fileName: 'dsk.html', contentBase64: base64(html('USD')), bankAccountId: stsaAccount });
+    expect(keys(r)).toEqual(['strCurrenciesAreNotTheSame']);
+    // A file without html/head is refused by the probe.
+    r = await call('POST', '/bank-statements/parse', { fileName: 'dsk.html', contentBase64: base64(html('EUR').replace(/<head>.*<\/head>/, '')), bankAccountId: stsaAccount });
+    expect(keys(r)).toEqual(['strWrongFileOrBrokenStructures']);
+
+    r = await call('POST', '/bank-statements/parse', { fileName: 'dsk.html', contentBase64: base64(html('EUR')), bankAccountId: stsaAccount });
+    expect(r.status, r.text).toBe(200);
+    expect(r.body).toMatchObject({ format: 'DSK HTML', model: 'DSK', fileIban: OWN_IBAN, currency: 'EUR', from: '2026-10-01', to: '2026-10-31', openingBalance: '5000.00', closingBalance: '6234.56' });
+    const rows = r.body.rows as Row[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ isInflow: true, amount: '1234.56', partnerName: 'Банков Клиент ООД', reference: 'FT2610061', companyId: partnerId, debitAccountId: acc('503'), creditAccountId: acc('411'), postAmount: '1234.56' });
+    expect(rows[0]!.props).toMatchObject({ MovementType: 'CREDIT', CreditAmount: '1234.56', Reason: 'Плащане по фактура 0000000901' });
+
+    const post = await call('POST', '/bank-statements/post', { bankAccountId: stsaAccount, rows: [toPost(rows[0]!)] });
+    expect(post.status, post.text).toBe(200);
+    expect(post.body.posted).toBe(1);
+    const tb = await balances('2026-10-06', '2026-10-06');
+    expect(tb['503']!.dt).toBe('1234.56');
+    expect(tb['411']!.ct).toBe('1234.56');
+  });
+});
+
 describe('open documents of the active year only', { timeout: 60_000 }, () => {
   it('a 2026 document is not offered while 2027 is active', async () => {
     const inv = await t.post({ date: '2026-11-02', docType: 1, docNumber: '0000000999', partner: partnerId, dr: [['411', 70]], cr: [['702', 70]] });
