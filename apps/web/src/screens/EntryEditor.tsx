@@ -186,14 +186,15 @@ export function EntryEditor({ tab, mode }: ScreenProps & { mode?: EditorMode }) 
     try {
       if (!(await confirmBeforeSave(dialogs, source))) return null;
       const body = payload(source);
-      if (!(await pay.beforeSave(body))) return null;
+      const extras = await pay.beforeSave(body);
+      if (!extras) return null;
       type Saved = { id: number; number: string; warnings: { key: string; text: string; severity: 'warning' }[] };
       // VAT questions (02b 12) come back as a 409 confirm and are resent with `force`.
       const r = await vat.confirmSave((force) => source.id
-        ? api.put<Saved>(`/entries/${source.id}`, { ...body, force })
-        : api.post<Saved>('/entries', { ...body, force }));
+        ? api.put<Saved>(`/entries/${source.id}`, { ...body, ...extras, force })
+        : api.post<Saved>('/entries', { ...body, ...extras, force }));
       if (!r) return null;
-      await pay.afterSave(r.id, body);
+      await pay.afterSave(extras);
       await afterSave(r, !source.id);
       setDirty(false);
       const next = after === 'close' && keepOpen ? 'new' : after;

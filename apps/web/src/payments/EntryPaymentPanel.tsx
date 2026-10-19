@@ -31,10 +31,16 @@ export interface EntryPaymentController {
   setDocumentNumber: (v: string) => void;
   binding: BindChoice | null;
   setBinding: (v: BindChoice | null) => void;
-  /** Pre-save checks; false = do not save. */
-  beforeSave: (payload: EntryPayload) => Promise<boolean>;
-  /** Runs auto payment / binding for the saved entry. */
-  afterSave: (entryId: number, payload: EntryPayload) => Promise<void>;
+  /** Pre-save checks; false = do not save, otherwise the payment / binding sent with the entry. */
+  beforeSave: (payload: EntryPayload) => Promise<false | SaveExtras>;
+  /** Resets the panel after the entry was saved. */
+  afterSave: (extras: SaveExtras) => Promise<void>;
+}
+
+/** Auto payment / binding the server runs in the same transaction as the entry save. */
+export interface SaveExtras {
+  payment?: { paymentAccountId: number | null; documentTypeId: number | null; documentNumber: string | null };
+  bindDocuments?: BindChoice['rows'];
 }
 
 /** Partner line of the entry: the first line on a client/supplier account. */
@@ -71,31 +77,26 @@ export function useEntryPayment(): EntryPaymentController {
         return false;
       }
     }
+    let bind = binding;
     if (binding && !sameExchangeRate(binding.rates)) {
       if (!(await dialogs.confirm(PAYMENT_MESSAGES.strDifferentExchangeRatesInAccountingsError))) return false;
-      setBinding(null);
+      bind = null;
     } else if (binding && auto) {
       // The auto payment pays the whole open amount, nothing is left to bind.
       if (!(await dialogs.confirm(PAYMENT_MESSAGES.strDifferentAmountInPaymentAndBindingDoc))) return false;
-      setBinding(null);
+      bind = null;
     }
-    return true;
+    if (bind !== binding) setBinding(null);
+    const extras: SaveExtras = {};
+    if (bind) extras.bindDocuments = bind.rows;
+    if (auto && partnerLine(p, categoryOf)) extras.payment = { paymentAccountId: account, documentTypeId, documentNumber: documentNumber || null };
+    return extras;
   };
 
-  const afterSave = async (entryId: number, p: EntryPayload) => {
-    const bind = binding && sameExchangeRate(binding.rates) && !auto ? binding : null;
-    try {
-      if (bind) await api.post('/payments/bind-entry', { entryId, documents: bind.rows });
-      if (auto && partnerLine(p, categoryOf)) {
-        await api.post('/payments/auto', { entryId, paymentAccountId: account, documentTypeId, documentNumber: documentNumber || null });
-      }
-    } catch (e) {
-      await dialogs.error(e, 'Контирането е записано, но разплащането не е извършено');
-    } finally {
-      setBinding(null);
-      setDocumentNumber('');
-      if (bind || auto) await invalidate('payments', 'entries', 'reports');
-    }
+  const afterSave = async (extras: SaveExtras) => {
+    setBinding(null);
+    setDocumentNumber('');
+    if (extras.payment || extras.bindDocuments) await invalidate('payments', 'entries', 'reports');
   };
 
   return {

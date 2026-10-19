@@ -186,34 +186,42 @@ describe('entry editor: automatic payment and binding (02a 4.3, 8.2)', () => {
     expect(none.body.messages.map((m: { key: string }) => m.key)).toEqual(['strPaymentAccountMissing', 'strNoPartnerLineForPayment']);
   });
 
-  it('auto payment creates the payment entry and its link; the invoice disappears from the open items', async () => {
+  it('auto payment is saved with the entry: the payment entry and its link; the invoice disappears from the open items', async () => {
     const cli = await t.partner('Автоматичен клиент ООД', ['411']);
-    const inv = await t.post({ date: '2026-07-01', docNumber: 'A-1', term: 'Продажба на услуга', partner: cli, dr: [['411', 240]], cr: [['702', 240]] });
-    const r = await t.call('POST', '/payments/auto', { entryId: inv.id, paymentAccountId: t.acc('501'), documentTypeId: null });
-    expect(r.status, r.text).toBe(201);
-    expect(r.body).toHaveLength(1);
-    const pay = (await t.call('GET', `/entries/${r.body[0].id}`)).body;
+    const inv = await t.post({ date: '2026-07-01', docNumber: 'A-1', term: 'Продажба на услуга', partner: cli, dr: [['411', 240]], cr: [['702', 240]], payment: { paymentAccountId: t.acc('501'), documentTypeId: null } });
+    const links = (await t.call('GET', `/payments/links?accountingId=${inv.id}`)).body as { paymentAccountingId: number }[];
+    expect(links).toMatchObject([{ refAccountingId: inv.id, amount: '240.00' }]);
+    const pay = (await t.call('GET', `/entries/${links[0]!.paymentAccountingId}`)).body;
     expect(pay).toMatchObject({ accountingDate: '2026-07-01', documentTypeId: 8, term: 'Продажба на услуга' });
     expect(pay.debits[0]).toMatchObject({ accountId: t.acc('501'), amount: '240.00' });
-    const links = (await t.call('GET', `/payments/links?accountingId=${inv.id}`)).body;
-    expect(links).toMatchObject([{ refAccountingId: inv.id, paymentAccountingId: r.body[0].id, amount: '240.00' }]);
     const open = await openOf(cli);
     expect(open.liabilities).toHaveLength(0);
     expect(open.payments).toHaveLength(0);
   });
 
-  it('binds a saved payment entry with chosen invoices, capped by the payment', async () => {
+  it('a failing auto payment leaves no entry behind', async () => {
+    const cli = await t.partner('Неуспешно разплащане ООД', ['411']);
+    const before = (await t.call('GET', '/entries?limit=1000')).body.length;
+    // A bank account needs a document number for the payment: the save fails as a whole.
+    const r = await t.tryPost({ date: '2026-07-01', partner: cli, dr: [['411', 50]], cr: [['702', 50]], payment: { paymentAccountId: t.acc('503'), documentTypeId: 11, documentNumber: '' } });
+    expect(r.status).toBe(422);
+    expect(keys(r)).toEqual(['strMissingDocumentNumberInPayment']);
+    expect((await t.call('GET', '/entries?limit=1000')).body.length).toBe(before);
+    expect((await openOf(cli)).liabilities).toHaveLength(0);
+  });
+
+  it('binds the saved payment entry with chosen invoices, capped by the payment; an over-allocation saves nothing', async () => {
     const sup = await t.partner('Обвързване от контиране ООД', ['401']);
     const inv = await t.post({ date: '2026-07-01', partner: sup, dr: [['602', 70]], cr: [['401', 70]] });
     const inv2 = await t.post({ date: '2026-07-02', partner: sup, dr: [['602', 70]], cr: [['401', 70]] });
-    const pay = await t.post({ date: '2026-07-05', docType: 9, docNumber: '905', partner: sup, dr: [['401', 100]], cr: [['501', 100]] });
-    const cands = (await t.call('GET', `/payments/candidates?accountId=${t.acc('401')}&companyId=${sup}&exclude=${pay.id}`)).body as { accountingId: number }[];
+    const cands = (await t.call('GET', `/payments/candidates?accountId=${t.acc('401')}&companyId=${sup}`)).body as { accountingId: number }[];
     expect(cands.map((c) => c.accountingId)).toEqual([inv.id, inv2.id]);
-    const over = await t.call('POST', '/payments/bind-entry', { entryId: pay.id, documents: [{ accountingId: inv.id }, { accountingId: inv2.id }] });
+    const payment = { date: '2026-07-05', docType: 9, docNumber: '905', partner: sup, dr: [['401', 100]] as [string, number][], cr: [['501', 100]] as [string, number][] };
+    const over = await t.tryPost({ ...payment, bindDocuments: [{ accountingId: inv.id }, { accountingId: inv2.id }] });
     expect(over.status).toBe(422);
     expect(keys(over)).toEqual(['strAllocationExceedsPayment']);
-    const r = await t.call('POST', '/payments/bind-entry', { entryId: pay.id, documents: [{ accountingId: inv.id }, { accountingId: inv2.id, amount: '30' }] });
-    expect(r.status, r.text).toBe(201);
+    expect((await openOf(sup)).payments).toHaveLength(0);
+    await t.post({ ...payment, bindDocuments: [{ accountingId: inv.id }, { accountingId: inv2.id, amount: '30' }] });
     const open = await openOf(sup);
     expect(open.liabilities.map((l) => [l.accountingId, l.open])).toEqual([[inv2.id, '-40.00']]);
     expect(open.payments).toHaveLength(0);

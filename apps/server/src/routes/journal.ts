@@ -4,9 +4,10 @@ import { z } from 'zod';
 import { sql } from 'drizzle-orm';
 import { CHANNEL } from '@shmi/core';
 import type { AppEnv } from '../context.ts';
-import { exec } from '../db/provider.ts';
+import { exec, type DbOrTx } from '../db/provider.ts';
 import { requirePermission, workingDate } from '../session.ts';
-import { deleteEntry, loadEntry, reversalDraft, saveEntry } from '../services/journal.ts';
+import { deleteEntry, loadEntry, reversalDraft, saveEntry, type SaveContext } from '../services/journal.ts';
+import { autoPayment, bindEntry, fail, validateAutoPayment } from '../services/payments.ts';
 import { peekNextNumber } from '../services/sequences.ts';
 import { journalLines } from '../services/reports.ts';
 import { entryFilterConditions } from '../services/journalExtras.ts';
@@ -50,7 +51,29 @@ const entryBody = z.object({
   debits: z.array(lineBody).min(1),
   credits: z.array(lineBody).min(1),
   force: z.boolean().optional(),
+  /** Автоматично разплащане of the saved entry, in the same transaction. */
+  payment: z.object({
+    paymentAccountId: z.number().int().nullable(),
+    documentTypeId: z.number().int().nullable().optional(),
+    documentNumber: z.string().max(50).nullable().optional(),
+  }).optional(),
+  /** Обвързване of the saved entry with chosen documents, in the same transaction. */
+  bindDocuments: z.array(z.object({ accountingId: z.number().int().positive(), amount: optAmount, currencyAmount: optAmount })).optional(),
 });
+
+/**
+ * The entry editor's binding and auto payment run with the entry save, so a
+ * failing payment leaves no entry without its payment (03a, EntryEditor).
+ */
+async function settle(tx: DbOrTx, ctx: SaveContext, entryId: number, input: Pick<EntryBody, 'debits' | 'credits' | 'companyId'>, payment?: EntryBody['payment'], documents?: EntryBody['bindDocuments']) {
+  if (documents?.length) await bindEntry(tx, ctx.year, entryId, documents, ctx.userId);
+  if (!payment) return;
+  const lines = [...input.debits, ...input.credits].map((l) => ({ accountId: l.accountId, companyId: l.companyId ?? input.companyId ?? null }));
+  const messages = await validateAutoPayment(tx, payment, { lines });
+  if (messages.length) fail(messages);
+  await autoPayment(tx, ctx, entryId, payment);
+}
+type EntryBody = z.infer<typeof entryBody>;
 
 const ADD = 'UI_Operations_Accounting';
 const EDIT = 'UI_Edit_Accountings';
@@ -118,16 +141,26 @@ export const journalRoutes = new Hono<AppEnv>()
     c.json(await reversalDraft(c.var.db, Number(c.req.param('id')), workingDate(c.var.session))))
 
   .post('/entries', requirePermission(ADD), zValidator('json', entryBody), async (c) => {
-    const { force, ...input } = c.req.valid('json');
+    const { force, payment, bindDocuments, ...input } = c.req.valid('json');
     const { db, year, user, session } = c.var;
-    const r = await db.transaction((tx) => saveEntry(tx, input, { year, userId: user.id, branchId: session.state.branchId ?? 1, force, confirm: true }));
+    const ctx = { year, userId: user.id, branchId: session.state.branchId ?? 1 };
+    const r = await db.transaction(async (tx) => {
+      const saved = await saveEntry(tx, input, { ...ctx, force, confirm: true });
+      await settle(tx, ctx, saved.id, input, payment, bindDocuments);
+      return saved;
+    });
     return c.json(r, 201);
   })
 
   .put('/entries/:id', requirePermission(EDIT), zValidator('json', entryBody), async (c) => {
-    const { force, ...input } = c.req.valid('json');
+    const { force, payment, bindDocuments, ...input } = c.req.valid('json');
     const { db, year, user, session } = c.var;
-    const r = await db.transaction((tx) => saveEntry(tx, input, { year, userId: user.id, branchId: session.state.branchId ?? 1, force, confirm: true }, Number(c.req.param('id'))));
+    const ctx = { year, userId: user.id, branchId: session.state.branchId ?? 1 };
+    const r = await db.transaction(async (tx) => {
+      const saved = await saveEntry(tx, input, { ...ctx, force, confirm: true }, Number(c.req.param('id')));
+      await settle(tx, ctx, saved.id, input, payment, bindDocuments);
+      return saved;
+    });
     return c.json(r);
   })
 

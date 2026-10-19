@@ -7,14 +7,12 @@ import { requirePermission } from '../session.ts';
 import { peekDocumentNumber } from '../services/autoEntries.ts';
 import { closeDocumentsForImport, proposeClosing, saveClosing } from '../services/documentsClosing.ts';
 import {
-  autoPayment, bindCandidates, bindDocuments, bindEntry, createPayment, deleteLink, deleteLinksOf, listLinks,
+  bindCandidates, bindDocuments, createPayment, deleteLink, deleteLinksOf, listLinks,
   partnerOpenItems, partnersWithBalances, paymentSettings, setPaymentAccount, validateAutoPayment, type PartnerTab,
 } from '../services/payments.ts';
 
 const PAY = 'UI_Operations_Payments';
 const CLOSE = 'UI_Operations_AutoOperations_DocumentsClosing';
-/** The entry editor's auto payment / binding run with the right to post entries. */
-const ENTRY = 'UI_Operations_Accounting';
 
 const amount = z.string().regex(/^-?\d+(\.\d+)?$/, 'Невалидна сума.');
 const optAmount = amount.nullable().optional();
@@ -137,18 +135,6 @@ export const paymentsRoutes = new Hono<AppEnv>()
   })), async (c) => {
     const { lines, ...o } = c.req.valid('json');
     return c.json({ messages: await validateAutoPayment(c.var.db, o, { lines }) });
-  })
-
-  /** Автоматично разплащане of a saved entry. */
-  .post('/payments/auto', requirePermission(ENTRY), zValidator('json', autoBody.extend({ entryId: id, date: date.nullable().optional() })), async (c) => {
-    const { entryId, ...o } = c.req.valid('json');
-    return c.json(await c.var.db.transaction((tx) => autoPayment(tx, ctxOf(c), entryId, o)), 201);
-  })
-
-  /** Обвързване from the entry editor: the saved entry with chosen documents. */
-  .post('/payments/bind-entry', requirePermission(ENTRY), zValidator('json', z.object({ entryId: id, documents: z.array(bindRow) })), async (c) => {
-    const { entryId, documents } = c.req.valid('json');
-    return c.json(await c.var.db.transaction((tx) => bindEntry(tx, c.var.year, entryId, documents, c.var.user.id)), 201);
   })
 
   /** Закриване на документи: proposals. */
