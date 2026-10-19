@@ -172,8 +172,8 @@ describe('chronological register in a mixed 2025/2026 period', () => {
   beforeAll(async () => {
     m = await createTestCompany({ year: 2025, companyName: 'Смесен период ООД' });
     await m.post({ date: '2025-12-10', docNumber: 'BGN-1', dr: [['503', '195.58']], cr: [['101', '195.58']] });
-    expect((await m.call('POST', '/years', { year: 2026 })).status).toBe(201);
-    expect((await m.call('PUT', '/years/active', { year: 2026 })).status).toBe(200);
+    expect((await m.call('POST', '/years', { year: 2026, force: true })).status).toBe(201);
+    expect((await m.call('PUT', '/years/active', { year: 2026, force: true })).status).toBe(200);
     await m.reloadAccounts();
     await m.post({ date: '2026-01-10', docNumber: 'EUR-1', dr: [['503', 100]], cr: [['101', 100]] });
     // The BGN 503 is mapped to a EUR account with another number (Accounts.MappedAccountID).
