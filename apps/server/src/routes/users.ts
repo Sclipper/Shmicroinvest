@@ -5,13 +5,17 @@ import { and, asc, desc, eq, ne } from 'drizzle-orm';
 import { resolvePermission } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import type { AppEnv } from '../context.ts';
-import { badRequest, notFound } from '../lib/errors.ts';
+import { ApiError, badRequest, notFound } from '../lib/errors.ts';
 import { hashPassword, isStrongPassword, verifyPassword } from '../lib/password.ts';
 import { requirePermission } from '../session.ts';
 import { logActivity } from '../services/audit.ts';
 import { recordPasswordQuality } from '../services/gdpr.ts';
 
 const ADMIN_ROLE = 2;
+
+export const USER_MESSAGES = {
+  strUserHasOperations: 'Потребителят не може да бъде изтрит, тъй като участва в операции!',
+} as const;
 const USERS = 'UI_Edit_Administration_Users';
 
 /** Users, roles and the role permission tree (spec 01b section 3). */
@@ -73,6 +77,9 @@ export const userRoutes = new Hono<AppEnv>()
     const [u] = await db.select().from(s.users).where(eq(s.users.id, id));
     if (!u) throw notFound('Потребителят');
     if (u.userRoleId === ADMIN_ROLE && (await adminCount(db, id)) === 0) throw badRequest('Трябва да има поне един потребител администратор.');
+    // strUserHasOperations (01b 3.4): a user referenced by entries is not deleted.
+    const [used] = await db.select({ id: s.accountings.id }).from(s.accountings).where(eq(s.accountings.userId, id)).limit(1);
+    if (used) throw new ApiError(422, USER_MESSAGES.strUserHasOperations, [{ key: 'strUserHasOperations', text: USER_MESSAGES.strUserHasOperations, severity: 'critical' }]);
     await db.update(s.users).set({ isDeleted: true }).where(eq(s.users.id, id));
     await logActivity(db, user.id, 'delete', 'user', id, u.name);
     return c.json({ ok: true });
@@ -103,6 +110,7 @@ export const userRoutes = new Hono<AppEnv>()
         if (src.length) await tx.insert(s.userRolePermissions).values(src.map((p) => ({ permissionId: p.permissionId, userRoleId: r!.id, value: p.value })));
       }
       await rebuildRoleTree(tx);
+      await logActivity(tx, c.var.user.id, 'add', 'userRole', r!.id, `Потребителска група ${b.name}`);
       return r!.id;
     });
     return c.json({ id }, 201);
@@ -114,6 +122,7 @@ export const userRoutes = new Hono<AppEnv>()
     if (!r) throw notFound('Групата');
     if (r.isReadOnly) throw badRequest('Тази група не може да бъде редактирана.');
     await c.var.db.update(s.userRoles).set(c.req.valid('json')).where(eq(s.userRoles.id, id));
+    await logActivity(c.var.db, c.var.user.id, 'edit', 'userRole', id, `Потребителска група ${c.req.valid('json').name}`);
     return c.json({ ok: true });
   })
 
@@ -130,6 +139,7 @@ export const userRoutes = new Hono<AppEnv>()
       await tx.update(s.users).set({ userRoleId: 1 }).where(and(eq(s.users.userRoleId, id), eq(s.users.isDeleted, true)));
       await tx.delete(s.userRoles).where(eq(s.userRoles.id, id));
       await rebuildRoleTree(tx);
+      await logActivity(tx, c.var.user.id, 'delete', 'userRole', id, `Потребителска група ${r.name}`);
     });
     return c.json({ ok: true });
   })
@@ -162,6 +172,9 @@ export const userRoutes = new Hono<AppEnv>()
         await tx.delete(s.userRolePermissions).where(and(eq(s.userRolePermissions.userRoleId, roleId), eq(s.userRolePermissions.permissionId, permissionId)));
         if (v !== null) await tx.insert(s.userRolePermissions).values({ userRoleId: roleId, permissionId, value: v });
       }
+      // 01b 8: Delta does not log permission changes; the rebuild keeps an audit trail.
+      const [role] = await tx.select({ name: s.userRoles.name }).from(s.userRoles).where(eq(s.userRoles.id, roleId));
+      await logActivity(tx, c.var.user.id, 'edit', 'userRolePermissions', roleId, `Права на група ${role?.name ?? roleId} (${Object.keys(body).length})`);
     });
     return c.json({ ok: true });
   })

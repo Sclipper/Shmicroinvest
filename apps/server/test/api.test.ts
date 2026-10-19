@@ -119,7 +119,19 @@ describe('api', () => {
     const temp = await call('POST', '/users', { name: 'Временен', password: 'parola1', roleId: role.body.id });
     expect((await call('DELETE', `/roles/${role.body.id}`)).status).toBe(400);
     await call('DELETE', `/users/${temp.body.id}`);
+    expect((await call('PUT', `/roles/${role.body.id}`, { name: 'Временна 2' })).status).toBe(200);
+    const perm = perms.find((p) => p.key === 'UI_File_NewCompany')!;
+    expect((await call('PUT', `/roles/${role.body.id}/permissions`, { [perm.id]: true })).status).toBe(200);
     expect((await call('DELETE', `/roles/${role.body.id}`)).status).toBe(200);
+    // Role and permission changes are in the activity log (01b 8).
+    const log = (await call('GET', '/activity?limit=20')).body as { activity: string; entityType: string; entityId: number; description: string }[];
+    const roleRows = log.filter((r) => r.entityId === role.body.id && r.entityType.startsWith('userRole')).map((r) => [r.activity, r.entityType, r.description]);
+    expect(roleRows).toEqual([
+      ['delete', 'userRole', 'Потребителска група Временна 2'],
+      ['edit', 'userRolePermissions', 'Права на група Временна 2 (1)'],
+      ['edit', 'userRole', 'Потребителска група Временна 2'],
+      ['add', 'userRole', 'Потребителска група Временна'],
+    ]);
   });
 
   it('reserves entry numbers atomically (01b 9 spGetNextNumber)', async () => {
@@ -171,5 +183,25 @@ describe('api', () => {
     // Reloaded, B saves; callers without a version are not checked.
     expect((await call('PUT', `/entries/${id}`, { ...body('30', 'Промяна Б'), version: now.version })).status).toBe(200);
     expect((await call('PUT', `/entries/${id}`, body('40', 'Без версия'))).status).toBe(200);
+  });
+
+  it('does not delete a user who appears in entries (strUserHasOperations, 01b 3.4)', async () => {
+    const u = await call('POST', '/users', { name: 'Счетоводител', password: 'parola1', roleId: 2 });
+    expect(u.status, u.text).toBe(201);
+    const [company] = (await call('GET', '/companies')).body;
+    expect((await call('POST', '/login', { companyDb: company.name, userId: u.body.id, password: 'parola1' })).status).toBe(200);
+    expect((await call('POST', '/entries', {
+      accountingDate: '2026-04-03', documentTypeId: 1, documentNumber: 'U-1', term: 'От друг потребител',
+      debits: [{ accountId: acc('501'), amount: '1' }], credits: [{ accountId: acc('101'), amount: '1' }],
+    })).status).toBe(201);
+    expect((await call('POST', '/login', { companyDb: company.name, userId: 1, password: 'secret1' })).status).toBe(200);
+    const r = await call('DELETE', `/users/${u.body.id}`);
+    expect(r.status).toBe(422);
+    expect(r.body.error).toBe('Потребителят не може да бъде изтрит, тъй като участва в операции!');
+    expect(r.body.messages.map((m: { key: string }) => m.key)).toEqual(['strUserHasOperations']);
+    expect((await call('GET', '/users')).body.some((x: { id: number }) => x.id === u.body.id)).toBe(true);
+    // Without entries the user is deleted.
+    const idle = await call('POST', '/users', { name: 'Без операции', password: 'parola1', roleId: 5 });
+    expect((await call('DELETE', `/users/${idle.body.id}`)).status).toBe(200);
   });
 });

@@ -11,6 +11,7 @@ const ACTIVITY: Record<string, string> = { login: 'Вписване', logout: '�
 const ENTITY: Record<string, string> = {
   identification: 'Идентификация', partner: 'Партньори', user: 'Потребители', accounting: 'Контиране', myCompany: 'Моята фирма', account: 'Сметкоплан',
   turnoverReport: 'Оборотна ведомост', analyticalReport: 'Аналитичен регистър', chronologicalReport: 'Хронологичен регистър', document: 'Документ',
+  financialYear: 'Счетоводна година', userRole: 'Потребителски групи', userRolePermissions: 'Права на потребителски групи',
 };
 
 const p2 = (n: number) => String(n).padStart(2, '0');
