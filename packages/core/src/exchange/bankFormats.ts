@@ -105,17 +105,17 @@ export const BANK_MAPPERS: BankMapperDef[] = [
     },
   },
   {
-    id: 'Allianz', title: 'Алианц Банк', bankCodes: ['BGUSBGSF'], dateProperty: 'Date',
+    id: 'Allianz', title: 'Алианц Банк', bankCodes: ['BUINBGSF'], dateProperty: 'Date',
     properties: [...COMMON, P('MovementType', 'Дт/Кт', 'text', ['dtkt', 'дт/кт', 'вид']), P('Amount', 'Сума', 'amount', ['сума', 'amount']), P('More', 'Сметка', 'text', ['iban', 'сметка']), P('Beneficiary', 'Наредител/Получател', 'text', ['beneficiary', 'payer', 'наредител/получател']), P('PaymentDetails', 'Основание', 'text', ['основание', 'details of payment']), P('AdditionalExplanation', 'Допълнително пояснение', 'text', ['additional explanation', 'допълнително пояснение'])],
     map: (m) => ({ isInflow: (m.MovementType ?? '').trim().toUpperCase() !== 'D', amount: abs(m.Amount), partnerIban: pick(m.More), partnerName: pick(m.Beneficiary), reason: join(m.PaymentDetails, m.AdditionalExplanation), reference: pick(m.DocRegNumber) }),
   },
   {
-    id: 'Asset', title: 'Интернешънъл Асет Банк', bankCodes: ['IORTBGSF'], dateProperty: 'Date',
+    id: 'Asset', title: 'Интернешънъл Асет Банк', bankCodes: ['IABGBGSF'], dateProperty: 'Date',
     properties: [...COMMON, P('MovementType', 'Дт/Кт', 'text', ['дт/кт', 'вид']), P('Amount', 'Сума', 'amount', ['сума']), P('IBAN', 'IBAN', 'text', ['iban']), P('CompanyName', 'Контрагент', 'text', ['контрагент', 'име']), P('Term', 'Основание', 'text', ['основание'])],
     map: (m) => ({ isInflow: (m.MovementType ?? '').trim() === 'Кт', amount: abs(m.Amount), partnerIban: pick(m.IBAN), partnerName: pick(m.CompanyName), reason: pick(m.Term), reference: pick(m.DocRegNumber) }),
   },
   {
-    id: 'BAKB', title: 'Българо-американска кредитна банка', bankCodes: ['NASBBGSF'], dateProperty: 'Date',
+    id: 'BAKB', title: 'Българо-американска кредитна банка', bankCodes: ['BGUSBGSF'], dateProperty: 'Date',
     properties: [...COMMON, P('Type', 'Тип', 'text', ['тип', 'type']), P('Amount', 'Сума', 'amount', ['сума', 'amount']), ...DR_CR, P('BeneficiaryAccount', 'Сметка на контрагента', 'text', ['iban', 'beneficiary account']), P('BeneficiaryName', 'Контрагент', 'text', ['контрагент', 'beneficiary name']), REASON],
     map: (m) => {
       const type = (m.Type ?? '').trim();
@@ -158,7 +158,7 @@ export const BANK_MAPPERS: BankMapperDef[] = [
     },
   },
   {
-    id: 'Investbank', title: 'Инвестбанк', bankCodes: ['IABGBGSF'], dateProperty: 'Date',
+    id: 'Investbank', title: 'Инвестбанк', bankCodes: ['IORTBGSF'], dateProperty: 'Date',
     properties: [...COMMON, ...DR_CR, ...OPPOSITE, REASON],
     map: (m) => {
       const inflow = has(m.CreditAmount);
