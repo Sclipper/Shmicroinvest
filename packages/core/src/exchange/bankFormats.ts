@@ -2,6 +2,7 @@ import { dec, round2 } from '../money.ts';
 import { normalizeIban } from '../validators.ts';
 import { child, children, descendants, parseXml, pathText, type XmlElement } from './xml.ts';
 import { fromOADate, parseImportDate, parseDecimalText } from './messages.ts';
+import { hasClass, htmlChild, htmlDescendants, htmlTableRows, htmlText, parseHtml, type HtmlCell } from './html.ts';
 
 /**
  * Bank statement files (spec 04b 1.3, 1.13). Every bank has a "model"
@@ -13,6 +14,7 @@ import { fromOADate, parseImportDate, parseDecimalText } from './messages.ts';
  *  - ISO 20022 camt.053 XML (Paysera and any bank exporting camt.053),
  *  - SWIFT MT940,
  *  - DSK "AccountMovementsResult" XML and BAKB "AccountsMovements" XML,
+ *  - HTML exports of DSK, Allianz, Fibank, Municipal, OBB, Raiffeisen and Unicredit,
  *  - delimited text (CSV/TXT: `;`, `,`, tab or `|`; OBB's `'/` line joins),
  *  - spreadsheet tables (the server reads xlsx sheets into string grids).
  * Delimited files and sheets are read by their header row: a column is bound
@@ -760,10 +762,24 @@ export function parseDataContractXml(root: XmlElement, bankCode: string | null |
   return withPeriod({ format: `${mapper.id} XML`, model: mapper.id, ...xmlHeader(root, new Set(items)), rows });
 }
 
-/** Text decoding: UTF-8 (with or without BOM) when valid, else windows-1251 (Encoding.Default on a Bulgarian Windows). */
+/**
+ * Text decoding: UTF-8 (with or without BOM) when valid, else windows-1251
+ * (Encoding.Default on a Bulgarian Windows). An HTML file's
+ * `<meta charset>` / `<meta http-equiv="Content-Type" content="...; charset=...">`
+ * wins when it names an encoding the platform knows.
+ */
 export function decodeText(bytes: Uint8Array): string {
   if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) return new TextDecoder('utf-8').decode(bytes.subarray(3));
   if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder('utf-16le').decode(bytes.subarray(2));
+  const head = new TextDecoder('latin1').decode(bytes.subarray(0, 2048));
+  const meta = /<html[\s>]|<!doctype\s+html/i.test(head) ? /<meta[^>]+charset\s*=\s*["']?([\w-]+)/i.exec(head) : null;
+  if (meta) {
+    try {
+      return new TextDecoder(meta[1]!.toLowerCase(), { fatal: true }).decode(bytes);
+    } catch {
+      // Unknown label or bytes that do not match it: fall through to the sniffing below.
+    }
+  }
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {
@@ -773,7 +789,8 @@ export function decodeText(bytes: Uint8Array): string {
 
 /**
  * Reads any supported statement file (spreadsheets are passed as `table`).
- * Probes in order: XML (camt.053, DSK, BAKB), MT940, delimited text.
+ * Probes in order: HTML (the seven bank HTML exports), XML (Fibank, camt.053,
+ * DSK, BAKB, data-contract XML), MT940, delimited text.
  */
 export function parseBankStatement(input: { text?: string; table?: string[][] }, bankCode: string | null | undefined): ParsedStatement | null {
   if (input.table) {
@@ -783,6 +800,7 @@ export function parseBankStatement(input: { text?: string; table?: string[][] },
   const text = input.text ?? '';
   const trimmed = text.trimStart();
   if (trimmed.startsWith('<')) {
+    if (isHtmlText(trimmed)) return parseHtmlStatement(text, bankCode);
     if (/^(<\?xml[^>]*\?>\s*)?<ROWSET>/i.test(trimmed)) return parseFibankXml(text);
     let root: XmlElement | null = null;
     try {
@@ -804,4 +822,336 @@ export function parseBankStatement(input: { text?: string; table?: string[][] },
   const prepared = mapper.id === 'OBB' ? rejoinObbLines(text) : text;
   const s = parseStatementTable(splitDelimited(prepared), bankCode, 'CSV');
   return s.rows.length ? s : null;
+}
+
+// ---------------------------------------------------------------------------
+// HTML statements (1.13): DSK, Allianz, Fibank, Municipal, OBB, Raiffeisen, Unicredit
+
+/** Mappers with an HTML statement service. */
+export const HTML_STATEMENT_MAPPERS = ['DSK', 'Allianz', 'Fibank', 'Municipal', 'OBB', 'Raiffeisen', 'Unicredit'];
+
+/** An HTML document (optionally after an XML declaration or comments). */
+export function isHtmlText(text: string): boolean {
+  return /^(<\?xml[^>]*\?>\s*)?(<!--[\s\S]*?-->\s*)*(<!doctype\s+html|<html[\s>])/i.test(text.replace(/^\uFEFF/, '').trimStart());
+}
+
+/**
+ * A money cell of an HTML statement, in any of the forms Bulgarian bank
+ * exports use: "1 234,56" (space or no-break space groups), "1.234,56",
+ * "1,234.56", "-12,00", "12,00-", "(12,00)", "12,00 лв.", "EUR 12.00".
+ * Blank (or a cell without a number) is null: an absent amount.
+ */
+export function parseHtmlAmount(raw: string | undefined): string | null {
+  let t = (raw ?? '').replace(/\u00a0/g, ' ').trim();
+  if (!t) return null;
+  let neg = false;
+  if (/^\(.*\)$/.test(t)) {
+    neg = true;
+    t = t.slice(1, -1);
+  }
+  t = t.replace(/\p{L}+\.?/gu, '').replace(/[\s']/g, '');
+  if (/^[-\u2212]/.test(t)) {
+    neg = true;
+    t = t.slice(1);
+  } else if (t.startsWith('+')) t = t.slice(1);
+  if (/[-\u2212]$/.test(t)) {
+    neg = true;
+    t = t.slice(0, -1);
+  }
+  const comma = t.lastIndexOf(',');
+  const dot = t.lastIndexOf('.');
+  if (comma >= 0 && dot >= 0) {
+    const decimal = comma > dot ? ',' : '.';
+    t = t.split(decimal === ',' ? '.' : ',').join('').replace(decimal, '.');
+  } else if (comma >= 0) t = t.split(',').length > 2 ? t.split(',').join('') : t.replace(',', '.');
+  else if (t.split('.').length > 2) t = t.split('.').join('');
+  if (!/^(\d+(\.\d*)?|\.\d+)$/.test(t)) return null;
+  const v = dec(t);
+  return (neg && !v.isZero() ? v.negated() : v).toString();
+}
+
+const capNorm = (t: string) => t.toLowerCase().replace(/\u00a0/g, ' ').replace(/\s*\/\s*/g, '/').replace(/\s+/g, ' ').replace(/[\s:*]+$/, '').trim();
+
+type HtmlRole = 'date' | 'valueDate' | 'reference' | 'debit' | 'credit' | 'amount' | 'dtkt' | 'counterparty' | 'payer' | 'beneficiary' | 'iban' | 'details' | 'additional' | 'balance';
+
+/** Column captions of the movements table (HtmlImportConsts and the captions of the Excel layouts). */
+const HTML_ROLE_CAPTIONS: [HtmlRole, string[]][] = [
+  ['date', ['дата', 'дата на операцията', 'дата на операция', 'дата операция', 'дата на движение', 'дата на плащане', 'дата на транзакция', 'дата на осчетоводяване', 'trn. date', 'trn.date', 'trn date', 'transaction date', 'booking date', 'operation date', 'date']],
+  ['valueDate', ['вальор', 'дата вальор', 'дата на вальор', 'val. date', 'val.date', 'val date', 'value date']],
+  ['reference', ['референция', 'reference no', 'reference no.', 'reference', 'ref. no', 'ref no', 'номер', 'номер на документ', 'номер на операция', 'документ', '№']],
+  ['debit', ['дебит', 'дт', 'debit', 'сума дебит', 'дебит сума', 'debit amount', 'изходящи', 'разход', 'плащания']],
+  ['credit', ['кредит', 'кт', 'credit', 'сума кредит', 'кредит сума', 'credit amount', 'входящи', 'приход', 'постъпления']],
+  ['amount', ['сума', 'amount', 'сума във валутата на сметката', 'сума във валута']],
+  ['dtkt', ['dtkt', 'dt/kt', 'дт/кт', 'д/к', 'd/c', 'dr/cr', 'debit/credit', 'дебит/кредит', 'вид', 'тип', 'вид движение', 'тип на движение', 'type']],
+  ['counterparty', ['контрагент', 'наредител/получател', 'получател/наредител', 'beneficiary/payer', 'payer/beneficiary', 'партньор', 'име на контрагента', 'насрещна страна']],
+  ['payer', ['наредител', 'payer', 'ordering party']],
+  ['beneficiary', ['получател', 'beneficiary']],
+  ['iban', ['iban', 'сметка', 'сметка на контрагента', 'iban на контрагента', 'насрещна сметка', 'account', 'сметка/iban']],
+  ['details', ['описание', 'основание', 'основание за плащане', 'основание на плащането', 'details of payment', 'description', 'детайли', 'narrative', 'информация']],
+  ['additional', ['допълнително пояснение', 'допълнителна информация', 'допълнително описание', 'допълнително основание', 'additional explanation', 'additional information', 'additional info', 'основание 2', 'пояснение']],
+  ['balance', ['салдо', 'balance', 'текущо салдо']],
+];
+const HTML_ROLE = new Map(HTML_ROLE_CAPTIONS.flatMap(([role, caps]) => caps.map((c) => [c, role] as const)));
+
+type HtmlHeaderField = 'iban' | 'period' | 'from' | 'to' | 'currency' | 'opening' | 'closing' | 'turnover';
+/** Header block captions (HtmlImportConsts), longest first so "оборот за периода" is not read as "период". */
+const HTML_HEADER_CAPTIONS: [HtmlHeaderField, string][] = ([
+  ['iban', ['отчет по сметка', 'account history', 'номер на сметка', 'iban на сметката', 'сметка', 'iban', 'номер', 'account number', 'account']],
+  ['period', ['за периода', 'период', 'period']],
+  ['from', ['от дата', 'from date', 'начална дата']],
+  ['to', ['до дата', 'to date', 'крайна дата']],
+  ['currency', ['валута', 'currency']],
+  ['opening', ['старо салдо', 'начално салдо', 'opening balance']],
+  ['closing', ['ново салдо', 'крайно салдо', 'closing balance']],
+  ['turnover', ['оборот за периода', 'total debits', 'total credits', 'оборот', 'общо', 'total']],
+] as [HtmlHeaderField, string[]][]).flatMap(([f, caps]) => caps.map((c) => [f, c] as [HtmlHeaderField, string])).sort((a, b) => b[1].length - a[1].length);
+
+function headerCaption(text: string): { field: HtmlHeaderField; rest: string } | null {
+  const n = capNorm(text);
+  for (const [field, cap] of HTML_HEADER_CAPTIONS) {
+    if (n === cap) return { field, rest: '' };
+    if (n.startsWith(cap) && /^[\s:\u2013-]/.test(n.slice(cap.length))) return { field, rest: n.slice(cap.length).replace(/^[\s:\u2013-]+/, '').trim() };
+  }
+  return null;
+}
+
+/** A summary row of the movements table ("Старо салдо", "Ново салдо", "Оборот за периода", "Total debits", ...). */
+const isSummaryRow = (cells: HtmlCell[]) => {
+  const first = cells.find((c) => c.text.trim());
+  const hit = first ? headerCaption(first.text) : null;
+  return !!hit && ['opening', 'closing', 'turnover', 'period', 'from', 'to'].includes(hit.field);
+};
+
+/** Header block (1.13): caption cells; the value is the rest of the cell or the next cells (amount cells `td.amt` first). */
+function readHtmlHeader(rows: HtmlCell[][]): StatementHeader {
+  const h: StatementHeader = {};
+  for (const cells of rows) {
+    cells.forEach((cell, i) => {
+      const hit = headerCaption(cell.text);
+      if (!hit) return;
+      const after = cells.slice(i + 1).filter((c) => c.text.trim());
+      const value = hit.rest || after.map((c) => c.text).join(' ');
+      const amount = () => {
+        const cands = hit.rest ? [hit.rest] : [...after.filter((c) => c.classes.includes('amt')), ...after].map((c) => c.text);
+        for (const c of cands) {
+          const v = parseHtmlAmount(c);
+          if (v !== null) return dec(v).toFixed(2);
+        }
+        return undefined;
+      };
+      switch (hit.field) {
+        case 'iban': {
+          const iban = ibanIn(value.replace(/\n/g, ' '));
+          if (iban && !h.iban) {
+            h.iban = iban;
+            h.currency ??= currencyIn(value, iban);
+          }
+          break;
+        }
+        case 'period': {
+          const ds = datesIn(value);
+          if (ds.length >= 2 && !h.from) [h.from, h.to] = ds as [string, string];
+          break;
+        }
+        case 'from':
+          h.from ??= datesIn(value)[0];
+          break;
+        case 'to':
+          h.to ??= datesIn(value)[0];
+          break;
+        case 'currency':
+          h.currency ??= tokens(value).find((x) => ISO_CURRENCIES.has(x));
+          break;
+        case 'opening':
+          h.openingBalance ??= amount();
+          break;
+        case 'closing':
+          h.closingBalance ??= amount();
+          break;
+        default:
+      }
+    });
+  }
+  return h;
+}
+
+/** Movement direction from a Дт/Кт cell ("D", "Дт", "DR", "DEBIT", "K", "Кт", "CR", "CREDIT"); null when unknown. */
+function dtktIsDebit(v: string): boolean | null {
+  const t = v.trim().toUpperCase().replace(/\./g, '');
+  if (['D', 'DT', 'DR', 'DB', 'DEBIT', 'Д', 'ДТ', 'ДЕБИТ', '-'].includes(t)) return true;
+  if (['C', 'K', 'CT', 'KT', 'CR', 'CREDIT', 'К', 'КТ', 'КРЕДИТ', '+'].includes(t)) return false;
+  return null;
+}
+
+/** "Name\nBG.. IBAN" cells: the IBAN token and the remaining text. */
+function splitNameIban(text: string): { iban: string; rest: string } {
+  const iban = ibanIn(text.replace(/\n/g, ' ')) ?? '';
+  const rest = text.split('\n').map((l) => (iban ? l.split(/\s+/).filter((w) => w.toUpperCase().replace(/[,;:()]/g, '') !== iban).join(' ') : l).trim()).filter(Boolean).join(' ');
+  return { iban, rest };
+}
+
+interface HtmlMovement {
+  date: string;
+  valueDate: string;
+  reference: string;
+  isDebit: boolean;
+  amount: string;
+  iban: string;
+  name: string;
+  details: string;
+  additional: string;
+  /** Columns captioned with the bank's own model property names. */
+  props?: Model;
+}
+
+/** The bank's model (1.3 property names, so the posting-rule conditions apply unchanged) from an HTML movement. */
+const HTML_MODELS: Record<string, (x: HtmlMovement) => Model> = {
+  DSK: (x) => ({ MovementType: x.isDebit ? 'DEBIT' : 'CREDIT', DebitAmount: x.isDebit ? x.amount : '', CreditAmount: x.isDebit ? '' : x.amount, OppositeSideAccount: x.iban, OppositeSideName: x.name, Reason: join(x.details, x.additional) }),
+  Allianz: (x) => ({ MovementType: x.isDebit ? 'D' : 'C', Amount: x.amount, More: x.iban, Beneficiary: x.name, PaymentDetails: x.details, AdditionalExplanation: x.additional }),
+  Fibank: (x) => ({ DebitTov: x.isDebit ? x.amount : '', CreditTov: x.isDebit ? '' : x.amount, RecipientAccount: x.iban, RecipientName: x.name, Description: join(x.details, x.additional) }),
+  Municipal: (x) => ({ DtKt: x.isDebit ? 'D' : 'K', Amount: x.amount, IBAN: x.iban, Beneficiary: x.name, Description: join(x.details, x.additional) }),
+  OBB: (x) => ({ DebitSum: x.isDebit ? x.amount : '', CreditSum: x.isDebit ? '' : x.amount, OppositeSideIBAN: x.iban, OppositeSideName: x.name, PaymentTerm: x.details, AddtionalInfo: x.additional }),
+  Raiffeisen: (x) => ({ MovementType: x.isDebit ? 'DEBIT' : 'CREDIT', Amount: x.amount, OppositeSideAccount: x.iban, OppositeSideName: x.name, Narrative: x.details, DescriptionAdditional: x.additional }),
+  Unicredit: (x) => ({ MovementType: x.isDebit ? 'ДТ' : 'КТ', AmountInMovementCCY: x.amount, OppositeSideAccount: x.iban, OppositeSideName: x.name, Reason: x.details, ReasonI02: x.additional }),
+};
+
+const nonZero = (v: string | null) => (v !== null && !dec(v).isZero() ? v : null);
+const oneLine = (t: string | undefined) => (t ?? '').split('\n').map((l) => l.trim()).filter(Boolean).join(' ');
+
+/** Fibank data rows: 0 operation date, 1 reference/details block, 2 value date, 3 debit, 4 credit, 5 balance. */
+function fibankHtmlMovements(rows: HtmlCell[][]): HtmlMovement[] {
+  const out: HtmlMovement[] = [];
+  for (const cells of rows) {
+    if (cells.length <= 1 || isSummaryRow(cells)) continue;
+    if (!parseStatementDate(cells[0]!.text)) continue;
+    // The block: the reference, then parts separated by blank lines; the part with an IBAN is the counterparty.
+    let parts = (cells[1]?.text ?? '').split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+    if (parts.length === 1) {
+      const ls = parts[0]!.split('\n');
+      parts = [ls[0]!, ls.slice(1).join('\n')].filter(Boolean);
+    }
+    const rest = parts.slice(1);
+    const party = rest.find((p) => ibanIn(p.replace(/\n/g, ' ')));
+    const np = party ? splitNameIban(party) : { iban: '', rest: '' };
+    const debit = nonZero(parseHtmlAmount(cells[3]?.text));
+    const credit = nonZero(parseHtmlAmount(cells[4]?.text));
+    const value = debit ?? credit;
+    if (value === null) continue;
+    out.push({
+      date: cells[0]!.text, valueDate: cells[2]?.text ?? '', reference: oneLine(parts[0]), isDebit: debit !== null, amount: dec(value).abs().toString(),
+      iban: np.iban, name: np.rest, details: rest.filter((p) => p !== party).map(oneLine).join(' '), additional: '',
+    });
+  }
+  return out;
+}
+
+/** Header-driven movements (the other six banks): the first row whose captions bind a date and an amount is the header. */
+function tableHtmlMovements(rows: HtmlCell[][], mapper: BankMapperDef): { movements: HtmlMovement[]; headerAt: number } {
+  const propLookup = new Map<string, string>();
+  for (const p of mapper.properties) for (const c of [p.name, p.caption, ...(p.aliases ?? [])]) if (!propLookup.has(capNorm(c))) propLookup.set(capNorm(c), p.name);
+  let headerAt = -1;
+  let binding: (string | null)[] = [];
+  for (let r = 0; r < Math.min(rows.length, 60); r++) {
+    const cells = rows[r]!;
+    if (cells.length <= 1) continue;
+    const b = cells.map((c) => {
+      const n = capNorm(c.text);
+      const role = HTML_ROLE.get(n);
+      if (role) return role;
+      const p = propLookup.get(n);
+      return p ? `prop:${p}` : null;
+    });
+    const used = new Set(b.filter(Boolean));
+    // DSK's amount cells are td.amt: its header row needs no amount caption.
+    if (used.size >= 3 && used.has('date') && (used.has('debit') || used.has('credit') || used.has('amount') || mapper.id === 'DSK')) {
+      headerAt = r;
+      binding = b.map((x, i) => (x && b.indexOf(x) === i ? x : null));
+      break;
+    }
+  }
+  const movements: HtmlMovement[] = [];
+  if (headerAt < 0) return { movements, headerAt };
+  const both = binding.includes('payer') && binding.includes('beneficiary');
+  for (const cells of rows.slice(headerAt + 1)) {
+    if (cells.length <= 1 || isSummaryRow(cells)) continue;
+    const rec: Partial<Record<HtmlRole, string>> = {};
+    const props: Model = {};
+    binding.forEach((b, i) => {
+      if (!b) return;
+      const t = cells[i]?.text.trim() ?? '';
+      if (b.startsWith('prop:')) props[b.slice(5)] = oneLine(t);
+      else rec[b as HtmlRole] = t;
+    });
+    let debit = parseHtmlAmount(rec.debit);
+    let credit = parseHtmlAmount(rec.credit);
+    let amount = parseHtmlAmount(rec.amount);
+    // DSK keeps its amounts in td.amt cells: they are used when no amount column is captioned.
+    const amt = cells.filter((c) => c.classes.includes('amt')).map((c) => c.text);
+    if (mapper.id === 'DSK' && debit === null && credit === null && amount === null && amt.length) {
+      if (amt.length >= 2) {
+        debit = parseHtmlAmount(amt[0]);
+        credit = parseHtmlAmount(amt[1]);
+      } else amount = parseHtmlAmount(amt[0]);
+    }
+    let isDebit = rec.dtkt ? dtktIsDebit(rec.dtkt) : null;
+    if (isDebit === null && (nonZero(debit) || nonZero(credit))) isDebit = nonZero(debit) !== null;
+    if (isDebit === null && amount !== null) isDebit = dec(amount).isNegative();
+    if (isDebit === null) continue;
+    const value = isDebit ? nonZero(debit) ?? amount : nonZero(credit) ?? amount;
+    if (value === null) continue;
+    const nameCell = rec.counterparty ?? (both ? (isDebit ? rec.beneficiary : rec.payer) : (rec.beneficiary ?? rec.payer)) ?? '';
+    const fromName = splitNameIban(nameCell);
+    const ibanCell = splitNameIban(rec.iban ?? '');
+    movements.push({
+      date: rec.date ?? '', valueDate: rec.valueDate ?? '', reference: oneLine(rec.reference), isDebit, amount: dec(value).abs().toString(),
+      iban: ibanCell.iban || fromName.iban || ibanCell.rest, name: fromName.rest, details: oneLine(rec.details), additional: oneLine(rec.additional), props,
+    });
+  }
+  return { movements, headerAt };
+}
+
+/**
+ * HTML statement (1.13). The probe follows Delta's services: the document
+ * must have `html/head` and `html/body` (Fibank: and no parse errors; DSK: at
+ * least one `td.amt` amount cell); movements come from the first `table`,
+ * rows after the header row with more than one cell, summary rows recognised
+ * by their caption. Fibank's columns are fixed; the other banks' columns are
+ * bound by their captions (HtmlImportConsts, Bulgarian and English) or by the
+ * bank's model property names. The header block (IBAN, currency, period,
+ * balances) is read by caption from every table and the text around them.
+ */
+export function parseHtmlStatement(text: string, bankCode: string | null | undefined): ParsedStatement | null {
+  const mapper = mapperForBank(bankCode);
+  if (!HTML_STATEMENT_MAPPERS.includes(mapper.id)) return null;
+  const doc = parseHtml(text);
+  const html = htmlChild(doc.root, 'html');
+  const body = htmlChild(html, 'body');
+  if (!html || !htmlChild(html, 'head') || !body) return null;
+  if (mapper.id === 'Fibank' && doc.errors.length) return null;
+  if (mapper.id === 'DSK' && !htmlDescendants(body, 'td').some((td) => hasClass(td, 'amt'))) return null;
+  const tables = htmlDescendants(body, 'table');
+  const first = tables[0];
+  if (!first) return null;
+  const rows = htmlTableRows(first);
+  let movements: HtmlMovement[];
+  let before: HtmlCell[][] = [];
+  if (mapper.id === 'Fibank') movements = fibankHtmlMovements(rows);
+  else {
+    const t = tableHtmlMovements(rows, mapper);
+    movements = t.movements;
+    before = rows.slice(0, Math.max(t.headerAt, 0));
+  }
+  // Header block: the rows of every table and the text lines outside the tables.
+  const textLines = htmlText(body, { skipTables: true }).split('\n').filter(Boolean).map((l): HtmlCell[] => [{ text: l, classes: [] }]);
+  const head = readHtmlHeader([...textLines, ...tables.flatMap((t) => htmlTableRows(t))]);
+  head.iban ??= [...textLines, ...before].flatMap((r) => r.map((c) => ibanIn(c.text.replace(/\n/g, ' ')))).find(Boolean);
+  const build = HTML_MODELS[mapper.id]!;
+  const out: BankStatementRow[] = [];
+  for (const mv of movements) {
+    const model: Model = { Date: mv.date, ValueDate: mv.valueDate, DocRegNumber: mv.reference, ...build(mv) };
+    for (const [k, v] of Object.entries(mv.props ?? {})) if (v && !model[k]) model[k] = v;
+    const row = toRow(mapper, model, out.length);
+    if (row) out.push(row);
+  }
+  return withPeriod({ format: `${mapper.id} HTML`, model: mapper.id, ...head, rows: out });
 }

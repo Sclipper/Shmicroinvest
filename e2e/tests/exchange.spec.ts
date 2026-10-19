@@ -90,6 +90,40 @@ test.describe('data exchange', () => {
     expect(tb.rows.find((r) => r.number === '503')?.creditTurnover).toBe('300.00');
   });
 
+  test('imports an HTML bank statement (04b 1.13)', async ({ page }) => {
+    await openApp(page);
+    const banks = await api<{ id: number; code: string }[]>(page, 'GET', '/banks');
+    const bankId = banks.find((b) => b.code === 'UNCRBGSF')!.id;
+    const own = 'BG66UNCR70001598765432';
+    const my = await api(page, 'GET', '/my-company');
+    await api(page, 'PUT', '/my-company', { ...my, addresses: [], bankAccounts: [{ account: own, bankId, bankStatementAccountId: await accountId(page, '503'), isEuro: true }] });
+    await api(page, 'POST', '/bank-templates', { bankId, name: 'Наем HTML Е2Е', formula: 'Reason съдържа "наем"', debitAccountId: await accountId(page, '602'), termText: 'Наем', priority: 1 });
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>UniCredit Bulbank</title></head><body>
+      <table>
+        <tr><td>IBAN</td><td>${own}</td><td>Валута</td><td>EUR</td></tr>
+        <tr><td>Период</td><td>01.10.2026</td><td>31.10.2026</td></tr>
+        <tr><td>Начално салдо</td><td>2 000,00</td><td>Крайно салдо</td><td>765,44</td></tr>
+        <tr><th>Дата</th><th>Вальор</th><th>Вид</th><th>Сума</th><th>Наредител/Получател</th><th>IBAN</th><th>Основание</th><th>Основание 2</th></tr>
+        <tr><td>14.10.2026</td><td>14.10.2026</td><td>DR</td><td>1 234,56</td><td>Наемодател ООД</td><td>BG11UNCR70001512345678</td><td>Наем офис</td><td>октомври</td></tr>
+      </table></body></html>`;
+
+    await menu(page, 'Операции', 'Банкови извлечения', 'Импорт на банкови извлечения');
+    const tab = activeTab(page);
+    await tab.getByTestId('bank-file').setInputFiles({ name: 'unicredit.html', mimeType: 'text/html', buffer: Buffer.from(html, 'utf8') });
+    await tab.getByRole('button', { name: 'Напред' }).click();
+    await expect(tab.getByTestId('bank-balances')).toContainText('2 000,00');
+    const row = tab.getByTestId('bank-row');
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText('Наем HTML Е2Е');
+    await tab.getByRole('button', { name: 'Запис', exact: true }).click();
+    await expect(page.getByText('Записани контирания: 1.')).toBeVisible();
+    await page.getByRole('button', { name: 'OK' }).click();
+    await expect(row).toContainText('Записан');
+    const tb = await trialBalance(page, '2026-10-14', '2026-10-14');
+    expect(tb.find((r) => r.number === '602')?.debitTurnover).toBe('1234.56');
+    expect(tb.find((r) => r.number === '503')?.creditTurnover).toBe('1234.56');
+  });
+
   test('backs up the company and downloads the archive', async ({ page }) => {
     await openApp(page);
     await menu(page, 'Файл', 'Архивиране на фирма');

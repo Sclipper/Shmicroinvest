@@ -209,7 +209,7 @@ export function BankImport() {
                 {own.data?.map((a) => <option key={a.id} value={a.id}>{a.account} - {a.bankName ?? 'неизвестна банка'} ({a.accountNumber ?? 'без сметка'}{a.currencyIso ? `, ${a.currencyIso}` : ''})</option>)}
               </Select>
             </Field>
-            <Field label="Файл с извлечението (MT940, camt.053, XML на банката, CSV, XLSX)"><FileInput file={file} onChange={setFile} accept=".sta,.mt940,.txt,.xml,.csv,.xlsx" testId="bank-file" /></Field>
+            <Field label="Файл с извлечението (MT940, camt.053, XML или HTML на банката, CSV, XLSX, XLS)"><FileInput file={file} onChange={setFile} accept=".sta,.mt940,.txt,.xml,.htm,.html,.csv,.xlsx,.xls" testId="bank-file" /></Field>
             <div className="flex flex-wrap gap-3">
               <Field label="Основание от">
                 <Select value={termProperty} onChange={(e) => setTermProperty(e.target.value)} className="w-56">
