@@ -28,6 +28,8 @@ interface Filters {
   kl82: string;
   autoFillCell71: boolean;
   sortByEntry: boolean;
+  /** "Разширени дневници" (TReportType AllExtended): entry number first, Забележка and Втора забележка last. */
+  extended: boolean;
   createVies: boolean;
   subscriberName: string;
   subscriberEgn: string;
@@ -42,7 +44,7 @@ export function VatDiary() {
   const defaults = useQuery({ queryKey: ['vat', 'defaults'], queryFn: () => api.get<{ from: string; to: string; kl33: string; subscriberName: string; subscriberEgn: string; subscriberRole: number }>('/vat/defaults'), staleTime: 0 });
   const [f, setF] = useState<Filters>({
     ...prevMonth(session.workingDate), kl33: '0,00', kl70: '', kl71: '', kl80: '', kl81: '', kl82: '',
-    autoFillCell71: false, sortByEntry: false, createVies: false, subscriberName: '', subscriberEgn: '', subscriberRole: 1,
+    autoFillCell71: false, sortByEntry: false, extended: false, createVies: false, subscriberName: '', subscriberEgn: '', subscriberRole: 1,
   });
   const [init, setInit] = useState(false);
   const [tab, setTab] = useState<Tab>('declaration');
@@ -61,10 +63,14 @@ export function VatDiary() {
       const cols = tab === 'sales' ? SALE_COLUMNS : PURCHASE_COLUMNS;
       const rows = tab === 'sales' ? d.sales : d.purchases;
       const totals = tab === 'sales' ? d.salesTotals : d.purchasesTotals;
+      const ext = a.extended;
       return [
-        ['№', 'Клон', 'Вид', 'Номер', 'Дата', 'ИН на контрагента', 'Име на контрагента', 'Вид на стоката/услугата', '8а', ...cols.map(([n]) => `к${n}`)],
-        ...rows.map((r, i) => [i + 1, r.branchCode, r.documentCode, r.documentNumber, bgDate(r.documentDate), r.partnerVat, r.partnerName, r.description, r.vatDiaryCode, ...r.cols.map(amt)]),
-        ['Общо:', '', '', '', '', '', '', '', '', ...totals.map(amt)],
+        [...(ext ? ['Номер на контиране'] : []), '№', 'Клон', 'Вид', 'Номер', 'Дата', 'ИН на контрагента', 'Име на контрагента', 'Вид на стоката/услугата', '8а', ...cols.map(([n]) => `к${n}`), ...(ext ? ['Забележка', 'Втора забележка'] : [])],
+        ...rows.map((r, i) => [
+          ...(ext ? [r.accountingNumber] : []), i + 1, r.branchCode, r.documentCode, r.documentNumber, bgDate(r.documentDate), r.partnerVat, r.partnerName, r.description, r.vatDiaryCode,
+          ...r.cols.map(amt), ...(ext ? [r.reference, r.optionalReference] : []),
+        ]),
+        [...(ext ? [''] : []), 'Общо:', '', '', '', '', '', '', '', '', ...totals.map(amt), ...(ext ? ['', ''] : [])],
       ];
     }
     if (tab === 'vies') return [['к2', 'к3', 'к4', 'к5', 'к6'], ...d.vies.part1.map((r) => [r.vatNumber ?? '', amt(r.k3), amt(r.k4), amt(r.k5), monthLabel(r.viesMonth)])];
@@ -73,12 +79,12 @@ export function VatDiary() {
 
   return (
     <ReportFrame<VatReportResult>
-      title="ДДС дневници, декларация и VIES"
+      title={a.extended ? 'ДДС дневници, декларация и VIES (разширени дневници)' : 'ДДС дневници, декларация и VIES'}
       subtitle={`Данъчен период ${periodText(a)}`}
       report={report}
       isEmpty={() => false}
       status={(d) => `${d.sales.length} продажби, ${d.purchases.length} покупки`}
-      csvName={`ДДС_${a.from}_${a.to}_${tab}`}
+      csvName={`${a.extended ? 'ДДС разширени' : 'ДДС'}_${a.from}_${a.to}_${tab}`}
       csv={csv}
       filters={
         <>
@@ -116,6 +122,7 @@ export function VatDiary() {
         <>
           <Checkbox label="Създаване на VIES декларация" checked={f.createVies} onChange={(createVies) => setF({ ...f, createVies })} />
           <Checkbox label="Автоматично попълване на клетка 71" checked={f.autoFillCell71} onChange={(autoFillCell71) => setF({ ...f, autoFillCell71 })} />
+          <Checkbox label="Разширени дневници" checked={f.extended} onChange={(extended) => setF({ ...f, extended })} />
         </>
       }
     >
@@ -143,8 +150,8 @@ export function VatDiary() {
             </div>
           )}
           {tab === 'declaration' && <Declaration d={d} />}
-          {tab === 'purchases' && <Diary rows={d.purchases} totals={d.purchasesTotals} columns={PURCHASE_COLUMNS} />}
-          {tab === 'sales' && <Diary rows={d.sales} totals={d.salesTotals} columns={SALE_COLUMNS} />}
+          {tab === 'purchases' && <Diary rows={d.purchases} totals={d.purchasesTotals} columns={PURCHASE_COLUMNS} extended={a.extended} />}
+          {tab === 'sales' && <Diary rows={d.sales} totals={d.salesTotals} columns={SALE_COLUMNS} extended={a.extended} />}
           {tab === 'vies' && <Vies d={d} />}
           {tab === 'files' && <NapFiles f={a} />}
         </div>
@@ -176,12 +183,13 @@ function Declaration({ d }: { d: VatReportResult }) {
   );
 }
 
-function Diary({ rows, totals, columns }: { rows: DiaryRow[]; totals: string[]; columns: [number, string][] }) {
+function Diary({ rows, totals, columns, extended }: { rows: DiaryRow[]; totals: string[]; columns: [number, string][]; extended: boolean }) {
   if (!rows.length) return <div className="p-6 text-center text-slate-500">Няма документи за периода.</div>;
   return (
     <table className="grid-table">
       <thead>
         <tr>
+          {extended && <th className="w-20">Номер на контиране</th>}
           <th className="w-10">№</th>
           <th>Клон</th>
           <th>Вид</th>
@@ -196,11 +204,18 @@ function Diary({ rows, totals, columns }: { rows: DiaryRow[]; totals: string[]; 
               к{n}
             </th>
           ))}
+          {extended && (
+            <>
+              <th>Забележка</th>
+              <th>Втора забележка</th>
+            </>
+          )}
         </tr>
       </thead>
       <tbody>
         {rows.map((r, i) => (
           <tr key={`${r.accountingId}-${i}`}>
+            {extended && <td className="nowrap">{r.accountingNumber}</td>}
             <td className="num">{i + 1}</td>
             <td>{r.branchCode}</td>
             <td className="nowrap" title={r.documentCode}>{r.documentType}</td>
@@ -213,15 +228,22 @@ function Diary({ rows, totals, columns }: { rows: DiaryRow[]; totals: string[]; 
             {r.cols.map((c, j) => (
               <Amt key={j} v={c} />
             ))}
+            {extended && (
+              <>
+                <td className="max-w-[14rem] truncate" title={r.reference}>{r.reference}</td>
+                <td className="max-w-[14rem] truncate" title={r.optionalReference}>{r.optionalReference}</td>
+              </>
+            )}
           </tr>
         ))}
       </tbody>
       <tfoot>
         <tr>
-          <td colSpan={9}>Общо:</td>
+          <td colSpan={extended ? 10 : 9}>Общо:</td>
           {totals.map((c, j) => (
             <Amt key={j} v={c} />
           ))}
+          {extended && <td colSpan={2} />}
         </tr>
       </tfoot>
     </table>

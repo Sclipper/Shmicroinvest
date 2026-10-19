@@ -585,3 +585,21 @@ describe('euro changeover (02b 13)', () => {
     }
   }, 60_000);
 });
+
+describe('extended diaries (05 7.1, 8: TReportType AllExtended)', () => {
+  it('rows carry the entry number, Забележка and Втора забележка; entries with other notes are not merged', async () => {
+    const a = await t.post(sale('2026-05-06', 100, 20, 7, { docNumber: '0000000501', reference: 'Обект Север', optionalReference: 'Договор 12' }));
+    await t.post(sale('2026-05-06', 40, 8, 7, { docNumber: '0000000501', reference: 'Обект Юг', force: true }));
+    await t.post(purchase('2026-05-09', 300, 60, 2, { docNumber: 'P-501', reference: 'Доставка склад' }));
+    const plain = (await call('POST', '/vat/diaries', report('2026-05-01', '2026-05-31'))).body;
+    expect(plain.sales).toHaveLength(1);
+    expect(plain.sales[0].cols[0]).toBe('140.00');
+    const r = await call('POST', '/vat/diaries', report('2026-05-01', '2026-05-31', { extended: true }));
+    expect(r.status, r.text).toBe(200);
+    expect(r.body.sales.map((x: { reference: string; optionalReference: string; cols: string[] }) => [x.reference, x.optionalReference, x.cols[0]]))
+      .toEqual([['Обект Север', 'Договор 12', '100.00'], ['Обект Юг', '', '40.00']]);
+    expect(r.body.sales[0].accountingNumber).toBe(a.number);
+    expect(r.body.salesTotals[0]).toBe('140.00');
+    expect(r.body.purchases[0]).toMatchObject({ documentNumber: 'P-501', reference: 'Доставка склад', optionalReference: '' });
+  });
+});

@@ -25,6 +25,12 @@ export interface DiaryOptions {
   addCashDocs: boolean;
   /** Sort by entry order (AccountingID) first. */
   sortByEntry?: boolean;
+  /**
+   * "Разширени дневници" (TReportType AllExtended, 05 7 / 8): the rows also
+   * carry the entry number, Забележка and Втора забележка and are not merged
+   * across entries or notes.
+   */
+  extended?: boolean;
 }
 
 export interface DiaryRow {
@@ -41,6 +47,9 @@ export interface DiaryRow {
   partnerName: string;
   description: string;
   vatDiaryCode: string;
+  /** Забележка / Втора забележка of the entry (extended diaries). */
+  reference: string;
+  optionalReference: string;
   /** Amount columns: sales 9..25 (17), purchases 9..15 (7). */
   cols: Dec[];
 }
@@ -56,12 +65,13 @@ function originalViesMonth(a: VatAccounting, ix: VatIndex): string | undefined {
   return siblingsOf(a, ix)[0]?.viesMonth;
 }
 
-function groupKey(r: DiaryRow) {
-  return [r.transactionTypeId, r.branchCode, r.documentNumber, r.documentDate, r.documentType, r.partnerVat, r.partnerName, r.description, r.vatDiaryCode].join('\u0001');
+function groupKey(r: DiaryRow, extended?: boolean) {
+  const base = [r.transactionTypeId, r.branchCode, r.documentNumber, r.documentDate, r.documentType, r.partnerVat, r.partnerName, r.description, r.vatDiaryCode];
+  return (extended ? [...base, r.accountingNumber, r.reference, r.optionalReference] : base).join('\u0001');
 }
 
-function addRow(groups: Map<string, DiaryRow>, row: DiaryRow) {
-  const k = groupKey(row);
+function addRow(groups: Map<string, DiaryRow>, row: DiaryRow, extended?: boolean) {
+  const k = groupKey(row, extended);
   const g = groups.get(k);
   if (!g) {
     groups.set(k, row);
@@ -96,6 +106,8 @@ function header(a: VatAccounting, code: string): Omit<DiaryRow, 'cols'> {
     partnerName: p?.name ?? '',
     description: a.term,
     vatDiaryCode: code,
+    reference: a.reference ?? '',
+    optionalReference: a.optionalReference ?? '',
   };
 }
 
@@ -112,7 +124,7 @@ export function saleDiary(list: VatAccounting[], o: DiaryOptions, ix: VatIndex =
 
     // Second UNION branch: customs declarations with a protocol sibling, zero amounts.
     if (a.documentTypeId === VAT_DOC.CustomsDeclaration && a.transactionTypeId === TRANSACTION_TYPE.NotSet) {
-      if (hasProtocolSibling(a, ix)) addRow(groups, { ...header(a, code), cols: Array.from({ length: 17 }, () => ZERO) });
+      if (hasProtocolSibling(a, ix)) addRow(groups, { ...header(a, code), cols: Array.from({ length: 17 }, () => ZERO) }, o.extended);
       continue;
     }
     const legs = a.details.filter((d) => d.sign === -1
@@ -146,7 +158,7 @@ export function saleDiary(list: VatAccounting[], o: DiaryOptions, ix: VatIndex =
       if (t === 17 && !vat) add(24);
       if (t === 18 && !vat) add(25);
     }
-    addRow(groups, { ...header(a, code), cols });
+    addRow(groups, { ...header(a, code), cols }, o.extended);
   }
   return sortRows([...groups.values()], o.sortByEntry);
 }
@@ -169,7 +181,7 @@ export function purchaseDiary(list: VatAccounting[], o: DiaryOptions, ix: VatInd
       if (!hasProtocolSibling(a, ix)) continue;
       const cols = Array.from({ length: 7 }, () => ZERO);
       for (const d of a.details) if (d.sign === 1 && d.vatTermId === 3) cols[0] = cols[0]!.plus(convertRounded(d.amount, o.end, a.accountingDate));
-      addRow(groups, { ...header(a, code), cols });
+      addRow(groups, { ...header(a, code), cols }, o.extended);
       continue;
     }
     if (a.transactionTypeId !== TRANSACTION_TYPE.Purchase) continue;
@@ -193,7 +205,7 @@ export function purchaseDiary(list: VatAccounting[], o: DiaryOptions, ix: VatInd
       if (t === 5 && noCode) add(14);
       if (t === 6 && noCode && cashOk) add(15);
     }
-    addRow(groups, { ...header(a, code), cols });
+    addRow(groups, { ...header(a, code), cols }, o.extended);
   }
   return sortRows([...groups.values()], o.sortByEntry);
 }

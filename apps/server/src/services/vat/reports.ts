@@ -26,6 +26,8 @@ export interface VatReportParams {
   kl82?: string;
   autoFillCell71?: boolean;
   sortByEntry?: boolean;
+  /** "Разширени дневници": entry number, Забележка and Втора забележка on every row. */
+  extended?: boolean;
   createVies?: boolean;
   subscriberName?: string;
   subscriberEgn?: string;
@@ -103,7 +105,7 @@ export async function companyVatMessages(db: DbOrTx, p: VatReportParams): Promis
 export async function vatDiaries(db: DbOrTx, p: VatReportParams, list?: VatAccounting[]) {
   const accs = list ?? (await load(db, p));
   const ix = indexAccountings(accs);
-  const o = { ...diaryOptions(p), addCashDocs: true };
+  const o = { ...diaryOptions(p), addCashDocs: true, extended: p.extended };
   const sales = saleDiary(accs, o, ix);
   const purchases = purchaseDiary(accs, o, ix);
   return {
