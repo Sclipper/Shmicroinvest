@@ -120,6 +120,146 @@ test.describe('data exchange', () => {
     expect(settings).toMatchObject({ isDocumentsClosingEnabled: true, selectedWayOfSearching: 'amount' });
   });
 
+  test('bank preview: keywords, re-applied rule, IBAN binding after the confirmation, duplicate warning, totals (04b 1.5-1.8)', async ({ page }) => {
+    await openApp(page);
+    const id = uid();
+    const own = 'BG80STSA93000012345678';
+    const iban = 'BG50UBBS80021012345678';
+    const banks = await api<{ id: number; code: string }[]>(page, 'GET', '/banks');
+    const my = await api(page, 'GET', '/my-company');
+    await api(page, 'PUT', '/my-company', { ...my, addresses: [], bankAccounts: [{ account: own, bankId: banks.find((b) => b.code === 'STSABGSF')!.id, bankStatementAccountId: await accountId(page, '503'), isEuro: true }] });
+    const name = `Е2Е Банков ${id}`;
+    const partnerId = (await api<{ id: number }>(page, 'POST', '/partners', { name, accountIds: [await accountId(page, '411')] })).id;
+    const day = String(10 + (Number(id.slice(-2)) % 18)).padStart(2, '0');
+    const mt940 = [
+      ':20:STMT2', `:25:${own}`, ':28C:1/1', ':60F:C261101EUR1000,00',
+      `:61:2611${day}11${day}C50,00NTRFE${id}`, `:86:Плащане ${iban}`,
+      `:61:2611${day}11${day}D12,00NTRFF${id}`, `:86:Абонамент ${id}`,
+      ':62F:C261130EUR1038,00', '-',
+    ].join('\r\n');
+
+    await menu(page, 'Операции', 'Банкови извлечения', 'Импорт на банкови извлечения');
+    const tab = activeTab(page);
+    await tab.getByTestId('bank-file').setInputFiles({ name: 'statement2.sta', mimeType: 'text/plain', buffer: Buffer.from(mt940, 'utf8') });
+    await tab.getByRole('button', { name: 'Напред' }).click();
+    const rows = tab.getByTestId('bank-row');
+    await expect(rows).toHaveCount(2);
+    await expect(tab.getByTestId('bank-balances')).toContainText('1 000,00');
+    await expect(tab.getByTestId('bank-totals')).toContainText('Постъпления: 50,00');
+    await expect(tab.getByTestId('bank-totals')).toContainText('Плащания: 12,00');
+
+    // Keyword chips are saved at once.
+    const chips = tab.getByTestId('bank-keywords');
+    await expect(chips.getByTestId('keyword-chip').filter({ hasText: 'ф-ра' })).toBeVisible();
+    await chips.getByLabel('Нова ключова дума').fill(`дума${id}`);
+    await chips.getByRole('button', { name: 'Добави' }).click();
+    await expect(chips.getByTestId('keyword-chip').filter({ hasText: `дума${id}` })).toBeVisible();
+    expect((await api<{ word: string }[]>(page, 'GET', '/bank-statements/keywords')).map((k) => k.word)).toContain(`дума${id}`);
+    await chips.getByRole('button', { name: `Изтриване на дума${id}` }).click();
+    await expect(chips.getByTestId('keyword-chip').filter({ hasText: `дума${id}` })).toHaveCount(0);
+
+    // The second row has no rule; the user picks "Банкова такса" for it.
+    await expect(rows.nth(1)).toContainText('Няма шаблон');
+    const template = rows.nth(1).getByLabel('Шаблон');
+    await template.selectOption({ label: 'Банкова такса' });
+    await expect(rows.nth(1).getByPlaceholder('Сметка (F4)').first()).toHaveValue(/629/);
+    await expect(rows.nth(1)).not.toContainText('Няма шаблон');
+
+    // Choosing a partner for an unknown IBAN asks before binding it.
+    const picker = rows.nth(0).getByPlaceholder('Партньор (F4)');
+    await picker.fill(name);
+    await expect(page.getByText(name).last()).toBeVisible();
+    await picker.press('Enter');
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toContainText(`Искате ли да обвържете IBAN ${iban} с партньор ${name}?`);
+    await dialog.getByRole('button', { name: 'Да', exact: true }).click();
+    await expect(page.getByRole('dialog')).toContainText(`IBAN ${iban} е обвързан с партньор ${name}.`);
+    await page.getByRole('dialog').getByRole('button', { name: 'OK' }).click();
+    const partner = await api<{ bankAccounts: { account: string }[] }>(page, 'GET', `/partners/${partnerId}`);
+    expect(partner.bankAccounts.map((b) => b.account)).toContain(iban);
+    await rows.nth(0).getByPlaceholder('Сметка (F4)').nth(1).fill('411');
+    await rows.nth(0).getByPlaceholder('Сметка (F4)').nth(1).press('Enter');
+
+    await tab.getByRole('button', { name: 'Запис', exact: true }).click();
+    await expect(page.getByText('Записани контирания: 2.')).toBeVisible();
+    await page.getByRole('button', { name: 'OK' }).click();
+    const tb = await trialBalance(page, `2026-11-${day}`, `2026-11-${day}`);
+    expect(tb.find((r) => r.number === '629')?.debitTurnover).toBe('12.00');
+
+    // Re-importing the same file: the rows are flagged and the save asks first.
+    await tab.getByRole('button', { name: 'Назад' }).click();
+    await tab.getByTestId('bank-file').setInputFiles({ name: 'statement2.sta', mimeType: 'text/plain', buffer: Buffer.from(mt940, 'utf8') });
+    await tab.getByRole('button', { name: 'Напред' }).click();
+    await expect(rows.nth(0)).toContainText('Движението вече е импортирано');
+    await tab.getByRole('button', { name: 'Запис', exact: true }).click();
+    await expect(page.getByRole('dialog')).toContainText('Редове, които вече са импортирани: 1, 2');
+    await page.getByRole('dialog').getByRole('button', { name: /Отказ|Не/ }).first().click();
+    expect((await trialBalance(page, `2026-11-${day}`, `2026-11-${day}`)).find((r) => r.number === '629')?.debitTurnover).toBe('12.00');
+  });
+
+  test('currency account: editable currency amount and rate, the difference shown (04b 1.8, 1.10)', async ({ page }) => {
+    await openApp(page);
+    const banks = await api<{ id: number; code: string }[]>(page, 'GET', '/banks');
+    const accounts = await api<{ id: number; number: string; currencyId: number; parentId: number | null }[]>(page, 'GET', '/accounts');
+    let usd = accounts.find((a) => a.currencyId === 3 && a.number.startsWith('504/'));
+    if (!usd) {
+      const r = await api<{ id: number }>(page, 'POST', '/accounts', { parentId: await accountId(page, '504'), description: 'Банка USD Е2Е', accountCategoryId: 27, currencyId: 3 });
+      usd = { id: r.id } as typeof usd & { id: number };
+    }
+    const my = await api(page, 'GET', '/my-company');
+    await api(page, 'PUT', '/my-company', { ...my, addresses: [], bankAccounts: [{ account: 'BG11FINV91501014771636', bankId: banks.find((b) => b.code === 'FINVBGSF')!.id, bankStatementAccountId: usd!.id, isEuro: false }] });
+    await api(page, 'PUT', '/revaluation/rates', { date: '2026-08-03', rates: [{ currencyId: 3, rate: '0.9' }] });
+    const xml = `<ROWSET><ROW><XML><statement><system/><header><IBAN>BG11FINV91501014771636</IBAN><Currency>USD</Currency></header>
+      <movements><movement><ValueDate>03.08.2026</ValueDate><Reference>E2EFX</Reference><DebitTov>0</DebitTov><CreditTov>91.00</CreditTov><Amount>100.00</Amount>
+      <OperationReason><Description>Покупка на валута</Description></OperationReason></movement></movements></statement></XML></ROW></ROWSET>`;
+
+    await menu(page, 'Операции', 'Банкови извлечения', 'Импорт на банкови извлечения');
+    const tab = activeTab(page);
+    await tab.getByTestId('bank-file').setInputFiles({ name: 'fibank.xml', mimeType: 'text/xml', buffer: Buffer.from(xml, 'utf8') });
+    await tab.getByRole('button', { name: 'Напред' }).click();
+    const row = tab.getByTestId('bank-row');
+    await expect(row).toHaveCount(1);
+    await expect(row.getByLabel('Валутна сума')).toHaveValue('100.00');
+    await expect(row.getByLabel('Курс')).toHaveValue('0.9');
+    await expect(row.getByLabel('Сума', { exact: true })).toHaveValue('91.00');
+    await expect(row.getByTestId('row-difference')).toContainText('1,00');
+    await expect(tab.getByTestId('bank-totals')).toContainText('Валутни разлики: 1,00');
+    // A new rate recomputes the base amount (round(currency x rate, 2)) and clears the difference.
+    await row.getByLabel('Курс').fill('0.91');
+    await expect(row.getByLabel('Сума', { exact: true })).toHaveValue('91.00');
+    await expect(row.getByTestId('row-difference')).toHaveText('');
+    await row.getByLabel('Валутна сума').fill('50');
+    await expect(row.getByLabel('Сума', { exact: true })).toHaveValue('45.50');
+  });
+
+  test('IBANs of payment intermediaries are kept on their own screen (04b 1.7)', async ({ page }) => {
+    await openApp(page);
+    await menu(page, 'Операции', 'Банкови извлечения', 'IBAN на платежни посредници');
+    const tab = activeTab(page);
+    await tab.getByLabel('IBAN').fill('bg14 bpbi 7924 1012 3456 78');
+    await tab.getByRole('button', { name: 'Добави' }).click();
+    await expect(tab.getByTestId('excluded-iban')).toContainText('BG14BPBI79241012345678');
+    await tab.getByRole('button', { name: 'Запис' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'OK' }).click();
+    expect((await api<{ ibans: string[] }>(page, 'GET', '/bank-statements/excluded-ibans')).ibans).toContain('BG14BPBI79241012345678');
+    await tab.getByRole('button', { name: 'Премахване на BG14BPBI79241012345678' }).click();
+    await tab.getByRole('button', { name: 'Запис' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'OK' }).click();
+    expect((await api<{ ibans: string[] }>(page, 'GET', '/bank-statements/excluded-ibans')).ibans).toEqual([]);
+  });
+
+  test('IsBindingDocumentsInBankImportEnabled is a basic setting (06 3.4)', async ({ page }) => {
+    await openApp(page);
+    await menu(page, 'Други', 'Настройки');
+    const tab = activeTab(page);
+    const box = tab.getByLabel('Обвързване на документи при импорт на банкови извлечения');
+    await expect(box).toBeChecked();
+    await box.uncheck();
+    await tab.getByRole('button', { name: 'Запис' }).click();
+    await expect.poll(async () => (await api<{ key: string; value: string }[]>(page, 'GET', '/settings')).find((s) => s.key === 'IsBindingDocumentsInBankImportEnabled')?.value).toBe('False');
+    await api(page, 'PUT', '/settings', { IsBindingDocumentsInBankImportEnabled: 'True' });
+  });
+
   // Runs last: it adds the 2025 year (BGN chart) and opens 2026 from it.
   test('converts 2025 to the euro: openings per document in EUR (04b 4)', async ({ page }) => {
     await openApp(page);

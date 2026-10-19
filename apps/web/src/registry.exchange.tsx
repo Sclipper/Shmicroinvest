@@ -1,5 +1,5 @@
 import type { ScreenDef } from './shell/workspace.tsx';
-import { BankImport, BankTemplates } from './screens/exchange/Bank.tsx';
+import { BankExcludedIbans, BankImport, BankTemplates } from './screens/exchange/Bank.tsx';
 import { BackupScreen, ChooseCompany, EuroConversion, ReportExports, RestoreScreen } from './screens/exchange/Company.tsx';
 import { DeltaConversion, ExcelImport, TextImport, TrzImport, XmlExport, XmlImport } from './screens/exchange/Imports.tsx';
 
@@ -12,6 +12,7 @@ export const EXCHANGE_SCREENS: ScreenDef[] = [
   { id: 'trzImport', title: 'Импорт от ТРЗ Pro', component: TrzImport, permission: 'UI_Operations_Import_TRZProImport' },
   { id: 'bankImport', title: 'Импорт на банкови извлечения', component: BankImport, permission: 'UI_Operations_BankStatements_BankStatementsImport' },
   { id: 'bankTemplates', title: 'Шаблони за банков импорт', component: BankTemplates, permission: 'UI_Operations_BankStatements_BankTemplatesImport' },
+  { id: 'bankExcludedIbans', title: 'IBAN на платежни посредници', component: BankExcludedIbans, permission: 'UI_Operations_BankStatements_BankStatementsImport' },
   { id: 'backup', title: 'Архивиране на фирма', component: BackupScreen, permission: 'UI_File_BackupDatabase' },
   { id: 'restore', title: 'Възстановяване на фирма', component: RestoreScreen, permission: 'UI_File_RestoreDatabaseBackup' },
   { id: 'chooseCompany', title: 'Избор на фирма', component: ChooseCompany, permission: 'UI_File_ChooseCompany' },
