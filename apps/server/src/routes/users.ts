@@ -1,10 +1,11 @@
 import { Hono } from 'hono';
 import { zValidator } from '../lib/validate.ts';
 import { z } from 'zod';
-import { and, asc, desc, eq, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, ne, sql } from 'drizzle-orm';
 import { resolvePermission } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import type { AppEnv } from '../context.ts';
+import type { DbOrTx } from '../db/provider.ts';
 import { ApiError, badRequest, notFound } from '../lib/errors.ts';
 import { hashPassword, isStrongPassword, verifyPassword } from '../lib/password.ts';
 import { requirePermission } from '../session.ts';
@@ -15,7 +16,32 @@ const ADMIN_ROLE = 2;
 
 export const USER_MESSAGES = {
   strUserHasOperations: 'Потребителят не може да бъде изтрит, тъй като участва в операции!',
+  strUserNameExists: 'Вече съществува потребител с такова име.',
+  strLastAdministrator: 'Трябва да има поне един потребител администратор.',
 } as const;
+
+/** Unique-index violation (23505), as raised by node-postgres and PGlite, possibly wrapped by drizzle. */
+function isUniqueViolation(e: unknown): boolean {
+  for (let x = e as { code?: string; cause?: unknown } | undefined, i = 0; x && i < 5; x = x.cause as typeof x, i++) if (x.code === '23505') return true;
+  return false;
+}
+
+/** A user name taken by a non-deleted user (case-insensitive, as ix_users_name_active). */
+async function nameTaken(db: DbOrTx, name: string, exceptId?: number) {
+  const rows = await db.select({ id: s.users.id }).from(s.users)
+    .where(and(sql`lower(${s.users.name}) = lower(${name})`, eq(s.users.isDeleted, false), exceptId ? ne(s.users.id, exceptId) : undefined));
+  return rows.length > 0;
+}
+
+/** Runs a user write; a concurrent duplicate name (unique index) becomes strUserNameExists. */
+async function guardName<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (e) {
+    if (isUniqueViolation(e)) throw badRequest(USER_MESSAGES.strUserNameExists);
+    throw e;
+  }
+}
 const USERS = 'UI_Edit_Administration_Users';
 
 /** Users, roles and the role permission tree (spec 01b section 3). */
@@ -35,10 +61,10 @@ export const userRoutes = new Hono<AppEnv>()
     const { db, user } = c.var;
     const b = c.req.valid('json');
     if (!isStrongPassword(b.password)) throw badRequest('Паролата трябва да е поне 6 символа.');
-    const dup = await db.select().from(s.users).where(and(eq(s.users.name, b.name), eq(s.users.isDeleted, false)));
-    if (dup.length) throw badRequest('Вече съществува потребител с това име.');
+    if (await nameTaken(db, b.name)) throw badRequest(USER_MESSAGES.strUserNameExists);
     if (b.roleId === 1) throw badRequest('Изберете потребителска група.');
-    const [row] = await db.insert(s.users).values({ name: b.name, passwordHash: await hashPassword(b.password), userRoleId: b.roleId, email: b.email ?? null }).returning();
+    const passwordHash = await hashPassword(b.password);
+    const [row] = await guardName(() => db.insert(s.users).values({ name: b.name, passwordHash, userRoleId: b.roleId, email: b.email ?? null }).returning());
     await recordPasswordQuality(db, row!.id, b.password);
     await logActivity(db, user.id, 'add', 'user', row!.id, b.name);
     return c.json({ id: row!.id }, 201);
@@ -56,15 +82,17 @@ export const userRoutes = new Hono<AppEnv>()
     const [u] = await db.select().from(s.users).where(eq(s.users.id, id));
     if (!u) throw notFound('Потребителят');
     if (b.roleId === 1) throw badRequest('Изберете потребителска група.');
-    if (u.userRoleId === ADMIN_ROLE && b.roleId !== ADMIN_ROLE && (await adminCount(c.var.db, id)) === 0) {
-      throw badRequest('Трябва да има поне един потребител администратор.');
-    }
+    if (await nameTaken(db, b.name, id)) throw badRequest(USER_MESSAGES.strUserNameExists);
     const patch: Partial<typeof s.users.$inferInsert> = { name: b.name, userRoleId: b.roleId, email: b.email ?? null };
     if (b.password !== undefined) {
       if (!isStrongPassword(b.password)) throw badRequest('Паролата трябва да е поне 6 символа.');
       patch.passwordHash = await hashPassword(b.password);
     }
-    await db.update(s.users).set(patch).where(eq(s.users.id, id));
+    await guardName(() => db.transaction(async (tx) => {
+      // The last-administrator rule holds under concurrency: the administrators are locked first.
+      if (u.userRoleId === ADMIN_ROLE && b.roleId !== ADMIN_ROLE && (await lockedAdminCount(tx, id)) === 0) throw badRequest(USER_MESSAGES.strLastAdministrator);
+      await tx.update(s.users).set(patch).where(eq(s.users.id, id));
+    }));
     if (b.password !== undefined) await recordPasswordQuality(db, id, b.password);
     await logActivity(db, user.id, 'edit', 'user', id, b.name);
     return c.json({ ok: true });
@@ -76,11 +104,13 @@ export const userRoutes = new Hono<AppEnv>()
     if (id === user.id) throw badRequest('Не можете да изтриете активния потребител.');
     const [u] = await db.select().from(s.users).where(eq(s.users.id, id));
     if (!u) throw notFound('Потребителят');
-    if (u.userRoleId === ADMIN_ROLE && (await adminCount(db, id)) === 0) throw badRequest('Трябва да има поне един потребител администратор.');
     // strUserHasOperations (01b 3.4): a user referenced by entries is not deleted.
     const [used] = await db.select({ id: s.accountings.id }).from(s.accountings).where(eq(s.accountings.userId, id)).limit(1);
     if (used) throw new ApiError(422, USER_MESSAGES.strUserHasOperations, [{ key: 'strUserHasOperations', text: USER_MESSAGES.strUserHasOperations, severity: 'critical' }]);
-    await db.update(s.users).set({ isDeleted: true }).where(eq(s.users.id, id));
+    await db.transaction(async (tx) => {
+      if (u.userRoleId === ADMIN_ROLE && (await lockedAdminCount(tx, id)) === 0) throw badRequest(USER_MESSAGES.strLastAdministrator);
+      await tx.update(s.users).set({ isDeleted: true }).where(eq(s.users.id, id));
+    });
     await logActivity(db, user.id, 'delete', 'user', id, u.name);
     return c.json({ ok: true });
   })
@@ -192,13 +222,14 @@ export const userRoutes = new Hono<AppEnv>()
     return c.json(rows);
   });
 
-async function adminCount(db: AppEnv['Variables']['db'], exceptId: number) {
+/** Other non-deleted administrators, with their rows locked to the end of the transaction (SELECT ... FOR UPDATE). */
+async function lockedAdminCount(db: DbOrTx, exceptId: number) {
   const r = await db.select({ id: s.users.id }).from(s.users)
-    .where(and(eq(s.users.userRoleId, ADMIN_ROLE), eq(s.users.isDeleted, false), ne(s.users.id, exceptId)));
-  return r.length;
+    .where(and(eq(s.users.userRoleId, ADMIN_ROLE), eq(s.users.isDeleted, false))).for('update');
+  return r.filter((x) => x.id !== exceptId).length;
 }
 
-async function rebuildRoleTree(db: Parameters<typeof adminCount>[0] | Parameters<Parameters<AppEnv['Variables']['db']['transaction']>[0]>[0]) {
+async function rebuildRoleTree(db: DbOrTx) {
   const rows = await db.select().from(s.userRoles);
   let n = 1;
   const visit = async (id: number, level: number) => {

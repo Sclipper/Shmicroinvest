@@ -71,6 +71,8 @@ export const sessionRoutes = new Hono<AppEnv>()
     const y = Number(date.slice(0, 4));
     // Moving the working date into another year switches the active year (spec 01b 5).
     if (y !== year.year) {
+      // The year changes with the date: same right as the year chooser (01b 5, status bar year button).
+      if (!(await c.var.can('UI_Edit_ChangeActiveFinancialYear'))) throw new ApiError(403, 'Нямате права за тази операция.');
       const [fy] = await db.select().from(s.financialYears).where(eq(s.financialYears.year, y));
       if (!fy) throw badRequest(`Не е намерена счетоводна година ${y}!`);
       if (fy.isLocked) throw badRequest('Избраната счетоводна година е заключена и не може да бъде избрана!');

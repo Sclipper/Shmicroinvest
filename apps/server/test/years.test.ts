@@ -124,6 +124,23 @@ describe('financial years (01b 6.3)', () => {
     expect((await call('PUT', '/years/active', { year: 2026 })).status).toBe(200);
   });
 
+  it('moving the working date into another year needs the year-change right (01b 5)', async () => {
+    const role = await call('POST', '/roles', { name: 'Без смяна на година', copyFromId: 5 });
+    expect(role.status, role.text).toBe(201);
+    const perms = (await call('GET', `/roles/${role.body.id}/permissions`)).body as { id: number; key: string }[];
+    const key = perms.find((p) => p.key === 'UI_Edit_ChangeActiveFinancialYear')!;
+    expect((await call('PUT', `/roles/${role.body.id}/permissions`, { [key.id]: false })).status).toBe(200);
+    const u = await call('POST', '/users', { name: 'Оператор', password: 'parola1', roleId: role.body.id });
+    expect(u.status, u.text).toBe(201);
+    expect((await login(u.body.id, 'parola1')).status).toBe(200);
+    const year = await sessionYear();
+    const other = await call('PUT', '/session/working-date', { date: `${year + 1}-01-15` });
+    expect([other.status, other.body.error]).toEqual([403, 'Нямате права за тази операция.']);
+    expect(await sessionYear()).toBe(year);
+    expect((await call('PUT', '/session/working-date', { date: `${year}-01-15` })).status).toBe(200);
+    expect((await login(ADMIN.userId, ADMIN.password)).status).toBe(200);
+  });
+
   it('logs locking and unlocking (01b 8)', async () => {
     expect((await call('PUT', `/years/${id[2027]}/locks`, { lockYear: true })).status).toBe(200);
     expect((await call('PUT', `/years/${id[2027]}/locks`, { lockYear: false })).status).toBe(200);

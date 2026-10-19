@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestCompany, type TestCompany } from './helpers.ts';
 import { findSequence, reserveNumber } from '../src/services/sequences.ts';
+import * as schema from '../src/db/company/schema/index.ts';
 
 let t: TestCompany;
 let call: TestCompany['call'];
@@ -203,5 +204,53 @@ describe('api', () => {
     // Without entries the user is deleted.
     const idle = await call('POST', '/users', { name: 'Без операции', password: 'parola1', roleId: 5 });
     expect((await call('DELETE', `/users/${idle.body.id}`)).status).toBe(200);
+  });
+
+  it('keeps user names unique among active users and the last administrator under concurrency (01b 3.4)', async () => {
+    const a = await call('POST', '/users', { name: 'Петър Петров', password: 'parola1', roleId: 5 });
+    expect(a.status, a.text).toBe(201);
+    const dup = await call('POST', '/users', { name: 'петър петров', password: 'parola1', roleId: 5 });
+    expect([dup.status, dup.body.error]).toEqual([400, 'Вече съществува потребител с такова име.']);
+    const b = await call('POST', '/users', { name: 'Мария', password: 'parola1', roleId: 5 });
+    const rename = await call('PUT', `/users/${b.body.id}`, { name: 'ПЕТЪР ПЕТРОВ', roleId: 5 });
+    expect([rename.status, rename.body.error]).toEqual([400, 'Вече съществува потребител с такова име.']);
+    // The database refuses a duplicate too (partial unique index); a deleted user's name is free again.
+    const db = await t.driver.company(t.companyDb);
+    await expect(db.insert(schema.users).values({ name: 'ПЕТЪР петров', userRoleId: 5 })).rejects.toThrow();
+    expect((await call('DELETE', `/users/${a.body.id}`)).status).toBe(200);
+    expect((await call('POST', '/users', { name: 'Петър Петров', password: 'parola1', roleId: 5 })).status).toBe(201);
+
+    // Two administrators demoted at the same time: one of them stays an administrator.
+    const admin2 = await call('POST', '/users', { name: 'Втори администратор', password: 'parola1', roleId: 2 });
+    const others = ((await call('GET', '/users')).body as { id: number; roleId: number }[]).filter((u) => u.roleId === 2 && u.id !== 1 && u.id !== admin2.body.id);
+    for (const o of others) await call('PUT', `/users/${o.id}`, { name: `Админ ${o.id}`, roleId: 5 });
+    const [r1, r2] = await Promise.all([
+      call('PUT', '/users/1', { name: 'Администратор', roleId: 5 }),
+      call('PUT', `/users/${admin2.body.id}`, { name: 'Втори администратор', roleId: 5 }),
+    ]);
+    expect([r1.status, r2.status].sort()).toEqual([200, 400]);
+    expect([r1, r2].find((r) => r.status === 400)!.body.error).toBe('Трябва да има поне един потребител администратор.');
+    // Restore the administrator role of user 1 (from the remaining administrator when user 1 lost it).
+    const [company] = (await call('GET', '/companies')).body;
+    if (r1.status === 200) {
+      expect((await call('POST', '/login', { companyDb: company.name, userId: admin2.body.id, password: 'parola1' })).status).toBe(200);
+      expect(((await call('GET', '/users')).body as { roleId: number }[]).filter((u) => u.roleId === 2)).toHaveLength(1);
+      expect((await call('PUT', '/users/1', { name: 'Администратор', roleId: 2 })).status).toBe(200);
+      expect((await call('POST', '/login', { companyDb: company.name, userId: 1, password: 'secret1' })).status).toBe(200);
+    } else {
+      expect(((await call('GET', '/users')).body as { roleId: number }[]).filter((u) => u.roleId === 2)).toHaveLength(1);
+    }
+  });
+
+  it('voids only entries of the active year', async () => {
+    const e = await t.post({ date: '2026-05-01', dr: [['501', 3]], cr: [['101', 3]] });
+    expect((await call('POST', '/years', { year: 2027, force: true })).status).toBe(201);
+    expect((await call('PUT', '/years/active', { year: 2027 })).status).toBe(200);
+    const other = await call('DELETE', `/entries/${e.id}`);
+    expect([other.status, other.body.error]).toEqual([400, 'Датата на контирането е различна от текущата счетоводна година!']);
+    expect((await call('POST', '/journal/void', { ids: [e.id] })).status).toBe(400);
+    expect((await call('GET', `/entries/${e.id}`)).status).toBe(200);
+    expect((await call('PUT', '/years/active', { year: 2026 })).status).toBe(200);
+    expect((await call('DELETE', `/entries/${e.id}`)).status).toBe(200);
   });
 });

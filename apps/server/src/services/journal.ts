@@ -288,13 +288,14 @@ async function deleteOrphanDocument(db: DbOrTx, documentId: number) {
 }
 
 /** Void (Изтриване, spec 02a 5.1, 01a 8.6). */
-export async function deleteEntry(db: DbOrTx, id: number, year: ActiveYear, userId: number) {
+export async function deleteEntry(db: DbOrTx, id: number, year: ActiveYear, userId: number, opts: { anyYear?: boolean } = {}) {
   const [e] = await db.select().from(s.accountings).where(eq(s.accountings.id, id));
   if (!e) throw notFound('Контирането');
+  // Users void entries of the active year only; system flows (asset plan changes) may pass anyYear.
+  if (!opts.anyYear && e.financialYearId !== year.id) throw badRequest(JOURNAL_MESSAGES.strWrongAccountingDate);
   const [fy] = await db.select().from(s.financialYears).where(eq(s.financialYears.id, e.financialYearId));
   if (fy?.isLocked) throw badRequest(JOURNAL_MESSAGES.strVoidAccountingLockedYearWarning);
   if (fy && !e.isInitialBalance && isMonthLocked(fy.lockedMonths, Number(e.accountingDate.slice(5, 7)))) throw badRequest(JOURNAL_MESSAGES.strLockedMonthOperation);
-  void year;
   await releaseAssetLinks(db, id);
   await db.delete(s.accountingPaymentDetails).where(or(eq(s.accountingPaymentDetails.paymentAccountingId, id), eq(s.accountingPaymentDetails.refAccountingId, id)));
   // 01a 8.6: generated schedule rows and reschedule periods become unprocessed again.

@@ -860,6 +860,7 @@ CREATE INDEX "ix_activity_created" ON "data_activity_log" USING btree ("created_
 CREATE UNIQUE INDEX "ix_permissions_key" ON "permissions" USING btree ("key");--> statement-breakpoint
 CREATE INDEX "ix_urp_role" ON "user_role_permissions" USING btree ("user_role_id");--> statement-breakpoint
 CREATE INDEX "ix_urp_permission" ON "user_role_permissions" USING btree ("permission_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "ix_users_name_active" ON "users" USING btree (lower("name")) WHERE NOT "users"."is_deleted";--> statement-breakpoint
 CREATE INDEX "ix_accounts_parent" ON "accounts" USING btree ("parent_id");--> statement-breakpoint
 CREATE INDEX "ix_accounts_left" ON "accounts" USING btree ("left_index");--> statement-breakpoint
 CREATE INDEX "ix_accounts_number" ON "accounts" USING btree ("is_euro","number");--> statement-breakpoint

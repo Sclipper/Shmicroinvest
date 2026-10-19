@@ -1,4 +1,5 @@
 import { boolean, index, integer, pgTable, text, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 
 /**
  * Company database: system, configuration, users and permissions (spec 01b).
@@ -42,7 +43,10 @@ export const users = pgTable('users', {
   userRoleId: integer('user_role_id').notNull().references(() => userRoles.id),
   isDeleted: boolean('is_deleted').notNull().default(false),
   email: varchar('email', { length: 255 }),
-});
+}, (t) => [
+  // strUserNameExists: names are unique among non-deleted users (case-insensitive, as the editor checks).
+  uniqueIndex('ix_users_name_active').on(sql`lower(${t.name})`).where(sql`NOT ${t.isDeleted}`),
+]);
 
 export const permissions = pgTable(
   'permissions',
