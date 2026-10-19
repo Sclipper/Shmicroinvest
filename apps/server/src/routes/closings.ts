@@ -10,6 +10,7 @@ import {
   accountTurnovers, autoConcludeCandidates, concludeCandidates, planManualClosing, postAutoClosing, postManualClosing,
 } from '../services/closings.ts';
 import { concludeFinancialYear, concludeInfo } from '../services/yearEnd.ts';
+import { logActivity } from '../services/audit.ts';
 
 /**
  * Automatic operations (spec 02c sections 2-3) and the year-end transfer
@@ -139,5 +140,6 @@ export const closingsRoutes = new Hono<AppEnv>()
     differencesAccountId: z.number().int().nullable().optional(),
   }).default({})), async (c) => {
     const res = await concludeFinancialYear(c.var.db, Number(c.req.param('id')), c.var.user.id, c.req.valid('json'));
+    await logActivity(c.var.db, c.var.user.id, 'edit', 'financialYear', Number(c.req.param('id')), res.message);
     return c.json(res);
   });

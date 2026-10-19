@@ -243,11 +243,11 @@ describe('euro changeover (6.12, 6.9)', () => {
   let sup: number;
   beforeAll(async () => {
     m = await createTestCompany({ year: 2025, companyName: 'Преход ООД' });
-    expect((await m.call('POST', '/years', { year: 2026 })).status).toBe(201);
+    expect((await m.call('POST', '/years', { year: 2026, force: true })).status).toBe(201);
     const bgn401 = m.acc('401');
     await m.post({ date: '2025-12-10', docNumber: 'BGN-1', dr: [['602', '1955.83']], cr: [['401', '1955.83']], partner: (sup = await m.partner('Преходен Доставчик ООД', ['401'])) });
     await m.post({ date: '2025-12-15', docType: 8, docNumber: '3', dr: [['501', '195.58']], cr: [['101', '195.58']] });
-    expect((await m.call('PUT', '/years/active', { year: 2026 })).status).toBe(200);
+    expect((await m.call('PUT', '/years/active', { year: 2026, force: true })).status).toBe(200);
     await m.reloadAccounts();
     const eur401 = m.acc('401');
     expect(eur401).not.toBe(bgn401);

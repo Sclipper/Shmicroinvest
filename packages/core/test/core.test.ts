@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { canHaveConcludeAccount, effectiveConcludeAccountId, isValidAccountNumber, nextAccountNumber, normalizeAccountNumber } from '../src/index.ts';
+import {
+  canHaveConcludeAccount, defaultActiveYear, effectiveConcludeAccountId, loginActiveYear, needsPreviousConclusion, workingDateInYear, yearChangeMovesDateForward,
+  isValidAccountNumber, nextAccountNumber, normalizeAccountNumber } from '../src/index.ts';
 import {
   rebuildNestedSet, nextSubAccountNumber, lockMonth, unlockMonth, isMonthLocked,
   isValidEik, isValidEgn, isValidEgnChecksum, isValidLnch, isValidIban, amountInWords,
@@ -235,5 +237,34 @@ describe('conclude account (01a 4.1, 07 3.5)', () => {
     expect(effectiveConcludeAccountId(10, true, 10)).toBeNull();
     expect(effectiveConcludeAccountId(null, true, 20)).toBe(20);
     expect(effectiveConcludeAccountId(10, true, null)).toBeNull();
+  });
+});
+
+describe('financial year rules (01b 5, 6.3; 06 4.1)', () => {
+  it('defaults to the current year, not the latest', () => {
+    expect(defaultActiveYear([2025, 2026, 2027], '2026-10-19')).toBe(2026);
+    expect(defaultActiveYear([2024, 2025], '2026-10-19')).toBe(2025);
+    expect(defaultActiveYear([2027, 2028], '2026-10-19')).toBe(2027);
+    expect(defaultActiveYear([], '2026-10-19')).toBeNull();
+  });
+  it('falls back from 2026 to 2025 at login while the euro chart is not ready', () => {
+    expect(loginActiveYear(2026, false, [2025, 2026])).toBe(2025);
+    expect(loginActiveYear(2026, true, [2025, 2026])).toBe(2026);
+    expect(loginActiveYear(2026, false, [2026])).toBe(2026);
+    expect(loginActiveYear(2027, false, [2025, 2026, 2027])).toBe(2027);
+  });
+  it('asks to conclude the previous year before creating the next one', () => {
+    expect(needsPreviousConclusion([{ year: 2025, isConcluded: false }], 2026)).toBe(true);
+    expect(needsPreviousConclusion([{ year: 2025, isConcluded: true }], 2026)).toBe(false);
+    expect(needsPreviousConclusion([{ year: 2025, isConcluded: false }], 2024)).toBe(false);
+  });
+  it('moves the working date into the chosen year and asks when it moves forward', () => {
+    expect(workingDateInYear('2026-10-19', 2026)).toBeNull();
+    expect(workingDateInYear('2026-10-19', 2027)).toBe('2027-10-19');
+    expect(workingDateInYear('2028-02-29', 2027)).toBe('2027-02-28');
+    expect(workingDateInYear('2027-02-28', 2028)).toBe('2028-02-28');
+    expect(yearChangeMovesDateForward('2026-10-19', 2027)).toBe(true);
+    expect(yearChangeMovesDateForward('2026-10-19', 2025)).toBe(false);
+    expect(yearChangeMovesDateForward('2026-10-19', 2026)).toBe(false);
   });
 });

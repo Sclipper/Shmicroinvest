@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { and, eq, lt } from 'drizzle-orm';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { Context, MiddlewareHandler } from 'hono';
-import { resolvePermission } from '@shmi/core';
+import { defaultActiveYear, resolvePermission } from '@shmi/core';
 import * as cat from './db/catalog/schema.ts';
 import * as s from './db/company/schema/index.ts';
 import type { AppEnv, SessionInfo, ActiveYear } from './context.ts';
@@ -59,7 +59,9 @@ export async function activeYear(db: CompanyDb, userId: number): Promise<ActiveY
   const stored = await getConfig(db, 'ActiveFinancialYear', userId);
   const years = await db.select().from(s.financialYears).orderBy(s.financialYears.year);
   if (!years.length) throw new ApiError(500, 'Няма счетоводна година.');
-  const wanted = stored ? years.find((y) => y.year === Number(stored)) : undefined;
+  // No stored year: the current calendar year, not the latest one (06 4.1).
+  const wanted = (stored ? years.find((y) => y.year === Number(stored)) : undefined)
+    ?? years.find((y) => y.year === defaultActiveYear(years.map((x) => x.year), todayInSofia()));
   const fy = wanted ?? years[years.length - 1]!;
   return { id: fy.id, year: fy.year, startDate: fy.startDate, isLocked: fy.isLocked, lockedMonths: fy.lockedMonths, isConcluded: fy.isConcluded };
 }

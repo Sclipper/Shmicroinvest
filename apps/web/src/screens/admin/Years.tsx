@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarCheck, CalendarPlus, Lock, LockOpen, Save, Trash2 } from 'lucide-react';
-import { isMonthLocked } from '@shmi/core';
+import { YEAR_MESSAGES, isMonthLocked, needsPreviousConclusion } from '@shmi/core';
 import { api } from '../../api.ts';
 import { bgDate } from '../../format.ts';
 import { useDialogs } from '../../components/dialogs.tsx';
 import { Button, Checkbox, Empty, Field, Panel, Select, Spinner, cx } from '../../components/ui.tsx';
 import { useCan, useInvalidate, useSession } from '../../session.tsx';
 import { TabStrip } from './common.tsx';
+import { chooseActiveYear } from './yearChoice.ts';
 import { ConcludeYearPanel } from '../../payments/ConcludeYear.tsx';
+import type { ScreenProps } from '../../shell/workspace.tsx';
 
 interface FinancialYear { id: number; year: number; startDate: string; isConcluded: boolean; isLocked: boolean; lockedMonths: number }
 /** A row of the "Избор" list: an existing year or a virtual (not yet created) one before/after. */
@@ -20,7 +22,7 @@ const displayYear = (r: YearRow) => `${r.year}${!r.fy ? ' *' : r.fy.isLocked ? '
 type TabId = 'select' | 'conclude' | 'lock' | 'delete';
 
 /** Счетоводна година (Ctrl+Y; spec 01b 6.3). */
-export function Years() {
+export function Years({ tab: screenTab }: Partial<ScreenProps> = {}) {
   const s = useSession();
   const can = useCan();
   const dialogs = useDialogs();
@@ -30,6 +32,18 @@ export function Years() {
   const [tab, setTab] = useState<TabId>('select');
   const years = useQuery({ queryKey: ['years'], queryFn: () => api.get<FinancialYear[]>('/years') });
   const list = years.data ?? [];
+  /** Year preselected on the Приключване tab (and a key to remount it). */
+  const [concludeYear, setConcludeYear] = useState<{ id: number; n: number } | null>(null);
+  const goConclude = (year: number) => {
+    const fy = list.find((y) => y.year === year);
+    setConcludeYear((c) => (fy ? { id: fy.id, n: (c?.n ?? 0) + 1 } : c));
+    setTab('conclude');
+  };
+  // Opened from the status bar for the conclusion of a year.
+  const wanted = screenTab?.params?.concludeYear as number | undefined;
+  useEffect(() => {
+    if (wanted && list.length) goConclude(wanted);
+  }, [wanted, list.length, screenTab?.params]); // goConclude reads the current list
 
   const rows = useMemo<YearRow[]>(() => {
     if (!list.length) return [];
@@ -44,19 +58,27 @@ export function Years() {
   // ---- Избор ----
   const activate = async (r: YearRow) => {
     try {
+      let create: (() => Promise<unknown>) | undefined;
       if (!r.fy) {
         const isPrev = r.year < list[0]!.year;
+        // The next year needs the previous one concluded: "Да" opens its conclusion.
+        if (!isPrev && needsPreviousConclusion(list, r.year)) {
+          if (await dialogs.confirm(YEAR_MESSAGES.strNextFinancialYearConcludePreviousWarning, 'Създаване на счетоводна година')) goConclude(r.year - 1);
+          return;
+        }
         const text = isPrev
           ? `Ще бъде създадена предходна счетоводна година ${r.year}.\nНачалните салда на следващата година трябва да се начисляват към 01.01. Желаете ли да продължите?`
-          : `Ще бъде създадена следващата счетоводна година ${r.year}.${!list[list.length - 1]!.isConcluded ? `\nСчетоводна година ${r.year - 1} не е приключена – крайните ѝ салда няма да бъдат прехвърлени като начални.` : ''}\nЖелаете ли да продължите?`;
+          : `Ще бъде създадена следващата счетоводна година ${r.year}.\nЖелаете ли да продължите?`;
         if (!(await dialogs.confirm(text, 'Създаване на счетоводна година'))) return;
-        await api.post('/years', { year: r.year });
+        create = () => api.post('/years', { year: r.year });
       } else if (r.fy.isLocked) {
         await dialogs.alert('Избраната счетоводна година е заключена и не може да бъде избрана!\nЗа да бъде избрана счетоводната година е необходимо да бъде отключена за редакция.');
         return;
       }
-      await api.put('/years/active', { year: r.year });
-      await qc.invalidateQueries();
+      const res = await chooseActiveYear(dialogs, s.workingDate, r.year, create);
+      if (res === 'conclude') goConclude(r.year - 1);
+      if (res === 'done') await qc.invalidateQueries();
+      else await invalidate('years');
     } catch (e) {
       await dialogs.error(e);
       await invalidate('years');
@@ -182,7 +204,7 @@ export function Years() {
           </>
         )}
 
-        {tab === 'conclude' && <ConcludeYearPanel />}
+        {tab === 'conclude' && <ConcludeYearPanel key={concludeYear?.n ?? 0} initialYearId={concludeYear?.id} />}
 
         {tab === 'lock' && lockFy && (
           <Panel title="Заключване за редакция" className="w-[560px] self-start">
