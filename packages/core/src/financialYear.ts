@@ -64,6 +64,8 @@ export const YEAR_MESSAGES = {
   strHelpCannotDeleteCurrentFinancialYear: 'Текущата счетоводна година не може да бъде изтрита.',
   strHelpCannotDeleteBecauseOfActivePreviousYear: 'Счетоводната година не може да бъде изтрита, защото има активни години преди нея.',
   strDeleteFinancialYearDone: 'Счетоводната година {0} е изтрита успешно!',
+  /** Status-bar year without UI_Edit_ChangeActiveFinancialYear (01b 5). */
+  strCurrentFinancialYearInfo: 'Текущата счетоводна година е {0}!',
 } as const;
 
 /** First year of the EUR ledger; selecting it needs the euro changeover (strSelect2026yearMessage). */

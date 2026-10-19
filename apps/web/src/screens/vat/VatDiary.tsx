@@ -84,7 +84,7 @@ export function VatDiary() {
       report={report}
       isEmpty={() => false}
       status={(d) => `${d.sales.length} продажби, ${d.purchases.length} покупки`}
-      csvName={`${a.extended ? 'ДДС разширени' : 'ДДС'}_${a.from}_${a.to}_${tab}`}
+      csvName={`ДДСДневници ДеклVIES${a.extended ? ' разширени' : ''}_${a.from}_${a.to}_${tab}`}
       csv={csv}
       filters={
         <>

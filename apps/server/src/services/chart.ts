@@ -1,4 +1,4 @@
-import { and, eq, inArray, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, or, sql } from 'drizzle-orm';
 import {
   ACCOUNT_CATEGORIES, CHART_TEMPLATE_TYPES, MULTI_CATEGORIES, chartTemplateAccounts, chartTemplateSettings, isValidAccountNumber, nextAccountNumber,
   normalizeAccountNumber, rebuildNestedSet, isProductCategory, isProductReleaseCategory, productAccountTypeFor, stockMessage,
@@ -135,6 +135,7 @@ export const CHART_MESSAGES = {
   strNoMaterialAccount: 'Сметката не може да бъде от тип материална, тъй като не поддържа работа с продукти/стоки/материали.',
   strAccountCategoryDifferentFromParent: 'Избраната категория на подсметката се различава от категорията на главната сметка.',
   strAccountCategoryAlreadyTakenError: 'Вече съществува сметка, попадаща в избраната категория.',
+  strAnalyticAccountsExistOnTheSameLevelError: 'Сметката не може да бъде създадена. На същото ниво съществуват една или повече аналитични подсметки.',
   strCanNotAddSubAccount: 'Не е позволено създаването на подсметка на избраната сметка!',
   strAccountCannotBeDeleted: 'Сметката не може да бъде изтрита!',
 } as const;
@@ -173,6 +174,11 @@ async function validateAccount(db: DbOrTx, parent: AccountRow, input: Partial<Ac
     const holders = await db.select().from(s.accounts).where(and(eq(s.accounts.accountCategoryId, category), eq(s.accounts.isEuro, parent.isEuro)));
     const sameBranch = (h: AccountRow) => number.startsWith(h.number) || h.number.startsWith(number);
     if (holders.some((h) => h.id !== existing?.id && !sameBranch(h))) msgs.push(crit('strAccountCategoryAlreadyTakenError'));
+  }
+  // A new non-material account next to material analytics (the product sub-accounts of a material account).
+  if (!existing && !material && parent.number !== '0') {
+    const [analytic] = await db.select({ id: s.accounts.id }).from(s.accounts).where(and(eq(s.accounts.parentId, parent.id), isNotNull(s.accounts.productId))).limit(1);
+    if (analytic) msgs.push(crit('strAnalyticAccountsExistOnTheSameLevelError'));
   }
   if (msgs.length) throw new ApiError(422, 'Сметката не може да бъде записана.', msgs);
   return category ?? null;

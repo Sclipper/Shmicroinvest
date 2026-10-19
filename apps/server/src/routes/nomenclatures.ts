@@ -5,10 +5,10 @@ import { z } from 'zod';
 import { and, asc, desc, eq, ilike, inArray, ne, or, sql } from 'drizzle-orm';
 import {
   BULSTAT_PLACEHOLDER, isCompanyCategory, isEmail, isValidEgn, isValidEik, isValidIban, isValidPartnerIdentifier, normalizeIban,
-  bankCodeFromIban, detectIdentifier, type ValidationMessage,
+  bankCodeFromIban, detectIdentifier, formatMessage, type ValidationMessage,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
-import { exec } from '../db/provider.ts';
+import { exec, queryRows } from '../db/provider.ts';
 import type { AppEnv } from '../context.ts';
 import type { DbOrTx } from '../db/provider.ts';
 import { ApiError, badRequest, notFound } from '../lib/errors.ts';
@@ -79,7 +79,10 @@ async function validatePartner(db: DbOrTx, b: PartnerBody, selfId?: number): Pro
     if (!ba.account.trim()) crit('strBankAccountNumberIsEmpty', 'Не е попълнен IBAN!');
     else if (!isValidIban(ba.account)) warn('strInvalidIBAN', 'Въведен е невалиден IBAN!');
   }
-  if (hasLedgerAccountTwice(b.bankAccounts)) crit('strErrorAccountWithMultipleBankAccounts', LEDGER_TWICE);
+  if (hasLedgerAccountTwice(b.bankAccounts)) {
+    crit('strErrorAccountWithMultipleBankAccounts', LEDGER_TWICE);
+    crit('strBankAccountChangesNotSaved', BANK_ACCOUNTS_NOT_SAVED);
+  }
   if (b.accountIds.length === 0) warn('strNoAccountsAttached', 'Не е прикачена нито една счетоводна сметка');
   // Duplicates (CheckForDuplicates): name, bulstat (not placeholder), code.
   const conds = [sql`lower(${s.companies.name}) = lower(${b.name})`];
@@ -164,6 +167,31 @@ const myCompanyBody = z.object({
 });
 
 const LEDGER_TWICE = 'Една счетоводна сметка не може да бъде обвързана с повече от една банкова сметка!';
+/** strBankAccountChangesNotSaved (03a 7.2): shown with strErrorAccountWithMultipleBankAccounts; the apply is aborted. */
+const BANK_ACCOUNTS_NOT_SAVED = "Промените в 'Банкови сметки' не са запазени.";
+export const PARTNER_GROUP_MESSAGES = {
+  strDeletePartnerGroupFailed: 'Изтриването на група {0} беше неуспешно. Вероятно в тази група или в нейна подгрупа се съдържат един или повече партньори!',
+} as const;
+
+/**
+ * spDeleteCompanyGroup (03a 2.7): the remaining (deleted) partners move to the
+ * root and the row is deleted. A partner or subgroup that appeared after the
+ * checks (another user) fails the delete with strDeletePartnerGroupFailed.
+ */
+export async function deletePartnerGroup(tx: DbOrTx, id: number) {
+  const [g] = await tx.select().from(s.companyGroups).where(eq(s.companyGroups.id, id)).for('update');
+  if (!g) throw notFound('Групата');
+  const [busy] = await queryRows<{ n: number }>(tx, sql`
+    select (select count(*) from company_groups where is_deleted = false and parent_id = ${id})::int
+         + (select count(*) from companies where is_deleted = false and group_id = ${id})::int as n`);
+  if (busy!.n > 0) throw new ApiError(422, formatMessage(PARTNER_GROUP_MESSAGES.strDeletePartnerGroupFailed, g.name), [
+    { key: 'strDeletePartnerGroupFailed', text: formatMessage(PARTNER_GROUP_MESSAGES.strDeletePartnerGroupFailed, g.name), severity: 'critical' },
+  ]);
+  await tx.update(s.companies).set({ groupId: 1 }).where(eq(s.companies.groupId, id));
+  await tx.delete(s.companyGroups).where(eq(s.companyGroups.id, id));
+  await rebuildGroupTree(tx);
+}
+
 /** 03a 7.2: among normal (and among online) bank accounts a ledger account is linked at most once. */
 export function hasLedgerAccountTwice(rows: { bankStatementAccountId?: number | null; isOnlineAccount?: boolean | null }[]) {
   const seen = new Set<string>();
@@ -421,10 +449,7 @@ export const nomenclatureRoutes = new Hono<AppEnv>()
     if (subs.length) throw badRequest('Избраната група не може да бъде изтрита, тъй като съдържа подгрупи!');
     const members = await db.select({ id: s.companies.id }).from(s.companies).where(and(eq(s.companies.groupId, id), eq(s.companies.isDeleted, false))).limit(1);
     if (members.length) throw badRequest('Избраната група не може да бъде изтрита, тъй като не е празна!');
-    await db.transaction(async (tx) => {
-      await tx.delete(s.companyGroups).where(eq(s.companyGroups.id, id));
-      await rebuildGroupTree(tx);
-    });
+    await db.transaction((tx) => deletePartnerGroup(tx, id));
     return c.json({ ok: true });
   })
 
@@ -521,7 +546,10 @@ export const nomenclatureRoutes = new Hono<AppEnv>()
       if (!ba.account.trim()) m3('strBankAccountNumberIsEmpty', 'Не е попълнен IBAN!', 'critical');
       else if (!isValidIban(ba.account)) m3('strInvalidIBAN', 'Въведен е невалиден IBAN!');
     }
-    if (hasLedgerAccountTwice(b.bankAccounts)) m3('strErrorAccountWithMultipleBankAccounts', LEDGER_TWICE, 'critical');
+    if (hasLedgerAccountTwice(b.bankAccounts)) {
+      m3('strErrorAccountWithMultipleBankAccounts', LEDGER_TWICE, 'critical');
+      m3('strBankAccountChangesNotSaved', BANK_ACCOUNTS_NOT_SAVED, 'critical');
+    }
     if (msgs.some((m) => m.severity === 'critical')) throw new ApiError(422, 'Данните не могат да бъдат записани:', msgs);
     const [m] = await db.select().from(s.myCompany).limit(1);
     const { addresses, bankAccounts, ...fields } = b;

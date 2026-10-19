@@ -123,6 +123,19 @@ describe('chart of accounts rules (03a 1.5-1.9)', () => {
     await call('PUT', `/accounts/${r.body.id}`, { isForBanks: true });
     expect((await call('PUT', `/accounts/${r.body.id}`, { description: 'Банка 2' })).body.isForBanks).toBe(true);
   });
+  it('a new non-material account cannot sit next to material analytics (strAnalyticAccountsExistOnTheSameLevelError, 03a 1.6)', async () => {
+    // The commercial template attaches no category to 302 (01a 6.3): Материали (1) makes it a product account.
+    expect((await call('PUT', `/accounts/${t.acc('302')}`, { accountCategoryId: 1 })).status).toBe(200);
+    const mat = await add('302', { description: 'Брашно', accountType: 'material', measure: 'кг.' });
+    expect(mat.status, mat.text).toBe(201);
+    const plain = await add('302', { description: 'Обикновена' });
+    expect([plain.status, keys(plain)]).toEqual([422, ['strAnalyticAccountsExistOnTheSameLevelError']]);
+    expect(plain.body.messages[0].text).toBe('Сметката не може да бъде създадена. На същото ниво съществуват една или повече аналитични подсметки.');
+    expect(keys(await add('302', { description: 'Валутна', accountType: 'currency', currencyId: 1 }))).toContain('strAnalyticAccountsExistOnTheSameLevelError');
+    // Another material analytic is fine; so is a plain sub-account where no material one exists.
+    expect((await add('302', { description: 'Захар', accountType: 'material', measure: 'кг.' })).status).toBe(201);
+    expect((await add('602', { description: 'Обикновена' })).status).toBe(201);
+  });
 });
 
 describe('chart-of-accounts templates (01a 7, 03a 1.3-1.4)', { timeout: 120_000 }, () => {

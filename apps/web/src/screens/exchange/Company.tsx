@@ -81,11 +81,12 @@ export function RestoreScreen() {
   const [file, setFile] = useState<File | null>(null);
   const [mode, setMode] = useState<'new' | 'current'>('new');
   const [busy, setBusy] = useState(false);
+  const [zipPassword, setZipPassword] = useState('');
   const restore = async (src: { id: number } | { file: File }) => {
     if (mode === 'current' && !(await dialogs.confirm('Данните на текущата фирма ще бъдат заменени с данните от архива. Продължаване?'))) return;
     setBusy(true);
     try {
-      const r = 'id' in src ? await api.post<{ message: string }>('/backups/restore', { id: src.id, mode }) : await upload<{ message: string }>('/backups/restore', src.file, { mode });
+      const r = 'id' in src ? await api.post<{ message: string }>('/backups/restore', { id: src.id, mode }) : await upload<{ message: string }>('/backups/restore', src.file, { mode, zipPassword: zipPassword || undefined });
       await dialogs.alert(r.message);
       await qc.invalidateQueries();
     } catch (e) {
@@ -104,7 +105,10 @@ export function RestoreScreen() {
               <label className="flex items-center gap-1.5"><input type="radio" checked={mode === 'current'} onChange={() => setMode('current')} /> В текущата фирма (данните се заменят)</label>
             </div>
             <div className="flex items-center gap-3">
-              <FileInput file={file} onChange={setFile} accept=".shbak" label="Архивен файл..." />
+              <FileInput file={file} onChange={setFile} accept=".shbak,.zip" label="Архивен файл..." />
+              {file?.name.toLowerCase().endsWith('.zip') && (
+                <TextInput type="password" className="w-48" aria-label="Парола на архива" placeholder="Парола на архива" autoComplete="off" value={zipPassword} onChange={(e) => setZipPassword(e.target.value)} />
+              )}
               <Button variant="primary" disabled={!file || busy} onClick={() => file && restore({ file })}>Възстановяване от файл</Button>
             </div>
           </div>

@@ -51,7 +51,7 @@ export function CashBook() {
       report={report}
       isEmpty={() => false}
       status={(d) => `${d.rows.length} реда`}
-      csvName={`Касова книга_${a.account.replace(/\//g, '-')}_${a.from}_${a.to}`}
+      csvName={`${fc ? 'КасКнига валутна' : 'КасКнига'}_${a.account.replace(/\//g, '-')}_${a.from}_${a.to}`}
       csv={csv}
       filters={
         <>

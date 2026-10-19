@@ -170,12 +170,30 @@ export interface SendInput {
   attachment?: { fileName: string; contentBase64: string } | null;
 }
 
-async function send(c: SmtpConfig, input: SendInput, company: string) {
+/** Sender display name and signature (EmailUserName / EmailSignature, 06 3.2). */
+export interface SenderIdentity { userName?: string; signature?: string }
+
+/** The text with the signature below it (one blank line between). */
+export function withSignature(body: string | null | undefined, signature?: string) {
+  const text = (body ?? '').trimEnd();
+  const sig = signature?.trim();
+  if (!sig) return body ?? '';
+  return text ? `${text}\n\n${sig}` : sig;
+}
+
+/** "Name" <address> when a display name is set. */
+export function senderAddress(email: string, userName?: string) {
+  const name = userName?.replace(/["\r\n<>]/g, '').trim();
+  return name ? `"${name}" <${email}>` : email;
+}
+
+async function send(c: SmtpConfig, input: SendInput, company: string, sender: SenderIdentity = {}) {
   const to = parseEmailList(input.to);
   const cc = parseEmailList(input.cc);
   const attachments = input.attachment ? [{ filename: input.attachment.fileName, content: Buffer.from(input.attachment.contentBase64, 'base64') }] : [];
   const sizes = attachments.map((a) => ({ filename: a.filename, size: a.content.length }));
-  const message = { from: c.email, to, cc, subject: input.subject.trim(), text: input.body ?? '', attachments };
+  const from = senderAddress(c.email, sender.userName);
+  const message = { from, to, cc, subject: input.subject.trim(), text: withSignature(input.body, sender.signature), attachments };
   try {
     await transport(c).sendMail(message);
   } catch (e) {
@@ -183,7 +201,7 @@ async function send(c: SmtpConfig, input: SendInput, company: string) {
     throw new ApiError(422, EMAIL_MESSAGES.strEmailSendingFailed, [{ key: 'strEmailSendingFailed', text: EMAIL_MESSAGES.strEmailSendingFailed, severity: 'critical' }]);
   }
   if (transportFactory || process.env.MAIL_TRANSPORT === 'json') {
-    MAIL_OUTBOX.push({ from: c.email, to, cc, subject: message.subject, text: message.text, attachments: sizes });
+    MAIL_OUTBOX.push({ from, to, cc, subject: message.subject, text: message.text, attachments: sizes });
     if (MAIL_OUTBOX.length > 50) MAIL_OUTBOX.shift();
   }
 }
@@ -193,12 +211,12 @@ const notConfigured = (): never => {
 };
 
 /** "Изпращане по e-mail" of a report: validation (strInvalidEmailTo / CC), then the company SMTP server. */
-export async function sendReportEmail(db: DbOrTx, input: SendInput, company: string) {
+export async function sendReportEmail(db: DbOrTx, input: SendInput, company: string, sender: SenderIdentity = {}) {
   const errors = validateReportEmail({ to: input.to, cc: input.cc, subject: input.subject });
   if (errors.length) fail(errors);
   const c = await loadSmtpConfig(db);
   if (!c) notConfigured();
-  await send(c!, input, company);
+  await send(c!, input, company, sender);
   return { message: EMAIL_MESSAGES.strEmailSendSuccessfully };
 }
 

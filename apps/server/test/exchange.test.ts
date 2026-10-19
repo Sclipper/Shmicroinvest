@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
 import ExcelJS from 'exceljs';
 import * as XLSX from 'xlsx';
-import { BACKUP_FORMAT_VERSION, CHANNEL, DOCUMENT_TYPE, formatTextImportLine, parseTransferXml, writeTransferXml, type TransferData } from '@shmi/core';
+import { BACKUP_FORMAT_VERSION, CHANNEL, DOCUMENT_TYPE, formatTextImportLine, isZip, parseTransferXml, unzipStore, writeTransferXml, type TransferData } from '@shmi/core';
 import { createTestCompany, type TestCompany } from './helpers.ts';
 import { encodeBackup } from '../src/services/exchange/backup.ts';
 import { encodeLogicalDump, logicalDump } from '../src/db/logicalDump.ts';
@@ -550,6 +550,39 @@ describe('backup, restore, delete company (01b 2)', { timeout: 60_000 }, () => {
     expect(del.status, del.text).toBe(200);
     expect((await call('GET', '/companies')).body.map((c: { name: string }) => c.name)).not.toContain(restoredDb);
     expect((await call('GET', '/backups')).body.length).toBeGreaterThanOrEqual(2); // automatic backup before deleting
+  });
+
+  it('downloads the backup in a password-protected ZIP and restores from it (ZipPassword, 06 3.2)', async () => {
+    // Enabling the protection without a password is refused.
+    const missing = await call('PUT', '/settings/user', { IsZipPasswordEnabled: 'True' });
+    expect([missing.status, missing.body.error]).toEqual([400, 'Въведете парола за ZIP архивите.']);
+    expect((await call('PUT', '/settings/user', { IsZipPasswordEnabled: 'True', ZipPassword: 'arhiv-2026' })).status).toBe(200);
+    const settings = (await call('GET', '/settings/user')).body;
+    expect(settings).toMatchObject({ IsZipPasswordEnabled: 'True', HasZipPassword: 'True' });
+    expect(settings.ZipPassword).toBeUndefined();
+    const home = t.session.get();
+    try {
+      const b = await call('POST', '/backups');
+      const file = await raw(t, 'GET', `/backups/${b.body.id}/download`);
+      expect(file.status).toBe(200);
+      expect(file.headers.get('content-disposition')).toContain(encodeURIComponent(`${b.body.fileName}.zip`));
+      expect(isZip(file.bytes)).toBe(true);
+      expect([...unzipStore(file.bytes, 'arhiv-2026').keys()]).toEqual([b.body.fileName]);
+      const upload = (zipPassword?: string) => call('POST', '/backups/restore', { fileName: `${b.body.fileName}.zip`, contentBase64: Buffer.from(file.bytes).toString('base64'), mode: 'new', zipPassword });
+      const wrong = await upload('greshna');
+      expect([wrong.status, keys(wrong)]).toEqual([422, ['strInvalidZipPassword']]);
+      // Without a typed password the user's own ZipPassword opens it.
+      const r = await upload();
+      expect(r.status, r.text).toBe(200);
+      t.session.set(home);
+      expect((await call('POST', `/companies/${r.body.database}/delete`, { userId: 1, password: 'secret1' })).status).toBe(200);
+    } finally {
+      t.session.set(home);
+      await call('PUT', '/settings/user', { IsZipPasswordEnabled: 'False' });
+    }
+    // Off again: the plain backup file.
+    const plain = await raw(t, 'GET', `/backups/${(await call('POST', '/backups')).body.id}/download`);
+    expect(isZip(plain.bytes)).toBe(false);
   });
 
   it('a company sees only its own stored backups', async () => {

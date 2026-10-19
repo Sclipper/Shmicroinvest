@@ -162,7 +162,7 @@ test.describe('data exchange', () => {
     // Accounts by category are asked only when the file has categories without an account.
     if (await tab.getByRole('button', { name: 'Напред' }).isVisible()) await tab.getByRole('button', { name: 'Напред' }).click();
     await expect(tab.getByRole('row', { name: /Контирания\s*2/ })).toBeVisible();
-    await tab.getByText('Закриване на документи след импорта').click();
+    await tab.getByText('Автоматично обвързване на разплащания след импорт').click();
     await tab.getByLabel('Начин на търсене').selectOption('amount');
     await tab.getByRole('button', { name: 'Импорт', exact: true }).click();
     await expect(tab.getByText(/контирания: 2\. Закрити двойки документи: [1-9]/)).toBeVisible();

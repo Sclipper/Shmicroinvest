@@ -1,7 +1,10 @@
+import type { DictionaryField } from '@shmi/core';
 export interface Message {
   key: string;
   text: string;
   severity: 'critical' | 'warning';
+  /** Add-to-list questions (03a 8.1): the header field of the new text. */
+  field?: DictionaryField;
 }
 
 export class ApiError extends Error {

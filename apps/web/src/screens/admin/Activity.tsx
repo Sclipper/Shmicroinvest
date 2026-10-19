@@ -63,7 +63,7 @@ export function Activity() {
       report={report}
       isEmpty={(d) => d.rows.length === 0}
       status={(d) => `${d.rows.length} ${d.type === 'documents' ? 'потребители' : 'записа'}`}
-      csvName={`ДействияПотребители_${a.from}_${a.to}`}
+      csvName={`${a.type === 'documents' ? 'Брой обработени документи' : 'Действия потребители'}_${a.from}_${a.to}`}
       csv={csv}
       filters={
         <>

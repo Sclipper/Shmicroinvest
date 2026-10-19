@@ -1,4 +1,4 @@
-import { crc32, zipStore } from './zip.ts';
+import { crc32, zipCryptoDecrypt, ZipPasswordError, zipStore } from './zip.ts';
 /**
  * Minimal Office Open XML workbook writer (spec 05 11.1, Excel export of the
  * report grids). Produces a real .xlsx: a ZIP archive (stored, no
@@ -105,7 +105,8 @@ export function buildXlsx(sheets: XlsxSheet[]): Uint8Array {
 }
 
 /** Reads the entries of a stored ZIP (used by tests and to verify exports). */
-export function unzipStore(data: Uint8Array): Map<string, Uint8Array> {
+/** Reads stored (uncompressed) entries; encrypted entries (ZipCrypto) need `password`. */
+export function unzipStore(data: Uint8Array, password?: string | null): Map<string, Uint8Array> {
   const out = new Map<string, Uint8Array>();
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const dec = new TextDecoder();
@@ -116,8 +117,17 @@ export function unzipStore(data: Uint8Array): Map<string, Uint8Array> {
     const extra = view.getUint16(p + 28, true);
     const name = dec.decode(data.subarray(p + 30, p + 30 + nameLen));
     const start = p + 30 + nameLen + extra;
-    const body = data.subarray(start, start + size);
-    if (crc32(body) !== view.getUint32(p + 14, true)) throw new Error(`CRC mismatch in ${name}`);
+    const flags = view.getUint16(p + 6, true);
+    const crc = view.getUint32(p + 14, true);
+    let body = data.subarray(start, start + size);
+    if (flags & 1) {
+      if (!password) throw new ZipPasswordError('missing');
+      body = zipCryptoDecrypt(body, password, flags & 0x08 ? view.getUint8(p + 11) : crc >>> 24);
+    }
+    if (crc32(body) !== crc) {
+      if (flags & 1) throw new ZipPasswordError('wrong');
+      throw new Error(`CRC mismatch in ${name}`);
+    }
     out.set(name, body);
     p = start + size;
   }

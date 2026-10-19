@@ -36,7 +36,7 @@ export function ConfirmationLetter() {
       report={report}
       isEmpty={(d) => d.letters.length === 0}
       status={(d) => `${d.letters.length} писма`}
-      csvName={`Потвърдително писмо_${a.to}`}
+      csvName={`${fc ? 'Потвърдително писмо валута' : 'Потвърдително писмо'}_${a.to}`}
       csv={csv}
       filters={
         <>

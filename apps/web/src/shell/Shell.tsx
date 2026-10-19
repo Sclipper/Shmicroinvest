@@ -4,6 +4,7 @@ import {
   Banknote, BookOpen, Building2, CalendarDays, ChartColumn, ChevronRight, ClipboardList, FileCheck2, FilePlus2, FileText, HandCoins, LayoutTemplate, Library, ListTree,
   LogOut, Percent, RefreshCw, Scale, ScrollText, SearchCheck, Settings, Users, X, type LucideIcon,
 } from 'lucide-react';
+import { formatMessage, YEAR_MESSAGES } from '@shmi/core';
 import { api } from '../api.ts';
 import { bgDate } from '../format.ts';
 import { useCan, useSession } from '../session.tsx';
@@ -390,6 +391,7 @@ const LOSE_CHANGES = 'Има незаписани промени, които щ�
 function StatusBar({ onCommand }: { onCommand: (c: Cmd) => void }) {
   const s = useSession();
   const can = useCan();
+  const dialogs = useDialogs();
   const [editDate, setEditDate] = useState(false);
   const [editBranch, setEditBranch] = useState(false);
   const [editYear, setEditYear] = useState(false);
@@ -403,7 +405,8 @@ function StatusBar({ onCommand }: { onCommand: (c: Cmd) => void }) {
     <footer className="flex items-center gap-px border-t border-slate-300 bg-slate-200 text-[12px] text-slate-700">
       <Cell label="Потребител" onClick={can('UI_Edit_Administration_ChangeActiveUser') ? () => onCommand('changeUser') : undefined}>{s.user.name}</Cell>
       <Cell label="Фирма" onClick={can('UI_File_ChooseCompany') ? () => onCommand('chooseCompany') : undefined}>{s.company.name}</Cell>
-      <Cell label="Година" onClick={can('UI_Edit_ChangeActiveFinancialYear') ? () => setEditYear(true) : undefined}>
+      {/* Without UI_Edit_ChangeActiveFinancialYear the year cell only tells the year (strCurrentFinancialYearInfo, 01b 5). */}
+      <Cell label="Година" onClick={can('UI_Edit_ChangeActiveFinancialYear') ? () => setEditYear(true) : () => void dialogs.alert(formatMessage(YEAR_MESSAGES.strCurrentFinancialYearInfo, s.year.year))}>
         {s.year.year}
         {s.year.isLocked && ' 🔒'}
       </Cell>

@@ -3,7 +3,7 @@ import {
   accountingLastProcessedDate, amountByDate, ASSET_MESSAGES, assetMessage, D, dec, DEPRECIATION_CATEGORY, deriveMethod,
   endOfMonth, firstEditableMonthDate as firstEditable, firstOfMonth, fmtMsg, generateSchedule, hasCritical, isLeaf,
   isMonthLocked, isStartMonthIncluded, monthIndex, monthLabelBg, monthsFromRate, NO_END_DATE, planMainDifferences, rateFromMonths, sum,
-  taxLastProcessedDate, validatePlan, yearPlans, ZERO, assetFromPosting, fixedAssetOffer, isCompanyCategory, type Dec, type MonthAmount, type ValidationMessage,
+  taxLastProcessedDate, validatePlan, yearPlans, ZERO, assetFromPosting, fixedAssetOffer, isCompanyCategory, type Dec, type DepreciationMonthStatus, type MonthAmount, type ValidationMessage,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import type { DbOrTx } from '../db/provider.ts';
@@ -638,7 +638,8 @@ export async function assetPrefillFromPosting(db: DbOrTx, accountingId: number) 
 /* Views                                                               */
 /* ------------------------------------------------------------------ */
 
-export type MonthStatus = 'normal' | 'posted' | 'postedDifferent' | 'readOnly';
+/** Stored month states (03b 6.1); 'disabled' = no row, drawn by the grid. */
+export type MonthStatus = Exclude<DepreciationMonthStatus, 'disabled'>;
 
 export function planView(p: ComputedPlan, stored: StoredPlan | undefined, locks: LockInfo, hasStoredRows = Boolean(stored?.rows.length)) {
   const byMonth = new Map((stored?.rows ?? []).map((r) => [r.month, r]));

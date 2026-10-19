@@ -253,4 +253,37 @@ describe('api', () => {
     expect((await call('PUT', '/years/active', { year: 2026 })).status).toBe(200);
     expect((await call('DELETE', `/entries/${e.id}`)).status).toBe(200);
   });
+
+  it('asks before a weak password and warns on none instead of refusing them (01b 3.4)', async () => {
+    const weak = await call('POST', '/users', { name: 'Слаба парола', password: '123', roleId: 5 });
+    expect([weak.status, weak.body.code, weak.body.messages.map((m: { key: string }) => m.key)]).toEqual([409, 'confirm', ['strPasswordNotSecure']]);
+    expect(weak.body.error).toBe('Въведената парола не отговаря на изискванията за "силна" парола. Желаете ли продължение?');
+    const saved = await call('POST', '/users', { name: 'Слаба парола', password: '123', roleId: 5, force: true });
+    expect(saved.status, saved.text).toBe(201);
+    const none = await call('POST', '/users', { name: 'Без парола', roleId: 5 });
+    expect([none.status, none.body.messages.map((m: { key: string; severity: string }) => [m.key, m.severity])]).toEqual([409, [['strUserPasswordMissing', 'warning']]]);
+    const empty = await call('POST', '/users', { name: 'Без парола', roleId: 5, force: true });
+    expect(empty.status, empty.text).toBe(201);
+    expect(((await call('GET', '/users')).body as { id: number; hasPassword: boolean }[]).find((u) => u.id === empty.body.id)!.hasPassword).toBe(false);
+    // Changing to a weak password asks too; a strong one goes through.
+    expect((await call('PUT', `/users/${saved.body.id}`, { name: 'Слаба парола', roleId: 5, password: 'abc' })).status).toBe(409);
+    expect((await call('PUT', `/users/${saved.body.id}`, { name: 'Слаба парола', roleId: 5, password: 'abcdef' })).status).toBe(200);
+    // Users are added in a group, not in the base group; groups only under the base group.
+    const base = await call('POST', '/users', { name: 'В основната група', password: 'parola1', roleId: 1 });
+    expect([base.status, base.body.error]).toEqual([400, 'Не може да създавате подгрупи в тази група']);
+    const sub = await call('POST', '/roles', { name: 'Подгрупа', parentId: 5 });
+    expect([sub.status, sub.body.error]).toEqual([400, 'Не може да създавате подгрупи в тази група']);
+    expect((await call('POST', '/roles', { name: 'Под основната', parentId: 1 })).status).toBe(201);
+    for (const id of [saved.body.id, empty.body.id]) expect((await call('DELETE', `/users/${id}`)).status).toBe(200);
+  });
+
+  it('a company with one user cannot lose it (strUserCountValidation, 01b 3.4)', async () => {
+    const saved = t.session.get();
+    const r = await call('POST', '/companies', { companyName: 'Един потребител ООД', adminName: 'Самичък', adminPassword: 'secret1', year: 2026, bulstat: '175074752' });
+    expect(r.status, r.text).toBe(201);
+    expect((await call('GET', '/users')).body).toHaveLength(1);
+    const del = await call('DELETE', '/users/1');
+    expect([del.status, del.body.messages?.[0]?.key, del.body.error]).toEqual([422, 'strUserCountValidation', 'Въведен е само един потребител...']);
+    t.session.set(saved);
+  });
 });

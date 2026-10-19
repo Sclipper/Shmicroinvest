@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { zValidator } from '../lib/validate.ts';
 import { z } from 'zod';
 import { and, asc, eq, ne, sql } from 'drizzle-orm';
-import { resolvePermission } from '@shmi/core';
+import { resolvePermission, USER_SCREEN_MESSAGES, userPasswordChecks } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import type { AppEnv } from '../context.ts';
 import type { DbOrTx } from '../db/provider.ts';
@@ -15,10 +15,18 @@ import { recordPasswordQuality } from '../services/gdpr.ts';
 const ADMIN_ROLE = 2;
 
 export const USER_MESSAGES = {
-  strUserHasOperations: 'Потребителят не може да бъде изтрит, тъй като участва в операции!',
-  strUserNameExists: 'Вече съществува потребител с такова име.',
+  ...USER_SCREEN_MESSAGES,
   strLastAdministrator: 'Трябва да има поне един потребител администратор.',
 } as const;
+
+/**
+ * strUserPasswordMissing (warns) / strPasswordNotSecure (confirm), 01b 3.4:
+ * a 409 "confirm" unless the client resends with `force`.
+ */
+function confirmPassword(password: string, force?: boolean) {
+  const checks = userPasswordChecks(password);
+  if (checks.length && !force) throw new ApiError(409, checks[0]!.text, checks, 'confirm');
+}
 
 /** Unique-index violation (23505), as raised by node-postgres and PGlite, possibly wrapped by drizzle. */
 function isUniqueViolation(e: unknown): boolean {
@@ -54,15 +62,16 @@ export const userRoutes = new Hono<AppEnv>()
 
   .post('/users', requirePermission(USERS), zValidator('json', z.object({
     name: z.string().trim().min(1, 'Не е въведено име на потребителя.').max(255),
-    password: z.string().max(200),
+    password: z.string().max(200).default(''),
     roleId: z.number().int(),
     email: z.string().max(255).nullable().optional(),
+    force: z.boolean().optional(),
   })), async (c) => {
     const { db, user } = c.var;
     const b = c.req.valid('json');
-    if (!isStrongPassword(b.password)) throw badRequest('Паролата трябва да е поне 6 символа.');
     if (await nameTaken(db, b.name)) throw badRequest(USER_MESSAGES.strUserNameExists);
-    if (b.roleId === 1) throw badRequest('Изберете потребителска група.');
+    if (b.roleId === 1) throw badRequest(USER_MESSAGES.strSelectBaseUserRoleToAddUserOrRole);
+    confirmPassword(b.password, b.force);
     const passwordHash = await hashPassword(b.password);
     const [row] = await guardName(() => db.insert(s.users).values({ name: b.name, passwordHash, userRoleId: b.roleId, email: b.email ?? null }).returning());
     await recordPasswordQuality(db, row!.id, b.password);
@@ -75,17 +84,18 @@ export const userRoutes = new Hono<AppEnv>()
     roleId: z.number().int(),
     email: z.string().max(255).nullable().optional(),
     password: z.string().max(200).optional(),
+    force: z.boolean().optional(),
   })), async (c) => {
     const { db, user } = c.var;
     const id = Number(c.req.param('id'));
     const b = c.req.valid('json');
     const [u] = await db.select().from(s.users).where(eq(s.users.id, id));
     if (!u) throw notFound('Потребителят');
-    if (b.roleId === 1) throw badRequest('Изберете потребителска група.');
+    if (b.roleId === 1) throw badRequest(USER_MESSAGES.strSelectBaseUserRoleToAddUserOrRole);
     if (await nameTaken(db, b.name, id)) throw badRequest(USER_MESSAGES.strUserNameExists);
     const patch: Partial<typeof s.users.$inferInsert> = { name: b.name, userRoleId: b.roleId, email: b.email ?? null };
     if (b.password !== undefined) {
-      if (!isStrongPassword(b.password)) throw badRequest('Паролата трябва да е поне 6 символа.');
+      confirmPassword(b.password, b.force);
       patch.passwordHash = await hashPassword(b.password);
     }
     await guardName(() => db.transaction(async (tx) => {
@@ -101,6 +111,8 @@ export const userRoutes = new Hono<AppEnv>()
   .delete('/users/:id', requirePermission(USERS), async (c) => {
     const { db, user } = c.var;
     const id = Number(c.req.param('id'));
+    const [{ n }] = (await db.select({ n: sql<number>`count(*)::int` }).from(s.users).where(eq(s.users.isDeleted, false))) as [{ n: number }];
+    if (n <= 1) throw new ApiError(422, USER_MESSAGES.strUserCountValidation, [{ key: 'strUserCountValidation', text: USER_MESSAGES.strUserCountValidation, severity: 'critical' }]);
     if (id === user.id) throw badRequest('Не можете да изтриете активния потребител.');
     const [u] = await db.select().from(s.users).where(eq(s.users.id, id));
     if (!u) throw notFound('Потребителят');
@@ -130,9 +142,11 @@ export const userRoutes = new Hono<AppEnv>()
   // ---- Roles ----
   .get('/roles', async (c) => c.json(await c.var.db.select().from(s.userRoles).orderBy(asc(s.userRoles.leftIndex))))
 
-  .post('/roles', requirePermission(USERS), zValidator('json', z.object({ name: z.string().trim().min(1).max(50), copyFromId: z.number().int().optional() })), async (c) => {
+  .post('/roles', requirePermission(USERS), zValidator('json', z.object({ name: z.string().trim().min(1).max(50), copyFromId: z.number().int().optional(), parentId: z.number().int().optional() })), async (c) => {
     const { db } = c.var;
     const b = c.req.valid('json');
+    // Groups are one level under the base group "Потребителски групи" (01b 3.4).
+    if (b.parentId !== undefined && b.parentId !== 1) throw badRequest(USER_MESSAGES.strSelectBaseUserRoleToAddUserOrRole);
     const id = await db.transaction(async (tx) => {
       const [r] = await tx.insert(s.userRoles).values({ name: b.name, parentId: 1 }).returning();
       if (b.copyFromId) {

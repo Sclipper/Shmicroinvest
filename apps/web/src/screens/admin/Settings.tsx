@@ -8,6 +8,7 @@ import { Button, Checkbox, CommandBar, Empty, Panel, Select, Spinner, TextInput,
 import { useCan, useInvalidate, useLookups } from '../../session.tsx';
 import { DatabasePage, DocumentTypesPage, SequencesPage, useSettingsPages } from '../settings/SettingsPages.tsx';
 import { SmtpPage } from '../settings/SmtpPage.tsx';
+import { LocalPage } from '../settings/LocalPage.tsx';
 
 interface Setting { key: string; label: string; value: string; default: string }
 
@@ -148,6 +149,7 @@ export function Settings() {
         {page === 'sequences' && <SequencesPage />}
         {page === 'documents' && <DocumentTypesPage />}
         {page === 'smtp' && <SmtpPage />}
+        {page === 'local' && <LocalPage />}
       </div>
     </div>
   );

@@ -9,6 +9,7 @@ import { logActivity } from '../services/audit.ts';
 import { shellNotices } from '../services/notices.ts';
 import { activityDocuments, activityLog } from '../services/userActivities.ts';
 import { saveSmtpSettings, sendReportEmail, sendTestEmail, smtpSettingsView } from '../services/email.ts';
+import { emailIdentity } from '../services/localSettings.ts';
 
 const ACTIVITY_REPORT = 'UI_Reporting_UsersActivitiesReport';
 /** Report e-mail: the report's permission by its activity-log entity, recipients and hourly limit per user. */
@@ -113,7 +114,7 @@ export const shellExtraRoutes = new Hono<AppEnv>()
     const recent = (sentAt.get(rateKey) ?? []).filter((t) => now - t < 3_600_000);
     if (recent.length >= MAX_PER_HOUR) throw new ApiError(429, 'Достигнат е лимитът за изпращане на e-mail. Опитайте отново по-късно.');
     sentAt.set(rateKey, [...recent, now]);
-    const r = await sendReportEmail(c.var.db, b, c.var.session.companyDb ?? '');
+    const r = await sendReportEmail(c.var.db, b, c.var.session.companyDb ?? '', await emailIdentity(c.var.db, c.var.user.id));
     await logActivity(c.var.db, c.var.user.id, 'export', b.entityType ?? 'report', null, `${b.report ?? b.attachment.fileName}: e-mail до ${b.to}`);
     return c.json(r);
   });

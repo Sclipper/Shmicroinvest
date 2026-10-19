@@ -28,8 +28,39 @@ export function moduleCompany(m: ModuleKey) {
   return { name, state: moduleState(m), openApp: (page: Page) => openApp(page, name) };
 }
 
+/**
+ * Specs that post through the entry editor type terms of their own: the
+ * add-to-list question of a new term/reference/paragraph (strAdd...Confirmation,
+ * 03a 8.1) is answered "Да" in the page as soon as it shows (also while a spec
+ * waits on the API, where a Playwright locator handler would not run). A spec
+ * that checks the question itself calls keepAddToListPrompt(page) first.
+ */
+export async function acceptAddToList(page: Page) {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __addToListObserver?: boolean; __keepAddToListPrompt?: boolean };
+    if (w.__addToListObserver) return;
+    w.__addToListObserver = true;
+    const re = /Прибавяне на (основанието|забележката|параграфа) към списъка/;
+    new MutationObserver(() => {
+      if (w.__keepAddToListPrompt) return;
+      for (const d of document.querySelectorAll('[role="dialog"]')) {
+        if (!re.test(d.textContent ?? '')) continue;
+        [...d.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Да')?.click();
+      }
+    }).observe(document, { childList: true, subtree: true });
+  });
+}
+
+/** Turns the automatic "Да" of acceptAddToList off for this page. */
+export async function keepAddToListPrompt(page: Page) {
+  await page.evaluate(() => {
+    (window as unknown as { __keepAddToListPrompt?: boolean }).__keepAddToListPrompt = true;
+  });
+}
+
 /** Opens the app and waits for the shell. */
 export async function openApp(page: Page, company: string = COMPANY.name) {
+  await acceptAddToList(page);
   await page.goto('/');
   await expect(page.locator('footer')).toContainText(company);
 }
@@ -42,6 +73,7 @@ export async function chooseCompany(page: Page) {
 /** Logs in with a session of its own, for tests that switch user or company (they would end the shared session). */
 export async function loginFresh(page: Page) {
   await page.context().clearCookies();
+  await acceptAddToList(page);
   await page.goto('/');
   await chooseCompany(page);
   await page.getByLabel('Парола').fill(ADMIN.password);

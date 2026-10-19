@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { and, eq } from 'drizzle-orm';
-import { msg } from '@shmi/core';
+import { isZip, msg, zipStore } from '@shmi/core';
 import * as cat from '../db/catalog/schema.ts';
 import * as s from '../db/company/schema/index.ts';
 import type { AppEnv } from '../context.ts';
@@ -10,7 +10,8 @@ import { verifyPassword } from '../lib/password.ts';
 import { zValidator } from '../lib/validate.ts';
 import { createSession, requirePermission } from '../session.ts';
 import { logActivity } from '../services/audit.ts';
-import { backupData, createBackup, deleteBackup, deleteCompany, listBackups, restoreBackup, type BackupScope } from '../services/exchange/backup.ts';
+import { backupData, backupFromZip, createBackup, deleteBackup, deleteCompany, listBackups, restoreBackup, type BackupScope } from '../services/exchange/backup.ts';
+import { zipPasswordOf } from '../services/localSettings.ts';
 import { importStep, readUpload } from '../services/exchange/common.ts';
 import { convertDatabaseToEuro, euroMappingGrid } from '../services/exchange/euro.ts';
 
@@ -48,6 +49,9 @@ export const companyOpsRoutes = new Hono<AppEnv>()
   .get('/backups/:id/download', requirePermission('UI_File_BackupDatabase'), async (c) => {
     const row = await backupData(c.var.driver, Number(c.req.param('id')), scopeOf(c));
     if (!row) throw notFound('Архивът');
+    // ZipPassword / IsZipPasswordEnabled (06 3.2): the file goes out inside a password-protected ZIP.
+    const password = await zipPasswordOf(c.var.db, c.var.user.id);
+    if (password) return download(c, zipStore([{ name: row.fileName, data: row.data }], new Date(), password), `${row.fileName}.zip`);
     return download(c, row.data, row.fileName);
   })
   .delete('/backups/:id', requirePermission('UI_File_RestoreDatabaseBackup'), async (c) => {
@@ -67,8 +71,10 @@ export const companyOpsRoutes = new Hono<AppEnv>()
       mode = json.mode === 'current' ? 'current' : 'new';
     } else {
       const up = await readUpload(c);
-      bytes = up.bytes;
       mode = up.fields.mode === 'current' ? 'current' : 'new';
+      // A password-protected backup ZIP: the password typed with the upload, else the user's ZipPassword.
+      const typed = typeof up.fields.zipPassword === 'string' ? up.fields.zipPassword : null;
+      bytes = isZip(up.bytes) ? await importStep(async () => backupFromZip(up.bytes, typed || (await zipPasswordOf(c.var.db, c.var.user.id))), false) : up.bytes;
     }
     const current = c.var.session.companyDb!;
     const userId = c.var.user.id;

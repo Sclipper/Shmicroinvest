@@ -58,6 +58,10 @@ const entryBody = z.object({
   force: z.boolean().optional(),
   /** Entry editor: ask strAddAccountToCompanyConfirmation (409) and link the accounts with `force` (03a 2.9). */
   confirmAccountLinks: z.boolean().optional(),
+  /** Entry editor: ask strAdd{Term|Reference|Paragraph}Confirmation (409) for texts not in their list (03a 8.1). */
+  confirmTerms: z.boolean().optional(),
+  /** Texts the user declined to add to the list: stored hidden. */
+  hiddenTerms: z.array(z.enum(['term', 'reference', 'optionalReference', 'paragraph'])).optional(),
   /** Автоматично разплащане of the saved entry, in the same transaction. */
   payment: z.object({
     paymentAccountId: z.number().int().nullable(),
@@ -145,11 +149,11 @@ export const journalRoutes = new Hono<AppEnv>()
     c.json(await reversalDraft(c.var.db, Number(c.req.param('id')), workingDate(c.var.session))))
 
   .post('/entries', requirePermission(ADD), zValidator('json', entryBody), async (c) => {
-    const { force, payment, bindDocuments, confirmAccountLinks, ...input } = c.req.valid('json');
+    const { force, payment, bindDocuments, confirmAccountLinks, confirmTerms, hiddenTerms, ...input } = c.req.valid('json');
     const { db, year, user, session } = c.var;
     const ctx = { year, userId: user.id, branchId: session.state.branchId ?? 1 };
     const r = await db.transaction(async (tx) => {
-      const saved = await saveEntry(tx, input, { ...ctx, force, confirm: true, confirmAccountLinks });
+      const saved = await saveEntry(tx, input, { ...ctx, force, confirm: true, confirmAccountLinks, confirmTerms, hiddenTerms });
       await settle(tx, ctx, saved.id, input, payment, bindDocuments);
       return saved;
     });
@@ -157,11 +161,11 @@ export const journalRoutes = new Hono<AppEnv>()
   })
 
   .put('/entries/:id', requirePermission(EDIT), zValidator('json', entryBody), async (c) => {
-    const { force, payment, bindDocuments, confirmAccountLinks, ...input } = c.req.valid('json');
+    const { force, payment, bindDocuments, confirmAccountLinks, confirmTerms, hiddenTerms, ...input } = c.req.valid('json');
     const { db, year, user, session } = c.var;
     const ctx = { year, userId: user.id, branchId: session.state.branchId ?? 1 };
     const r = await db.transaction(async (tx) => {
-      const saved = await saveEntry(tx, input, { ...ctx, force, confirm: true, confirmAccountLinks }, Number(c.req.param('id')));
+      const saved = await saveEntry(tx, input, { ...ctx, force, confirm: true, confirmAccountLinks, confirmTerms, hiddenTerms }, Number(c.req.param('id')));
       await settle(tx, ctx, saved.id, input, payment, bindDocuments);
       return saved;
     });

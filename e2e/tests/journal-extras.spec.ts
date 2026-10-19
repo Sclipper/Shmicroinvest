@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { accountId, activeTab, api, menu, moduleCompany } from './fixtures.ts';
+import { accountId, activeTab, api, keepAddToListPrompt, menu, moduleCompany } from './fixtures.ts';
 
 const { openApp } = moduleCompany('journal');
 
@@ -53,6 +53,33 @@ test.describe('journal extras', () => {
     await fresh.getByLabel('Документ №').fill('E2E-T2');
     await fresh.getByRole('button', { name: 'Запис', exact: true }).click();
     await expect.poll(async () => (await entries(page, { documentNumber: 'E2E-T2' })).length).toBe(1);
+  });
+
+  test('a new term asks strAddTermConfirmation; Не and then Да saves it hidden from the list (03a 8.1)', async ({ page }) => {
+    await openApp(page);
+    await keepAddToListPrompt(page);
+    await page.keyboard.press('F2');
+    const tab = activeTab(page);
+    const stamp = Date.now();
+    const term = `Ново основание E2E ${stamp}`;
+    await tab.getByLabel('Документ №').fill(`E2E-AT-${stamp}`);
+    await tab.getByLabel('Основание').fill(term);
+    await pickAccount(page, 0, '602');
+    await pickAccount(page, 1, '503');
+    await tab.locator('td input.num').nth(0).fill('20');
+    await tab.getByRole('button', { name: 'Изравняване' }).click();
+    await tab.getByRole('button', { name: 'Запис', exact: true }).click();
+    const ask = page.getByRole('dialog');
+    await expect(ask).toContainText('Прибавяне на основанието към списъка с основания към контирания?');
+    await ask.getByRole('button', { name: 'Не', exact: true }).click();
+    const cancel = page.getByRole('dialog');
+    await expect(cancel).toContainText('Основанието няма да бъде прибавено към списъка с основания. Желаете ли да продължите?');
+    await cancel.getByRole('button', { name: 'Да', exact: true }).click();
+    await expect.poll(async () => (await entries(page, { documentNumber: `E2E-AT-${stamp}` })).map((e) => e.term)).toEqual([term]);
+    // Used by the entry, not offered in the list.
+    expect(await api<unknown[]>(page, 'GET', `/dictionary/terms?q=${encodeURIComponent(term)}`)).toHaveLength(0);
+    const all = await api<{ description: string; isHidden: boolean }[]>(page, 'GET', `/dictionary/terms?all=1&q=${encodeURIComponent(term)}`);
+    expect(all.map((x) => [x.description, x.isHidden])).toEqual([[term, true]]);
   });
 
   test('fast entry posts all rows at once (8.1)', async ({ page }) => {

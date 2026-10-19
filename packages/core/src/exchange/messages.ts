@@ -134,6 +134,9 @@ export const EXCHANGE_MESSAGES = {
   strErrorMDBUnrecognizedDatabaseFormat: 'Некоректен файлов формат!',
   strErrorReadingMDBFile: 'Грешка при четене на файла на Microinvest Делта: {0}', // no text
   strImportFromDeltaFailed: 'Неуспешен импорт от Microinvest Делта!', // no text
+  strImportFromDeltaFailedSeeErrLog: 'Неуспешен импорт от Microinvest Делта! Подробности за грешката има в дневника на приложението.', // no text
+  strCancelTransferWarning: 'Желаете ли да прекратите прехвърлянето?',
+  strTransferCancelled: 'Прехвърлянето е прекратено. Не са записани данни.', // no text (rebuild)
   DeltaConversionInvalidAccountError: 'Сметка {0} в таблица {1} с AccountingID = {2} е невалидна!',
   strDefaultPartner: 'Служебен партньор',
   // Rebuild texts (the conversion fails on these without a dictionary key).
@@ -205,6 +208,7 @@ export const EXCHANGE_MESSAGES = {
   strRestoreDatabaseBackupInDifferentDatabaseSucceded: 'Архивът е възстановен успешно като нова фирма „{0}“.', // no text
   strRestoreCompanyError: 'Възникна грешка при възстановяване на фирмата.', // no text
   strInvalidChoosenFilePathError: 'Избраният файл не е валиден архив на фирма.', // no text
+  strInvalidZipPassword: 'Архивът е защитен с парола. Въведената парола е грешна или липсва.', // no text (ZipPassword, 06 3.2)
   strInconsistentDatabaseVersion: 'Архивът е създаден с по-нова версия на програмата ({0}) и не може да бъде възстановен.', // no text
   strDBIncompatibleError: 'Промяната на активната фирма беше неуспешна. Версията на избраната фирма е несъвместима с тази версия на програмата. Моля, актуализирайте програмата.',
   strActiveCompanyInfo: 'Фирмата с която работите в момента е {0}, {1}.',

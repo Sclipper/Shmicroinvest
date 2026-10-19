@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
+import type { DepreciationMonthStatus } from '@shmi/core';
 import { Printer } from 'lucide-react';
 import { ApiError, api, type Message } from '../api.ts';
 import { Button, Field, Select, cx } from '../components/ui.tsx';
@@ -54,7 +55,8 @@ export interface AssetRow {
   synchronized: boolean;
 }
 
-export type MonthStatus = 'normal' | 'posted' | 'postedDifferent' | 'readOnly';
+/** A stored month's state; 'disabled' (no row) is drawn by the grid (03b 6.1). */
+export type MonthStatus = Exclude<DepreciationMonthStatus, 'disabled'>;
 
 export interface MonthView {
   month: string;

@@ -163,6 +163,44 @@ export function fmtMsg(text: string, ...args: (string | number)[]): string {
   return text.replace(/\{(\d+)\}/g, (_, i) => String(args[Number(i)] ?? ''));
 }
 
+/** Status-bar text while a plan is generated (03b 5.2). */
+export const strCreatingDepreciationSchedule = 'Съставяне на амортизационен план...';
+
+/**
+ * Month cell states of the plan grid (`strDepreciationMonthStatus*`, 03b 6.1):
+ * Normal (unposted), Accounted, accounted with a different amount, read-only
+ * (closed year / locked period) and Disabled (no depreciation charge, e.g. a
+ * month outside the plan or inside a conservation window).
+ */
+export type DepreciationMonthStatus = 'normal' | 'posted' | 'postedDifferent' | 'readOnly' | 'disabled';
+export const DEPRECIATION_MONTH_STATUS = {
+  normal: 'Нормално',
+  posted: 'Осчетоводено',
+  postedDifferent: 'Осчетоводено',
+  readOnly: 'Само за четене',
+  disabled: 'Няма амортизационно отчисление за този месец',
+} as const satisfies Record<DepreciationMonthStatus, string>;
+export const DEPRECIATION_MONTH_DETAIL = {
+  posted: 'с контиране №{0} от дата {1}',
+  postedDifferent: 'има контиране №{0}, с различна сума ({1:F2})',
+  readOnly: 'от приключена година или заключен период',
+} as const;
+
+/** Tooltip of a month cell: the state and its detail ({1:F2} = two decimals, bg-BG comma). */
+export function depreciationMonthTooltip(m: { status: DepreciationMonthStatus; accountingNumber?: string | null; accountingDate?: string | null; postedAmount?: DecInput | null }): string {
+  const f2 = (v: DecInput | null | undefined) => dec(v ?? 0).toFixed(2).replace('.', ',');
+  switch (m.status) {
+    case 'posted':
+      return `${DEPRECIATION_MONTH_STATUS.posted} ${fmtMsg(DEPRECIATION_MONTH_DETAIL.posted, m.accountingNumber ?? '', m.accountingDate ? dateBg(m.accountingDate) : '')}`;
+    case 'postedDifferent':
+      return `${DEPRECIATION_MONTH_STATUS.postedDifferent}, ${fmtMsg(DEPRECIATION_MONTH_DETAIL.postedDifferent.replace('{1:F2}', '{1}'), m.accountingNumber ?? '', f2(m.postedAmount))}`;
+    case 'readOnly':
+      return `${DEPRECIATION_MONTH_STATUS.readOnly}, ${DEPRECIATION_MONTH_DETAIL.readOnly}`;
+    default:
+      return DEPRECIATION_MONTH_STATUS[m.status];
+  }
+}
+
 export function assetMessage(key: AssetMessageKey, severity: 'critical' | 'warning' = 'critical', ...args: (string | number)[]): ValidationMessage {
   return { key, text: fmtMsg(ASSET_MESSAGES[key], ...args), severity };
 }

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestCompany, type EntrySpec, type TestCompany } from './helpers.ts';
+import { unzipStore, ZipPasswordError } from '@shmi/core';
 
 /**
  * VAT module API tests (spec 02b, 04a 1-2, 05 7). One VAT-registered company
@@ -261,6 +262,16 @@ describe('June: diaries, declaration, VIES and NAP files', () => {
     expect([...z.bytes.slice(0, 4)]).toEqual([0x50, 0x4b, 0x03, 0x04]);
     const names = cp1251(z.bytes);
     for (const n of ['06.2026/POKUPKI.TXT', '06.2026/PRODAGBI.TXT', '06.2026/DEKLAR.TXT', '06.2026/VIES.TXT']) expect(names).toContain(n);
+    // ZipPassword / IsZipPasswordEnabled (06 3.2): the same folder in a password-protected ZIP.
+    expect((await t.call('PUT', '/settings/user', { IsZipPasswordEnabled: 'True', ZipPassword: 'nap-1234' })).status).toBe(200);
+    try {
+      const locked = await download(`/vat/files.zip?${query(report('2026-06-01', '2026-06-30', { createVies: true }))}`);
+      expect(new DataView(locked.bytes.buffer).getUint16(6, true) & 1).toBe(1);
+      expect(() => unzipStore(locked.bytes)).toThrow(ZipPasswordError);
+      expect([...unzipStore(locked.bytes, 'nap-1234').keys()]).toEqual([...unzipStore(z.bytes).keys()]);
+    } finally {
+      await t.call('PUT', '/settings/user', { IsZipPasswordEnabled: 'False' });
+    }
   });
 
   it('VAT-diary import into a second company reproduces the same diaries (04a 2)', async () => {

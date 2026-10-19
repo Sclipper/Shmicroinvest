@@ -196,7 +196,8 @@ export async function napFiles(db: DbOrTx, p: VatReportParams): Promise<{ folder
   return { folder: `${p.to.slice(5, 7)}.${p.to.slice(0, 4)}`, files };
 }
 
-export async function napZip(db: DbOrTx, p: VatReportParams) {
+/** The NAP folder as one ZIP; password-protected with the user's ZipPassword when it is enabled (06 3.2). */
+export async function napZip(db: DbOrTx, p: VatReportParams, password?: string | null) {
   const { folder, files } = await napFiles(db, p);
-  return { folder, data: zipStore(files.map((f) => ({ name: `${folder}/${f.name}`, data: f.data }))) };
+  return { folder, data: zipStore(files.map((f) => ({ name: `${folder}/${f.name}`, data: f.data })), undefined, password) };
 }
