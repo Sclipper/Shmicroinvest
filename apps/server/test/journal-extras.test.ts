@@ -792,3 +792,168 @@ describe('journal read routes need the journal rights', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Entry editor follow-ups: fixing, partner account links, entry card, VAT
+// protocol commands, fast-entry payment numbers and binding.
+
+/** Points the ECB download at a canned answer (no network in the tests). */
+async function withEcb<T>(url: string, fn: () => Promise<T>): Promise<T> {
+  const prev = process.env.ECB_RATES_URL;
+  process.env.ECB_RATES_URL = url;
+  try {
+    return await fn();
+  } finally {
+    if (prev === undefined) delete process.env.ECB_RATES_URL;
+    else process.env.ECB_RATES_URL = prev;
+  }
+}
+const DEAD_ECB = 'http://127.0.0.1:9/eurofxref.xml';
+const ecbXml = (date: string, usd: string) =>
+  `data:text/xml,${encodeURIComponent(`<gesmes:Envelope><Cube><Cube time='${date}'><Cube currency='USD' rate='${usd}'/></Cube></Cube></gesmes:Envelope>`)}`;
+
+describe('02a 2 / 03a 5.4 fixing of the accounting date', () => {
+  let usd = '';
+  beforeAll(async () => {
+    const r = await call('POST', '/accounts', { parentId: acc('504'), description: 'Банка USD фиксинг', accountCategoryId: 27, currencyId: 3 });
+    expect(r.status, r.text).toBe(201);
+    await t.reloadAccounts();
+    usd = (await call('GET', '/accounts')).body.find((a: { id: number }) => a.id === r.body.id).number;
+    expect((await call('PUT', '/revaluation/rates', { date: '2026-03-10', rates: [{ currencyId: 3, rate: '0.92' }] })).status).toBe(200);
+  });
+  const fixingOf = async (id: number) => (await call('GET', `/entries/${id}`)).body.debits[0].fixedRate;
+
+  it('the line fixing is the stored rate of the accounting date, else the currency fixed rate; a typed fixing stays', async () => {
+    const stored = await t.post({ date: '2026-03-10', dr: [[usd, 920, { currencyAmount: '1000', exchangeRate: '0.92' }]], cr: [['702', 920]] });
+    expect(await fixingOf(stored.id)).toBe('0.920000');
+    const none = await t.post({ date: '2026-03-11', dr: [[usd, 900, { currencyAmount: '1000' }]], cr: [['702', 900]] });
+    expect(await fixingOf(none.id)).toBe('1.000000');
+    const typed = await t.post({ date: '2026-03-10', dr: [[usd, 930, { currencyAmount: '1000', exchangeRate: '0.93', fixedRate: '0.931' }]], cr: [['702', 930]] });
+    expect(await fixingOf(typed.id)).toBe('0.931000');
+  });
+
+  it('GET /journal/fixing: stored rate, a missing one downloaded, a holiday reported without a 1.0 fallback', async () => {
+    const stored = await call('GET', '/journal/fixing?date=2026-03-10&currencyIds=3');
+    expect(stored.status, stored.text).toBe(200);
+    expect([stored.body.rates[0].rate, stored.body.message]).toEqual(['0.92', null]);
+    const holiday = await withEcb(DEAD_ECB, () => call('GET', '/journal/fixing?date=2026-03-14&currencyIds=3'));
+    expect([holiday.body.rates[0].rate, holiday.body.message]).toEqual([null, 'Избраната дата на осчетоводяване е почивен ден или услугата за валутни справки е временно неактивна.']);
+    const noDownload = await withEcb(ecbXml('2026-03-12', '1.0810'), () => call('GET', '/journal/fixing?date=2026-03-12&currencyIds=3&download=0'));
+    expect(noDownload.body.rates[0].rate).toBeNull();
+    const downloaded = await withEcb(ecbXml('2026-03-12', '1.0810'), () => call('GET', '/journal/fixing?date=2026-03-12&currencyIds=3'));
+    expect([downloaded.body.rates[0].rate, downloaded.body.rates[0].source, downloaded.body.message]).toEqual(['0.92507', 'ecb', null]);
+    // The downloaded rate is stored: the save of that date uses it.
+    const e = await t.post({ date: '2026-03-12', dr: [[usd, 92.51, { currencyAmount: '100' }]], cr: [['702', 92.51]] });
+    expect(await fixingOf(e.id)).toBe('0.925070');
+  });
+
+  it('"Обновяване на фиксингите от БНБ" writes the downloaded rates to the currencies; a failure changes nothing', async () => {
+    const cur = async (iso: string) => (await call('GET', '/currencies')).body.find((c: { isoCode: string }) => c.isoCode === iso);
+    const before = await cur('USD');
+    const failed = await withEcb(DEAD_ECB, () => call('POST', '/currencies/refresh-fixings', { date: '2026-03-16' }));
+    expect(failed.status).toBe(503);
+    expect(failed.body.error).toBe('Избраната дата на осчетоводяване е почивен ден или услугата за валутни справки е временно неактивна.');
+    expect((await cur('USD')).fixedRate).toBe(before.fixedRate);
+    const ok = await withEcb(ecbXml('2026-03-16', '1.25'), () => call('POST', '/currencies/refresh-fixings', { date: '2026-03-16' }));
+    expect(ok.status, ok.text).toBe(200);
+    expect([ok.body.updated, ok.body.message]).toEqual([1, 'Фиксингите са обновени към 16.03.2026 г. (1 валути).']);
+    expect(await cur('USD')).toMatchObject({ fixedRate: '0.800000', rateDate: '2026-03-16' });
+    expect((await cur('EUR')).fixedRate).toBe('1.955830');
+  });
+});
+
+describe('03a 2.9 strAddAccountToCompanyConfirmation', () => {
+  it('a partner line on an account the partner lacks asks (409 confirm); Yes links the account in the same save', async () => {
+    const p = await t.partner('Без сметка 411 ООД', ['401']);
+    const spec: EntrySpec = { date: '2026-05-02', docNumber: 'LNK-1', partner: p, dr: [['411', 10]], cr: [['702', 10]], confirmAccountLinks: true };
+    const before = (await call('GET', '/entries')).body.total;
+    const ask = await t.tryPost(spec);
+    expect([ask.status, ask.body.code, keys(ask.body)]).toEqual([409, 'confirm', ['strAddAccountToCompanyConfirmation']]);
+    expect(ask.body.messages[0].text).toBe('Избраният партньор не съдържа сметка 411! Сметката ще бъде добавена към партньора!');
+    expect((await call('GET', '/entries')).body.total).toBe(before);
+    const linked = async (id: number) => (await call('GET', `/partners/${id}`)).body.accountIds as number[];
+    expect(await linked(p)).toEqual([acc('401')]);
+    const yes = await t.tryPost({ ...spec, force: true });
+    expect(yes.status, yes.text).toBe(201);
+    expect((await linked(p)).sort()).toEqual([acc('401'), acc('411')].sort());
+    // Linked now: no question.
+    expect((await t.tryPost({ ...spec, docNumber: 'LNK-2' })).status).toBe(201);
+    // Callers that do not ask (imports, API) save without linking.
+    const q = await t.partner('Без въпрос ООД', ['401']);
+    expect((await t.tryPost({ date: '2026-05-02', docNumber: 'LNK-3', partner: q, dr: [['411', 10]], cr: [['702', 10]] })).status).toBe(201);
+    expect(await linked(q)).toEqual([acc('401')]);
+  });
+});
+
+describe('05 7.11 entry card and the list protocol commands (02a 7)', () => {
+  it('prints the header and the debit / credit tables with totals', async () => {
+    const e = await t.post({ date: '2026-05-03', docNumber: 'PR-1', term: 'Печат на контиране', partner: supplierA, dr: [['602', 70], ['603', 30]], cr: [['401', 100]] });
+    const r = await call('GET', `/journal/entries/${e.id}/print`);
+    expect(r.status, r.text).toBe(200);
+    expect(r.body.header).toMatchObject({ number: e.number, accountingDate: '2026-05-03', documentType: 'Фактура', documentNumber: 'PR-1', company: 'Доставчик А ООД', term: 'Печат на контиране' });
+    expect(r.body.debit.lines.map((l: { accountNumber: string; amount: string }) => [l.accountNumber, l.amount])).toEqual([['602', '70.00'], ['603', '30.00']]);
+    expect([r.body.debit.total, r.body.credit.total, r.body.credit.lines[0].companyName, r.body.debit.hasCurrency]).toEqual(['100.00', '100.00', 'Доставчик А ООД', false]);
+    expect(r.body.company.name).toBe('Тест ООД');
+  });
+
+  it('the VAT protocol commands find the protocol of the selected entry; without one they answer noProtocol', async () => {
+    const e = await t.post({ date: '2026-05-04', docNumber: 'VOP-1', partner: supplierA, transactionTypeId: 2, dr: [['602', 100, { vatTermId: 2 }]], cr: [['401', 100, { vatTermId: 2 }]] });
+    const none = await call('GET', `/journal/entries/${e.id}/protocol`);
+    expect([none.status, none.body.code, none.body.error]).toEqual([404, 'noProtocol', 'Към избраното контиране няма протокол по ЗДДС.']);
+    const d = (await call('GET', `/vat/protocols/${e.id}/defaults?icaType=1&purchaseTermId=2`)).body;
+    const saved = await call('PUT', `/vat/protocols/${e.id}`, { icaType: 1, purchaseTermId: 2, documentNumber: d.documentNumber, documentDate: '2026-05-04', viesMonth: '2026-05-01', base: '100', vat: '20' });
+    expect(saved.status, saved.text).toBe(200);
+    const p = await call('GET', `/journal/entries/${e.id}/protocol`);
+    expect(p.status, p.text).toBe(200);
+    expect(p.body.protocol).toMatchObject({ documentNumber: d.documentNumber, base: '100.00', vat: '20.00', total: '120.00' });
+    // Selecting the protocol accounting itself finds the same protocol.
+    const fromProtocol = await call('GET', `/journal/entries/${saved.body.id}/protocol`);
+    expect([fromProtocol.status, fromProtocol.body.main.documentNumber]).toEqual([200, 'VOP-1']);
+  });
+});
+
+describe('02a 8.1 fast entry: payment numbers and binding', () => {
+  const frow = (n: string, extra: Record<string, unknown> = {}) => ({
+    documentTypeId: 1, documentNumber: n, date: '2026-08-06', debitAccountId: acc('602'), creditAccountId: acc('401'), amount: '10',
+    companyId: supplierA, term: 'Бързо с плащане', debitVatTermId: 2, ...extra,
+  });
+
+  it('the РКО of a row payment skips a number a typed РКО already uses', async () => {
+    const first = await call('POST', '/journal/fast-entry', { rows: [frow('FP-1', { paymentAccountId: acc('501') })] });
+    expect(first.status, first.text).toBe(201);
+    const n1 = (await call('GET', `/entries/${first.body.saved[0].paymentId}`)).body.documentNumber as string;
+    const pad = (n: number) => String(n).padStart(n1.length, '0');
+    await t.post({ date: '2026-08-06', docType: 9, docNumber: pad(Number(n1) + 1), partner: supplierA, dr: [['401', 5]], cr: [['501', 5]] });
+    const second = await call('POST', '/journal/fast-entry', { rows: [frow('FP-2', { paymentAccountId: acc('501') })] });
+    expect(second.status, second.text).toBe(201);
+    expect((await call('GET', `/entries/${second.body.saved[0].paymentId}`)).body.documentNumber).toBe(pad(Number(n1) + 2));
+  });
+
+  it('binds a row entry with open documents in the same save (IsBindingDocumentsInFastAccountingEnabled)', async () => {
+    const sup = await t.partner('Бързо обвързване ООД', ['401']);
+    const inv = await t.post({ date: '2026-08-01', partner: sup, dr: [['602', 70]], cr: [['401', 70]] });
+    const pay = (n: string, extra: Record<string, unknown> = {}) => ({
+      documentTypeId: 9, documentNumber: n, date: '2026-08-07', debitAccountId: acc('401'), creditAccountId: acc('501'), amount: '70', companyId: sup,
+      term: 'Плащане с обвързване', bindDocuments: [{ accountingId: inv.id }], ...extra,
+    });
+    expect((await call('GET', '/session')).body.settings.IsBindingDocumentsInFastAccountingEnabled).toBe('True');
+    // With a payment account the binding is refused, and nothing is saved.
+    const before = (await call('GET', '/entries')).body.total;
+    const both = await call('POST', '/journal/fast-entry', { rows: [pay('FB-0', { debitAccountId: acc('602'), creditAccountId: acc('401'), paymentAccountId: acc('501'), documentTypeId: 1 })] });
+    expect([both.status, keys(both.body)]).toEqual([422, ['strBindingWithPayment']]);
+    // A document of another partner fails the whole batch.
+    const foreign = await t.post({ date: '2026-08-01', partner: supplierB, dr: [['602', 5]], cr: [['401', 5]] });
+    const bad = await call('POST', '/journal/fast-entry', { rows: [pay('FB-1'), pay('FB-2', { bindDocuments: [{ accountingId: foreign.id }] })] });
+    expect(bad.status).toBe(422);
+    expect((await call('GET', '/entries')).body.total).toBe(before + 1);
+    // Off in the settings: refused.
+    expect((await call('PUT', '/settings', { IsBindingDocumentsInFastAccountingEnabled: 'False' })).status).toBe(200);
+    expect((await call('POST', '/journal/fast-entry', { rows: [pay('FB-3')] })).status).toBe(400);
+    expect((await call('PUT', '/settings', { IsBindingDocumentsInFastAccountingEnabled: 'True' })).status).toBe(200);
+    const ok = await call('POST', '/journal/fast-entry', { rows: [pay('FB-4')] });
+    expect(ok.status, ok.text).toBe(201);
+    expect(ok.body.saved[0].bound).toBe(1);
+    const open = (await call('GET', `/payments/open-items?companyId=${sup}`)).body;
+    expect([open.liabilities.length, open.payments.length]).toEqual([0, 0]);
+  });
+});

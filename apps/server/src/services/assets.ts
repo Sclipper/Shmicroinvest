@@ -3,13 +3,13 @@ import {
   accountingLastProcessedDate, amountByDate, ASSET_MESSAGES, assetMessage, D, dec, DEPRECIATION_CATEGORY, deriveMethod,
   endOfMonth, firstEditableMonthDate as firstEditable, firstOfMonth, fmtMsg, generateSchedule, hasCritical, isLeaf,
   isMonthLocked, isStartMonthIncluded, monthIndex, monthLabelBg, monthsFromRate, NO_END_DATE, planMainDifferences, rateFromMonths, sum,
-  taxLastProcessedDate, validatePlan, yearPlans, ZERO, type Dec, type MonthAmount, type ValidationMessage,
+  taxLastProcessedDate, validatePlan, yearPlans, ZERO, assetFromPosting, fixedAssetOffer, isCompanyCategory, type Dec, type MonthAmount, type ValidationMessage,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import type { DbOrTx } from '../db/provider.ts';
 import type { ActiveYear } from '../context.ts';
 import { ApiError, badRequest, notFound } from '../lib/errors.ts';
-import { deleteEntry } from './journal.ts';
+import { deleteEntry, loadEntry } from './journal.ts';
 import { logActivity } from './audit.ts';
 import { peekNextNumber, reserveNumber } from './sequences.ts';
 
@@ -607,9 +607,29 @@ export async function saveAsset(db: DbOrTx, ctx: AssetCtx, input: AssetInput, id
 }
 
 /** New asset defaults (6.1). */
-export async function newAssetDefaults(db: DbOrTx, ctx: AssetCtx) {
+export async function newAssetDefaults(db: DbOrTx, ctx: AssetCtx, fromAccountingId?: number) {
   const inventoryNumber = await peekNextNumber(db, ASSET_SEQUENCE_CHANNEL, ctx.year.id);
-  return { inventoryNumber, acquisitionDate: ctx.appDate, startDate: ctx.appDate, isEuro: ledgerIsEuro(ctx.year) };
+  const defaults = { inventoryNumber, acquisitionDate: ctx.appDate, startDate: ctx.appDate, isEuro: ledgerIsEuro(ctx.year) };
+  if (!fromAccountingId) return { ...defaults, fromPosting: null };
+  return { ...defaults, fromPosting: await assetPrefillFromPosting(db, fromAccountingId) };
+}
+
+/**
+ * strAddFixedAssetData (03b 14.1, 6.1): the posting's first debit line on a
+ * 2xx account (no partner account on the credit side) prefills the new asset:
+ * inventory account, cost = depreciable amount, acquisition date, name from
+ * the term (the account description when the term is empty). Null when the
+ * posting does not qualify.
+ */
+export async function assetPrefillFromPosting(db: DbOrTx, accountingId: number) {
+  const e = await loadEntry(db, accountingId);
+  const ids = [...new Set([...e.debits, ...e.credits].map((l) => l.accountId))];
+  const accs = ids.length ? await db.select({ id: s.accounts.id, number: s.accounts.number, description: s.accounts.description, categoryId: s.accounts.accountCategoryId }).from(s.accounts).where(inArray(s.accounts.id, ids)) : [];
+  const byId = new Map(accs.map((a) => [a.id, a]));
+  const line = (l: (typeof e.debits)[number]) => ({ accountId: l.accountId, accountNumber: byId.get(l.accountId)?.number ?? '', amount: l.amount, isCompany: isCompanyCategory(byId.get(l.accountId)?.categoryId) });
+  const offer = fixedAssetOffer(e.debits.map(line), e.credits.map(line));
+  if (!offer) return null;
+  return { accountingId, accountingNumber: e.number, ...assetFromPosting({ accountId: offer.accountId, accountDescription: byId.get(offer.accountId)?.description ?? '', amount: offer.amount, date: e.accountingDate, term: e.term }) };
 }
 
 /* ------------------------------------------------------------------ */

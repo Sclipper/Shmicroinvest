@@ -43,6 +43,11 @@ const fastRow = z.object({
   companyId: optId,
   term: z.string().max(255).default(''),
   paymentAccountId: optId,
+  bindDocuments: z.array(z.object({
+    accountingId: z.number().int().positive(),
+    amount: z.string().regex(/^\d+(\.\d+)?$/, 'Невалидна сума.').nullable().optional(),
+    currencyAmount: z.string().regex(/^\d+(\.\d+)?$/, 'Невалидна сума.').nullable().optional(),
+  })).nullable().optional(),
 });
 
 const massBody = z.object({

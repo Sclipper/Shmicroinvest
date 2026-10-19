@@ -25,6 +25,7 @@ import { logApp } from './services/appLog.ts';
 import { statementRoutes } from './routes/statements.ts';
 import { reportVariantRoutes } from './routes/reportVariants.ts';
 import { journalExtraRoutes } from './routes/journalExtras.ts';
+import { entryFollowUpRoutes } from './routes/entryFollowUps.ts';
 import { templateRoutes } from './routes/templates.ts';
 import { stockRoutes } from './routes/stock.ts';
 import { settingsExtraRoutes } from './routes/settingsExtras.ts';
@@ -55,6 +56,7 @@ export function createApp(driver: DbDriver, opts: { serveWeb?: boolean } = {}) {
     .route('/', statementRoutes)
     .route('/', reportVariantRoutes)
     .route('/', journalExtraRoutes)
+    .route('/', entryFollowUpRoutes)
     .route('/', templateRoutes)
     .route('/', stockRoutes)
     .route('/', settingsExtraRoutes)
