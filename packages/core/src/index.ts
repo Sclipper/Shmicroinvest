@@ -33,6 +33,7 @@ export * from './exchange/formula.ts';
 export * from './exchange/textImport.ts';
 export * from './exchange/bankFormats.ts';
 export * from './exchange/bankImport.ts';
+export * from './exchange/assetImport.ts';
 export * from './exchange/trzPro.ts';
 export * from './exchange/excelImport.ts';
 export * from './exchange/euro.ts';

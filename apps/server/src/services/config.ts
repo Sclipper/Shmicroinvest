@@ -33,6 +33,7 @@ export const BASIC_SETTINGS: Record<string, { default: string; label: string }> 
   AutomaticFillExchangeRate: { default: 'False', label: 'Автоматично попълване на банков курс на база фиксинг' },
   IsBindingDocumentsEnabled: { default: 'True', label: 'Обвързване на документи в контиране' },
   IsAutomaticOpenBindingDocumentsEnabled: { default: 'False', label: 'Автоматично отваряне на обвързване на документи' },
+  IsBindingDocumentsInBankImportEnabled: { default: 'True', label: 'Обвързване на документи при импорт на банкови извлечения' },
   IsBindingBySumEnabled: { default: 'True', label: 'Обвързване по сума' },
   IsBindingDocumentsInFastAccountingEnabled: { default: 'True', label: 'Обвързване на документи в бързо контиране' },
   InvoiceAsPaymentDocument: { default: 'False', label: 'Разплащане на задължения/вземания с документ тип Фактура' },

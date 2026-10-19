@@ -15,6 +15,7 @@ import { ApiError, badRequest, notFound } from '../lib/errors.ts';
 import { requirePermission, workingDate } from '../session.ts';
 import { logActivity } from '../services/audit.ts';
 import { vatRegistrationTurnoverFor } from '../services/notices.ts';
+import { ensureDefaultTemplatesForBanks } from '../services/exchange/bank.ts';
 
 const addressBody = z.object({
   id: z.number().int().optional(),
@@ -524,22 +525,26 @@ export const nomenclatureRoutes = new Hono<AppEnv>()
     if (msgs.some((m) => m.severity === 'critical')) throw new ApiError(422, 'Данните не могат да бъдат записани:', msgs);
     const [m] = await db.select().from(s.myCompany).limit(1);
     const { addresses, bankAccounts, ...fields } = b;
+    let templatesAdded = 0;
     await db.transaction(async (tx) => {
       await tx.update(s.myCompany).set(fields).where(eq(s.myCompany.id, m!.id));
       await tx.update(s.system).set({ companyName: b.name });
       await tx.delete(s.addresses).where(and(eq(s.addresses.ownerType, 'my'), eq(s.addresses.ownerId, m!.id)));
       if (addresses.length) await tx.insert(s.addresses).values(addresses.map((a, i) => ({ ...a, id: undefined, ownerType: 'my', ownerId: m!.id, isPrimary: i === 0 })));
       await tx.delete(s.bankAccounts).where(and(eq(s.bankAccounts.ownerType, 'my'), eq(s.bankAccounts.ownerId, m!.id)));
-      if (bankAccounts.length) await tx.insert(s.bankAccounts).values(await Promise.all(bankAccounts.map(async (ba) => ({
+      const rows = await Promise.all(bankAccounts.map(async (ba) => ({
         ownerType: 'my', ownerId: m!.id, account: normalizeIban(ba.account), bankId: ba.bankId ?? (await bankIdFromIban(tx, ba.account)),
         bankStatementAccountId: ba.bankStatementAccountId ?? null, isEuro: ba.isEuro ?? false,
-      }))));
+      })));
+      if (rows.length) await tx.insert(s.bankAccounts).values(rows);
+      // 03a 7.2 / 9.1: the bank of an own bank account gets its default posting rules when it has none.
+      templatesAdded = await ensureDefaultTemplatesForBanks(tx, rows.map((r) => r.bankId), c.var.user.id);
     });
     // Name sync: System.CompanyName, MyCompany.Name and the catalog row (spec 01a 10).
     const catalog = await c.var.driver.catalog();
     const { companiesCatalog } = await import('../db/catalog/schema.ts');
     await catalog.update(companiesCatalog).set({ companyName: b.name }).where(eq(companiesCatalog.name, session.companyDb!));
-    return c.json({ ok: true, warnings: msgs });
+    return c.json({ ok: true, warnings: msgs, templatesAdded });
   })
 
   // ---- Currencies ----

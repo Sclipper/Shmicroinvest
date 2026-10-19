@@ -1,25 +1,32 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Copy, Plus, RotateCcw, Save, Trash2 } from 'lucide-react';
-import { msg } from '@shmi/core';
+import { Copy, Link2, Plus, RotateCcw, Save, Trash2, X } from 'lucide-react';
+import { bankRecalc, bankRowDifference, bankTotals, isCompanyCategory, msg } from '@shmi/core';
 import { api, ApiError, qs, type Message } from '../../api.ts';
 import { AccountPicker, PartnerPicker } from '../../components/pickers.tsx';
 import { useDialogs } from '../../components/dialogs.tsx';
 import { Button, Checkbox, CommandBar, Empty, Field, Panel, Select, TextInput, cx } from '../../components/ui.tsx';
 import { bgDate, money } from '../../format.ts';
-import { useInvalidate } from '../../session.tsx';
+import { BindingDocumentsDialog } from '../../payments/PaymentsShared.tsx';
+import { useAccounts, useInvalidate, useSession } from '../../session.tsx';
 import { FileInput, MessageList, errorMessages, upload } from './common.tsx';
 
 interface OwnAccount { id: number; account: string; bankId: number | null; accountId: number | null; bankName: string | null; accountNumber: string | null; currencyIso: string | null }
 interface BankProp { name: string; caption: string; kind: string }
 interface Bank { id: number; name: string; code: string; properties: BankProp[] }
-interface Doc { accountingId: number; documentNumber: string; amount: string; isInvoice: boolean; selected: boolean }
+interface Doc { accountingId: number; documentNumber: string; amount: string; isInvoice: boolean; selected: boolean; bindAmount?: string | null }
 interface Row {
-  index: number; date: string; isInflow: boolean; amount: string; partnerIban: string; partnerName: string; reason: string; reference: string;
+  index: number; date: string; isInflow: boolean; amount: string; baseAmount?: string; partnerIban: string; partnerName: string; reason: string; reference: string; props: Record<string, string>;
   templateId: number | null; templateName: string; debitAccountId: number | null; creditAccountId: number | null; companyId: number | null; companyName: string;
   term: string; docReference: string; postAmount: string; currencyAmount: string | null; exchangeRate: string | null; isOwnAccounts: boolean; warnings: string[]; documents: Doc[];
+  rowKeys: string[]; duplicate: boolean; ibanCompanyId: number | null; ibanExcluded: boolean;
+  feeAmount?: string; feeCurrencyAmount?: string;
 }
-interface Parsed { header: string; format: string; currency: string | null; from: string | null; to: string | null; openingBalance?: string; closingBalance?: string; lastAccountingDate: string | null; rows: Row[] }
+interface Parsed {
+  header: string; format: string; currency: string | null; from: string | null; to: string | null; openingBalance: string | null; closingBalance: string | null; lastAccountingDate: string | null;
+  isForeignCurrency: boolean; bindingEnabled: boolean; templates: { id: number; name: string; priority: number }[]; rows: Row[];
+}
+interface Keyword { id: number; word: string }
 const warningText = (k: string) => {
   try {
     return msg(k as Parameters<typeof msg>[0]);
@@ -28,9 +35,43 @@ const warningText = (k: string) => {
   }
 };
 type RowState = { status: 'posted' | 'skipped' | 'error'; messages: Message[] };
+const PAGE_SIZES = [50, 100, 200, 300];
 
 const useOwnAccounts = () => useQuery({ queryKey: ['bank', 'accounts'], queryFn: () => api.get<OwnAccount[]>('/bank-statements/accounts') });
 const useBanks = () => useQuery({ queryKey: ['bank', 'banks'], queryFn: () => api.get<Bank[]>('/bank-statements/banks') });
+
+/** "Ключови полета": invoice-number keywords, added and removed as chips; saved at once (04b 1.8, 03a 8.2). */
+function KeywordChips() {
+  const dialogs = useDialogs();
+  const q = useQuery({ queryKey: ['bank', 'keywords'], queryFn: () => api.get<Keyword[]>('/bank-statements/keywords') });
+  const [word, setWord] = useState('');
+  const act = async (fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+      await q.refetch();
+    } catch (e) {
+      await dialogs.error(e);
+    }
+  };
+  const add = () => {
+    const w = word.trim();
+    setWord('');
+    if (w) void act(() => api.post('/bank-statements/keywords', { word: w }));
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-1 border-b border-slate-200 px-3 py-1 text-[12px]" data-testid="bank-keywords">
+      <span className="mr-1 text-slate-600">Ключови полета:</span>
+      {q.data?.map((k) => (
+        <span key={k.id} className="inline-flex items-center gap-0.5 rounded-sm border border-slate-300 bg-slate-50 px-1.5" data-testid="keyword-chip">
+          {k.word}
+          <button className="text-slate-500 hover:text-red-700" title="Изтриване" aria-label={`Изтриване на ${k.word}`} onClick={() => act(() => api.del(`/bank-statements/keywords/${k.id}`))}><X className="size-3" /></button>
+        </span>
+      ))}
+      <TextInput value={word} maxLength={255} onChange={(e) => setWord(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} className="h-6 w-32" placeholder="нова дума" aria-label="Нова ключова дума" />
+      <Button onClick={add} disabled={!word.trim()}>Добави</Button>
+    </div>
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /* Import wizard and preview (04b 1.4-1.10)                            */
@@ -39,8 +80,11 @@ const useBanks = () => useQuery({ queryKey: ['bank', 'banks'], queryFn: () => ap
 export function BankImport() {
   const dialogs = useDialogs();
   const invalidate = useInvalidate();
+  const session = useSession();
+  const accounts = useAccounts();
   const own = useOwnAccounts();
   const banks = useBanks();
+  const bindingSetting = session.settings.IsBindingDocumentsInBankImportEnabled !== 'False';
   const [bankAccountId, setBankAccountId] = useState<number | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [termProperty, setTermProperty] = useState('');
@@ -54,21 +98,27 @@ export function BankImport() {
   const [ownTransfer, setOwnTransfer] = useState(true);
   const [msgs, setMsgs] = useState<Message[]>([]);
   const [busy, setBusy] = useState(false);
+  const [pageSize, setPageSize] = useState(50);
+  const [page, setPage] = useState(1);
+  const [binding, setBinding] = useState<Row | null>(null);
   useEffect(() => {
     if (own.data?.length && bankAccountId == null) setBankAccountId(own.data[0]!.id);
   }, [own.data, bankAccountId]);
   const acct = own.data?.find((a) => a.id === bankAccountId);
   const props = banks.data?.find((b) => b.id === acct?.bankId)?.properties.filter((p) => p.kind === 'text') ?? [];
+  const categoryOf = (id: number | null) => (id ? accounts.data?.find((a) => a.id === id)?.categoryId ?? null : null);
+  const partnerAccountOf = (r: Row) => [r.debitAccountId, r.creditAccountId].find((id) => id && isCompanyCategory(categoryOf(id))) ?? null;
 
   const parse = async () => {
     if (!file || !bankAccountId) return;
     setBusy(true);
     setMsgs([]);
     try {
-      const r = await upload<Parsed>('/bank-statements/parse', file, { bankAccountId, termProperty: termProperty || undefined, referenceProperty: referenceProperty || undefined, mergeCriteria, autoBind });
+      const r = await upload<Parsed>('/bank-statements/parse', file, { bankAccountId, termProperty: termProperty || undefined, referenceProperty: referenceProperty || undefined, mergeCriteria, autoBind: bindingSetting && autoBind });
       setParsed(r);
       setRows(r.rows);
       setState({});
+      setPage(1);
     } catch (e) {
       setMsgs(errorMessages(e));
     } finally {
@@ -76,19 +126,25 @@ export function BankImport() {
     }
   };
   const setRow = (index: number, patch: Partial<Row>) => setRows((rs) => rs.map((r) => (r.index === index ? { ...r, ...patch } : r)));
-  const pending = rows.filter((r) => state[r.index]?.status !== 'posted');
+  const pages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const current = Math.min(page, pages);
+  // Apply and the footer totals work on the current page only (1.8); posted rows stay greyed out.
+  const visible = useMemo(() => rows.slice((current - 1) * pageSize, current * pageSize), [rows, current, pageSize]);
+  const pageRows = visible.filter((r) => state[r.index]?.status !== 'posted');
+  const totals = bankTotals(pageRows);
 
   const post = async (force = false): Promise<void> => {
-    if (!pending.length) return;
+    if (!pageRows.length) return;
     setBusy(true);
     setMsgs([]);
     try {
       const r = await api.post<{ results: ({ index: number } & RowState)[]; posted: number }>('/bank-statements/post', {
-        customDocumentNumber: customNumber.trim() || undefined, ownAccountsTransfer: ownTransfer, force,
-        rows: pending.map((x) => ({
+        bankAccountId, customDocumentNumber: customNumber.trim() || undefined, ownAccountsTransfer: ownTransfer, force,
+        rows: pageRows.map((x) => ({
           index: x.index, date: x.date, debitAccountId: x.debitAccountId, creditAccountId: x.creditAccountId, companyId: x.companyId, companyName: x.companyName,
           term: x.term, reference: x.docReference, postAmount: x.postAmount, currencyAmount: x.currencyAmount, exchangeRate: x.exchangeRate, templateId: x.templateId,
-          isOwnAccounts: x.isOwnAccounts, documents: x.documents.filter((d) => d.selected).map((d) => d.accountingId),
+          feeAmount: x.feeAmount || null, feeCurrencyAmount: x.feeCurrencyAmount || null, rowKeys: x.rowKeys,
+          isOwnAccounts: x.isOwnAccounts, documents: x.documents.filter((d) => d.selected).map((d) => ({ accountingId: d.accountingId, amount: d.bindAmount ?? null })),
         })),
       });
       setState((st) => ({ ...st, ...Object.fromEntries(r.results.map((x) => [x.index, { status: x.status, messages: x.messages }])) }));
@@ -107,15 +163,40 @@ export function BankImport() {
     }
   };
 
-  const bindIban = async (r: Row) => {
-    if (!r.companyId || !r.partnerIban) return;
+  /** strBindIbanToPartnerConfirm: asked before the IBAN is added to the partner (1.7). */
+  const bindIban = async (r: Pick<Row, 'partnerIban' | 'index'>, companyId: number, companyName: string) => {
+    if (!r.partnerIban) return;
+    if (!(await dialogs.confirm(msg('strBindIbanToPartnerConfirm', r.partnerIban, companyName)))) return;
     try {
-      const x = await api.post<{ message: string }>('/bank-statements/bind-iban', { companyId: r.companyId, iban: r.partnerIban });
+      const x = await api.post<{ message: string }>('/bank-statements/bind-iban', { companyId, iban: r.partnerIban });
+      setRows((rs) => rs.map((y) => (y.partnerIban === r.partnerIban ? { ...y, ibanCompanyId: companyId } : y)));
       await dialogs.alert(x.message);
     } catch (e) {
       await dialogs.error(e);
     }
   };
+  const pickPartner = async (r: Row, p: { id: number; name: string } | null) => {
+    setRow(r.index, { companyId: p?.id ?? null, companyName: p?.name ?? '', documents: [] });
+    if (p && r.partnerIban && !r.ibanExcluded && r.ibanCompanyId !== p.id) await bindIban(r, p.id, p.name);
+  };
+
+  /** MapStatementToAccountingWithTemplate: re-maps the row with the chosen rule. */
+  const applyTemplate = async (r: Row, templateId: number | null) => {
+    try {
+      const raw = { index: r.index, date: r.date, isInflow: r.isInflow, amount: r.amount, baseAmount: r.baseAmount, partnerIban: r.partnerIban, partnerName: r.partnerName, reason: r.reason, reference: r.reference, props: r.props };
+      const x = await api.post<Row>('/bank-statements/apply-template', { bankAccountId, templateId, row: raw, termProperty: termProperty || undefined, referenceProperty: referenceProperty || undefined, autoBind: bindingSetting && autoBind });
+      setRows((rs) => rs.map((y) => (y.index === r.index ? { ...x, rowKeys: y.rowKeys, duplicate: y.duplicate } : y)));
+    } catch (e) {
+      await dialogs.error(e);
+    }
+  };
+
+  // Recompute rules (1.10): currency or rate -> base; base -> rate.
+  const editCurrency = (r: Row, v: string) => setRow(r.index, { currencyAmount: v, postAmount: r.exchangeRate && v ? bankRecalc.base(v, r.exchangeRate) : r.postAmount });
+  const editRate = (r: Row, v: string) => setRow(r.index, { exchangeRate: v, postAmount: r.currencyAmount && v ? bankRecalc.base(r.currencyAmount, v) : r.postAmount });
+  // A typed base amount keeps the rate (the difference is a currency difference); without a rate it gives the rate.
+  const editBase = (r: Row, v: string) => setRow(r.index, { postAmount: v, exchangeRate: parsed?.isForeignCurrency && !Number(r.exchangeRate) && r.currencyAmount && v ? bankRecalc.rate(v, r.currencyAmount) : r.exchangeRate });
+  const num = (v: string) => v.replace(',', '.');
 
   if (!parsed) {
     return (
@@ -128,7 +209,7 @@ export function BankImport() {
                 {own.data?.map((a) => <option key={a.id} value={a.id}>{a.account} - {a.bankName ?? 'неизвестна банка'} ({a.accountNumber ?? 'без сметка'}{a.currencyIso ? `, ${a.currencyIso}` : ''})</option>)}
               </Select>
             </Field>
-            <Field label="Файл с извлечението (MT940, camt.053 XML, CSV, XLSX)"><FileInput file={file} onChange={setFile} accept=".sta,.mt940,.txt,.xml,.csv,.xlsx" testId="bank-file" /></Field>
+            <Field label="Файл с извлечението (MT940, camt.053, XML на банката, CSV, XLSX)"><FileInput file={file} onChange={setFile} accept=".sta,.mt940,.txt,.xml,.csv,.xlsx" testId="bank-file" /></Field>
             <div className="flex flex-wrap gap-3">
               <Field label="Основание от">
                 <Select value={termProperty} onChange={(e) => setTermProperty(e.target.value)} className="w-56">
@@ -151,7 +232,7 @@ export function BankImport() {
                 </Select>
               </Field>
             </div>
-            <Checkbox label="Автоматично свързване с документи" checked={autoBind} onChange={setAutoBind} />
+            {bindingSetting && <Checkbox label="Автоматично свързване с документи" checked={autoBind} onChange={setAutoBind} />}
             <MessageList messages={msgs} />
             <div className="flex justify-end"><Button variant="primary" disabled={!file || !bankAccountId || busy} onClick={parse}>Напред</Button></div>
           </div>
@@ -160,43 +241,91 @@ export function BankImport() {
     );
   }
 
+  const foreign = parsed.isForeignCurrency;
+  const showDocs = parsed.bindingEnabled;
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="bank-preview">
       <CommandBar right={<span className="text-[12px] text-slate-600">{parsed.format}{parsed.lastAccountingDate ? ` · последно контиране по сметката ${bgDate(parsed.lastAccountingDate)}` : ''}</span>}>
         <Button onClick={() => { setParsed(null); setRows([]); }}>Назад</Button>
-        <Field label="Номер на документ" className="ml-2 flex-row items-center gap-2"><TextInput value={customNumber} onChange={(e) => setCustomNumber(e.target.value)} className="w-32" placeholder="месецът" /></Field>
+        <Field label={msg('strCustomDocumentNumber')} className="ml-2 flex-row items-center gap-2"><TextInput value={customNumber} onChange={(e) => setCustomNumber(e.target.value)} className="w-32" placeholder="месецът" /></Field>
         <Checkbox label="Контиране на преводи между собствени сметки" checked={ownTransfer} onChange={setOwnTransfer} />
-        <Button variant="primary" disabled={busy || !pending.length} onClick={() => post()}>Запис</Button>
+        <Button variant="primary" disabled={busy || !pageRows.length} onClick={() => post()}>Запис</Button>
       </CommandBar>
-      <div className="border-b border-slate-200 px-3 py-1.5 text-[13px]">{parsed.header}</div>
+      <div className="flex flex-wrap items-center gap-x-4 border-b border-slate-200 px-3 py-1.5 text-[13px]">
+        <span>{parsed.header}</span>
+        {(parsed.openingBalance || parsed.closingBalance) && (
+          <span className="text-slate-700" data-testid="bank-balances">
+            Начално салдо: <b className="tabular-nums">{money(parsed.openingBalance ?? '0')}</b> · Крайно салдо: <b className="tabular-nums">{money(parsed.closingBalance ?? '0')}</b>{parsed.currency ? ` ${parsed.currency}` : ''}
+          </span>
+        )}
+      </div>
+      <KeywordChips />
       <MessageList messages={msgs} />
       <div className="min-h-0 flex-1 overflow-auto">
         <table className="grid-table">
           <thead>
-            <tr><th>№</th><th>Дата</th><th className="text-right">Сума</th><th>Контрагент / IBAN</th><th>Шаблон</th><th className="w-44">Дебит</th><th className="w-44">Кредит</th><th className="w-52">Партньор</th><th className="w-64">Основание</th><th>Документи</th><th>Статус</th></tr>
+            <tr>
+              <th>№</th><th>Дата</th><th className="text-right">Сума</th>
+              {foreign && <><th className="text-right">Сума {parsed.currency}</th><th className="text-right">Курс</th><th className="text-right">Разлика</th></>}
+              <th className="text-right">Такса</th>
+              <th>Контрагент / IBAN</th><th>Шаблон</th><th className="w-44">Дебит</th><th className="w-44">Кредит</th><th className="w-52">Партньор</th><th className="w-64">Основание</th>
+              {showDocs && <th>Документи</th>}<th>Статус</th>
+            </tr>
           </thead>
           <tbody>
-            {rows.map((r) => {
+            {visible.map((r) => {
               const st = state[r.index];
+              const diff = bankRowDifference(r);
+              const partnerAcc = partnerAccountOf(r);
               return (
-                <tr key={r.index} className={cx(st?.status === 'posted' && 'opacity-60')} data-testid="bank-row">
+                <tr key={r.index} className={cx(st?.status === 'posted' && 'opacity-60', r.duplicate && !st && 'bg-amber-50')} data-testid="bank-row">
                   <td>{r.index + 1}</td>
                   <td>{bgDate(r.date)}</td>
-                  <td className={cx('text-right tabular-nums', r.isInflow ? 'text-emerald-700' : 'text-red-700')}>{r.isInflow ? '' : '-'}{money(r.postAmount)}{r.currencyAmount ? ` (${money(r.currencyAmount)} ${parsed.currency ?? ''})` : ''}</td>
+                  <td className={cx('text-right', r.isInflow ? 'text-emerald-700' : 'text-red-700')}>
+                    <span className="mr-0.5">{r.isInflow ? '' : '-'}</span>
+                    <TextInput value={r.postAmount} onChange={(e) => editBase(r, num(e.target.value))} className="w-24 text-right tabular-nums" aria-label="Сума" />
+                  </td>
+                  {foreign && (
+                    <>
+                      <td><TextInput value={r.currencyAmount ?? ''} onChange={(e) => editCurrency(r, num(e.target.value))} className="w-24 text-right tabular-nums" aria-label="Валутна сума" /></td>
+                      <td><TextInput value={r.exchangeRate ?? ''} onChange={(e) => editRate(r, num(e.target.value))} className="w-20 text-right tabular-nums" aria-label="Курс" /></td>
+                      <td className={cx('text-right tabular-nums', Number(diff) !== 0 && 'text-amber-700')} data-testid="row-difference">{Number(diff) !== 0 ? money(diff) : ''}</td>
+                    </>
+                  )}
+                  <td>
+                    {foreign
+                      ? <TextInput value={r.feeCurrencyAmount ?? ''} onChange={(e) => setRow(r.index, { feeCurrencyAmount: num(e.target.value) })} className="w-16 text-right tabular-nums" aria-label="Такса" title={`Банкова такса в ${parsed.currency ?? 'валута'}`} />
+                      : <TextInput value={r.feeAmount ?? ''} onChange={(e) => setRow(r.index, { feeAmount: num(e.target.value) })} className="w-16 text-right tabular-nums" aria-label="Такса" title="Банкова такса" />}
+                  </td>
                   <td className="max-w-56 truncate" title={`${r.partnerName}\n${r.partnerIban}\n${r.reason}`}>
                     <div>{r.partnerName || <span className="text-slate-500">{r.reason}</span>}</div>
-                    <div className="text-[11px] text-slate-500">{r.partnerIban}{r.companyId && r.partnerIban ? <button className="ml-1 text-brand-600 underline" onClick={() => bindIban(r)}>свържи</button> : null}</div>
+                    <div className="text-[11px] text-slate-500">
+                      {r.partnerIban}
+                      {r.companyId && r.partnerIban && !r.ibanExcluded && r.ibanCompanyId !== r.companyId ? (
+                        <button className="ml-1 text-brand-600 underline" onClick={() => bindIban(r, r.companyId!, r.companyName)}>свържи</button>
+                      ) : null}
+                    </div>
                   </td>
-                  <td>{r.templateName}</td>
+                  <td>
+                    <Select value={r.templateId ?? ''} onChange={(e) => applyTemplate(r, e.target.value ? Number(e.target.value) : null)} className="w-44" aria-label="Шаблон">
+                      <option value="">(без шаблон)</option>
+                      {parsed.templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </Select>
+                  </td>
                   <td><AccountPicker value={r.debitAccountId} onChange={(a) => setRow(r.index, { debitAccountId: a?.id ?? null })} /></td>
                   <td><AccountPicker value={r.creditAccountId} onChange={(a) => setRow(r.index, { creditAccountId: a?.id ?? null })} /></td>
-                  <td><PartnerPicker value={r.companyId} valueName={r.companyName} onChange={(p) => setRow(r.index, { companyId: p?.id ?? null, companyName: p?.name ?? '' })} /></td>
+                  <td><PartnerPicker value={r.companyId} valueName={r.companyName} onChange={(p) => pickPartner(r, p)} /></td>
                   <td><TextInput value={r.term} maxLength={255} onChange={(e) => setRow(r.index, { term: e.target.value })} /></td>
-                  <td>
-                    {r.documents.map((d) => (
-                      <Checkbox key={d.accountingId} label={`${d.documentNumber} (${money(d.amount)})`} checked={d.selected} onChange={(v) => setRow(r.index, { documents: r.documents.map((x) => (x.accountingId === d.accountingId ? { ...x, selected: v } : x)) })} />
-                    ))}
-                  </td>
+                  {showDocs && (
+                    <td>
+                      {r.documents.map((d) => (
+                        <Checkbox key={d.accountingId} label={`${d.documentNumber} (${money(d.bindAmount ?? d.amount)})`} checked={d.selected} onChange={(v) => setRow(r.index, { documents: r.documents.map((x) => (x.accountingId === d.accountingId ? { ...x, selected: v } : x)) })} />
+                      ))}
+                      {r.companyId && partnerAcc && !st ? (
+                        <button className="inline-flex items-center gap-0.5 text-[12px] text-brand-600 underline" onClick={() => setBinding(r)}><Link2 className="size-3" />Обвързване</button>
+                      ) : null}
+                    </td>
+                  )}
                   <td className="min-w-72 max-w-96 whitespace-normal">
                     {st ? (
                       <span className={st.status === 'error' ? 'text-red-700' : st.status === 'posted' ? 'text-emerald-700' : 'text-slate-500'}>
@@ -210,9 +339,108 @@ export function BankImport() {
           </tbody>
         </table>
       </div>
+      <div className="flex flex-wrap items-center gap-4 border-t border-slate-300 bg-slate-50 px-3 py-1 text-[12px]" data-testid="bank-totals">
+        <span>Редове: {totals.count}</span>
+        <span>Постъпления: <b className="tabular-nums text-emerald-700">{money(totals.inflow)}</b></span>
+        <span>Плащания: <b className="tabular-nums text-red-700">{money(totals.outflow)}</b></span>
+        {foreign && <span>{parsed.currency}: +{money(totals.currencyInflow)} / -{money(totals.currencyOutflow)}</span>}
+        {foreign && Number(totals.difference) !== 0 && <span>Валутни разлики: <b className="tabular-nums">{money(totals.difference)}</b></span>}
+        <span className="ml-auto flex items-center gap-2">
+          <Select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }} className="h-6 w-20" aria-label="Редове на страница">
+            {PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
+          </Select>
+          <Button disabled={current <= 1} onClick={() => setPage(current - 1)}>‹</Button>
+          <span>{current} от {pages}</span>
+          <Button disabled={current >= pages} onClick={() => setPage(current + 1)}>›</Button>
+        </span>
+      </div>
+      {binding && (() => {
+        const acc = partnerAccountOf(binding);
+        return acc && binding.companyId ? (
+          <BindingDocumentsDialog
+            accountId={acc}
+            companyId={binding.companyId}
+            kind="liability"
+            onClose={() => setBinding(null)}
+            onOk={async (sel) => {
+              const docs = await api.get<Doc[]>(`/bank-statements/open-documents${qs({ companyId: binding.companyId, accountId: acc })}`);
+              const chosen = new Map(sel.map((x) => [x.accountingId, x.amount]));
+              setRow(binding.index, { documents: docs.map((d) => ({ ...d, selected: chosen.has(d.accountingId), bindAmount: chosen.get(d.accountingId) ?? null })) });
+              setBinding(null);
+            }}
+          />
+        ) : null;
+      })()}
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* Excluded IBANs of payment intermediaries (04b 1.7)                  */
+/* ------------------------------------------------------------------ */
+
+export function BankExcludedIbans() {
+  const dialogs = useDialogs();
+  const q = useQuery({ queryKey: ['bank', 'excluded-ibans'], queryFn: () => api.get<{ ibans: string[] }>('/bank-statements/excluded-ibans') });
+  const [list, setList] = useState<string[] | null>(null);
+  const [iban, setIban] = useState('');
+  const [msgs, setMsgs] = useState<Message[]>([]);
+  useEffect(() => {
+    if (q.data && list === null) setList(q.data.ibans);
+  }, [q.data, list]);
+  const items = list ?? [];
+  const changed = q.data && list !== null && items.join() !== q.data.ibans.join();
+  const add = () => {
+    const v = iban.replace(/[\s\-.]/g, '').toUpperCase();
+    setIban('');
+    if (v && !items.includes(v)) setList([...items, v]);
+  };
+  const save = async () => {
+    try {
+      const r = await api.put<{ ibans: string[]; warnings: Message[] }>('/bank-statements/excluded-ibans', { ibans: items });
+      setList(r.ibans);
+      setMsgs(r.warnings);
+      await q.refetch();
+      await dialogs.alert('Данните са записани успешно.');
+    } catch (e) {
+      setMsgs(errorMessages(e));
+    }
+  };
+  return (
+    <div className="h-full overflow-auto p-3" data-testid="bank-excluded-ibans">
+      <Panel title="IBAN на платежни посредници" className="max-w-[640px]">
+        <div className="flex flex-col gap-2 p-3">
+          <div className="text-[12px] text-slate-600">
+            Сметки на посредници (напр. Юробанк/Пощенска банка, Изипей, Райфайзенбанк), през които плащат много несвързани партньори. При импорт на банкови извлечения тези IBAN не се използват за намиране на партньор и не се обвързват с партньори.
+          </div>
+          <div className="flex items-end gap-2">
+            <Field label="IBAN"><TextInput value={iban} maxLength={50} onChange={(e) => setIban(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} className="w-72" /></Field>
+            <Button icon={<Plus className="size-3.5" />} disabled={!iban.trim()} onClick={add}>Добави</Button>
+          </div>
+          {items.length ? (
+            <table className="grid-table">
+              <thead><tr><th>IBAN</th><th className="w-10" /></tr></thead>
+              <tbody>
+                {items.map((x) => (
+                  <tr key={x} data-testid="excluded-iban">
+                    <td className="font-mono">{x}</td>
+                    <td><button className="text-red-700" aria-label={`Премахване на ${x}`} onClick={() => setList(items.filter((y) => y !== x))}><Trash2 className="size-3.5" /></button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : <Empty>Няма въведени IBAN.</Empty>}
+          <MessageList messages={msgs} />
+          <div className="flex justify-end gap-2">
+            <Button disabled={!changed} onClick={() => setList(q.data?.ibans ?? [])}>Отказ</Button>
+            <Button variant="primary" icon={<Save className="size-3.5" />} disabled={!changed} onClick={save}>Запис</Button>
+          </div>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
 
 /* ------------------------------------------------------------------ */
 /* Posting rules editor (03a 9)                                        */

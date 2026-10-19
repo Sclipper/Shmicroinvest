@@ -82,6 +82,7 @@ export const MENU: TopMenu[] = [
         label: 'Банкови извлечения', permission: 'UI_Operations_BankStatements', children: [
           { label: 'Импорт на банкови извлечения', permission: 'UI_Operations_BankStatements_BankStatementsImport', screen: 'bankImport' },
           { label: 'Шаблони за банков импорт', permission: 'UI_Operations_BankStatements_BankTemplatesImport', screen: 'bankTemplates' },
+          { label: 'IBAN на платежни посредници', permission: 'UI_Operations_BankStatements_BankStatementsImport', screen: 'bankExcludedIbans' },
         ],
       },
       { sep: true },

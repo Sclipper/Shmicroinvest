@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { ClipboardCheck, Euro, FilePlus2, FileText, FolderPlus, Pencil, RotateCcw, Scale, SquarePen, Trash2, Undo2, Users } from 'lucide-react';
+import { ClipboardCheck, Euro, FileInput as FileImport, FilePlus2, FileText, FolderPlus, Pencil, RotateCcw, Scale, SquarePen, Trash2, Undo2, Users } from 'lucide-react';
 import { api, qs } from '../api.ts';
 import { useDialogs } from '../components/dialogs.tsx';
 import { Button, Checkbox, CommandBar, Empty, Field, Select, Spinner, TextInput, cx } from '../components/ui.tsx';
@@ -8,7 +8,7 @@ import { bgDate, money } from '../format.ts';
 import { useInvalidate, useSession } from '../session.tsx';
 import { useWorkspace } from '../shell/workspace.tsx';
 import { categoryLabel, useAssetLookups, useLocations, type AssetRow, type Location } from './common.tsx';
-import { CheckDialog, CommonDataDialog, IasDialog, LocationDialog, TerminateDialog } from './dialogs.tsx';
+import { AssetImportDialog, CheckDialog, CommonDataDialog, IasDialog, LocationDialog, TerminateDialog } from './dialogs.tsx';
 
 type Period = 'all' | 'active' | 'expiredSap' | 'expiredDap' | 'writtenOffSap';
 const PERIODS: [Period, string][] = [
@@ -25,6 +25,7 @@ type Dlg =
   | { kind: 'ias'; asset: AssetRow }
   | { kind: 'common'; assets: AssetRow[] }
   | { kind: 'check' }
+  | { kind: 'import' }
   | null;
 
 /** Дълготрайни активи (Ctrl+D): location tree, filters, register grid and the asset commands (spec 03b 1, 07 FixedAssetsListView). */
@@ -120,6 +121,7 @@ export function FixedAssets() {
         <Button icon={<Users className="size-3.5" />} onClick={() => setDlg({ kind: 'common', assets: picked })} disabled={!picked.length}>Промяна на общи данни на ДА</Button>
         <Button icon={<Scale className="size-3.5" />} onClick={() => sel && setDlg({ kind: 'ias', asset: sel })} disabled={!active}>Промяна на дълготраен актив по МСС</Button>
         <Button icon={<ClipboardCheck className="size-3.5" />} onClick={() => setDlg({ kind: 'check' })}>Проверка</Button>
+        <Button icon={<FileImport className="size-3.5" />} onClick={() => setDlg({ kind: 'import' })}>Импорт от Excel</Button>
         {isEuroYear && <Button icon={<Euro className="size-3.5" />} onClick={() => void convert()}>Конвертиране в EUR</Button>}
       </CommandBar>
 
@@ -255,6 +257,13 @@ export function FixedAssets() {
           setDlg(null);
           await refresh();
           await dialogs.alert(r.number ? `Активът е отписан с контиране № ${r.number}.` : 'Активът е отписан без операция.');
+        }} />
+      )}
+      {dlg?.kind === 'import' && (
+        <AssetImportDialog onClose={() => setDlg(null)} onDone={async (r) => {
+          setDlg(null);
+          await refresh();
+          await dialogs.alert([r.message, ...r.warnings.map((w) => w.text)].join('\n'));
         }} />
       )}
       {dlg?.kind === 'ias' && <IasDialog asset={dlg.asset} onClose={() => setDlg(null)} onDone={async () => { setDlg(null); await refresh(); }} />}

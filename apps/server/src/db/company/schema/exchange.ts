@@ -1,4 +1,5 @@
 import { boolean, index, integer, jsonb, pgTable, smallint, text, timestamp, varchar } from 'drizzle-orm/pg-core';
+import { accountings } from './journal.ts';
 import type { ConditionToken } from '@shmi/core';
 import { accounts, banks, companies } from './nomenclatures.ts';
 import { users } from './system.ts';
@@ -47,8 +48,20 @@ export const bankTemplateDetails = pgTable('bank_template_details', {
 /** KeyWords: invoice-number keywords for auto-binding (04b 1.2). */
 export const bankImportKeywords = pgTable('bank_import_keywords', {
   id: integer('id').primaryKey().generatedByDefaultAsIdentity(),
-  word: varchar('word', { length: 50 }).notNull(),
+  word: varchar('word', { length: 255 }).notNull(),
 });
+
+/**
+ * Statement rows already posted (corrected D-04b-6): the hash of date, signed
+ * amount, partner IBAN and reference per own IBAN. The row goes with its entry.
+ */
+export const bankImportedRows = pgTable('bank_imported_rows', {
+  id: integer('id').primaryKey().generatedByDefaultAsIdentity(),
+  iban: varchar('iban', { length: 50 }).notNull(),
+  rowKey: varchar('row_key', { length: 32 }).notNull(),
+  accountingId: integer('accounting_id').notNull().references(() => accountings.id, { onDelete: 'cascade' }),
+  importedAt: timestamp('imported_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index('ix_bank_imported_rows_key').on(t.iban, t.rowKey)]);
 
 /** ImportedPeriods (ТРЗ Pro, ImportType 51). */
 export const importedPeriods = pgTable('imported_periods', {
