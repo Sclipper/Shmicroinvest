@@ -1,8 +1,7 @@
-import { useState } from 'react';
 import { api, qs } from '../../api.ts';
 import { bgDate, monthLabel } from '../../format.ts';
 import { Field, Select, TextInput } from '../../components/ui.tsx';
-import { AccountNumberPicker, Amt, PeriodFields, ReportFrame, amt, periodText, useReport, useYearPeriod, type Cell } from '../../reports/common.tsx';
+import { AccountNumberPicker, Amt, PeriodFields, ReportFrame, amt, periodText, useReport, useYearPeriod, type Cell, useReportFilters } from '../../reports/common.tsx';
 
 interface Row {
   id: number; number: string | null; name: string | null; documentName: string | null; documentNumber: string | null; documentDate: string | null;
@@ -19,7 +18,7 @@ const HEAD = ['Номер', 'Наименование', 'Тип документ
 /** Справка "Разсрочване на приходи и разходи" (spec 05 7.7, spAccountingReschedulesReport). */
 export function ReschedulesReport() {
   const period = useYearPeriod();
-  const [f, setF] = useState({ ...period, number: '', name: '', debit: '', credit: '', reference: '', sort: 'number' });
+  const [f, setF] = useReportFilters('reschedules', { ...period, number: '', name: '', debit: '', credit: '', reference: '', sort: 'number' });
   const report = useReport('reschedules', f, (x) => api.get<Data>(`/reports/reschedules${qs({ from: x.from, to: x.to, number: x.number.trim(), name: x.name.trim(), debit: x.debit, credit: x.credit, reference: x.reference.trim(), sort: x.sort })}`), (x) =>
     x.from > x.to ? 'Началната дата на периода е след крайната дата.' : null,
   );

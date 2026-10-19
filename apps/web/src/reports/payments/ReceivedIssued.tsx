@@ -1,10 +1,9 @@
-import { useState } from 'react';
 import { api, qs } from '../../api.ts';
 import { PartnerPicker } from '../../components/pickers.tsx';
 import { Checkbox, Field, Select, TextInput } from '../../components/ui.tsx';
 import { bgDate, monthLabel } from '../../format.ts';
 import { useLookups } from '../../session.tsx';
-import { Amt, PeriodFields, ReportFrame, amt, periodText, sum, useReport, useYearPeriod, type Cell } from '../common.tsx';
+import { Amt, PeriodFields, ReportFrame, amt, periodText, sum, useReport, useYearPeriod, type Cell, useReportFilters } from '../common.tsx';
 import { DocumentTypeSelect } from './shared.tsx';
 
 interface Row {
@@ -19,7 +18,7 @@ const SORTS: [string, string][] = [['DocumentNumber', 'Номер на доку�
 export function ReceivedIssued() {
   const period = useYearPeriod();
   const { data: lookups } = useLookups();
-  const [f, setF] = useState({ ...period, byExportMonth: false, companyId: null as number | null, companyName: '', documentTypeId: null as number | null, documentNumber: '', transactionTypeId: 0, vatTermId: 0, sort: 'DocumentNumber' });
+  const [f, setF] = useReportFilters('receivedIssued', { ...period, byExportMonth: false, companyId: null as number | null, companyName: '', documentTypeId: null as number | null, documentNumber: '', transactionTypeId: 0, vatTermId: 0, sort: 'DocumentNumber' });
   const report = useReport('receivedIssued', f, (x) =>
     api.get<Row[]>(`/reports/received-issued${qs({ from: x.from, to: x.to, byExportMonth: x.byExportMonth, companyId: x.companyId, documentTypeId: x.documentTypeId, documentNumber: x.documentNumber, transactionTypeId: x.transactionTypeId || null, vatTermId: x.vatTermId || null, sort: x.sort })}`),
   );
@@ -29,7 +28,7 @@ export function ReceivedIssued() {
   const csv = (d: Row[]): Cell[][] => [
     headers,
     ...d.map((r) => [bgDate(r.docDate), r.docType, r.docNumber, r.company, amt(r.taxBase), amt(r.vatAmount), amt(r.amount), r.term, r.deal, r.vatTerm, monthLabel(r.viesMonth), r.reference, r.optionalReference]),
-    ['Общо:', '', '', '', sum(d, (r) => r.taxBase), sum(d, (r) => r.vatAmount), sum(d, (r) => r.amount)],
+    ['Общо:', '', '', '', amt(sum(d, (r) => r.taxBase)), amt(sum(d, (r) => r.vatAmount)), amt(sum(d, (r) => r.amount))],
     [], ['Главен счетоводител: ........................................'],
   ];
   return (

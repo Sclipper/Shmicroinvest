@@ -1,9 +1,8 @@
-import { useState } from 'react';
 import { api, qs } from '../../api.ts';
 import { PartnerPicker } from '../../components/pickers.tsx';
 import { Field, Select, TextInput } from '../../components/ui.tsx';
 import { bgDate } from '../../format.ts';
-import { Amt, PeriodFields, ReportFrame, amt, periodText, useReport, useYearPeriod, type Cell } from '../../reports/common.tsx';
+import { Amt, PeriodFields, ReportFrame, amt, periodText, useReport, useYearPeriod, type Cell, useReportFilters } from '../../reports/common.tsx';
 import { useLookups } from '../../session.tsx';
 
 /** "Протоколи по чл. 117 от ЗДДС" (UI_Reporting_ICAReport, spICAReport; spec 05 7.6). */
@@ -37,7 +36,7 @@ const HEADERS = ['Номер на контиране', 'Дата на докум
 
 export function IcaReport() {
   const lookups = useLookups();
-  const [f, setF] = useState({ ...useYearPeriod(), companyId: null as number | null, companyName: '' as string | null, documentTypeId: 0, documentNumber: '', icaType: 0 });
+  const [f, setF] = useReportFilters('icaReport', { ...useYearPeriod(), companyId: null as number | null, companyName: '' as string | null, documentTypeId: 0, documentNumber: '', icaType: 0 });
   const report = useReport('icaReport', f, (x) =>
     api.get<{ rows: Row[] }>(`/vat/ica-report${qs({ from: x.from, to: x.to, companyId: x.companyId, documentTypeId: x.documentTypeId || undefined, documentNumber: x.documentNumber, icaType: x.icaType || undefined })}`),
   );

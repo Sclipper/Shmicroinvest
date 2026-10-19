@@ -1,9 +1,8 @@
-import { useState } from 'react';
 import { api, qs } from '../../api.ts';
 import { PartnerPicker } from '../../components/pickers.tsx';
 import { Field, Select } from '../../components/ui.tsx';
 import { bgDate } from '../../format.ts';
-import { AccountNumberPicker, Amt, PeriodFields, ReportFrame, amt, periodText, useReport, useYearPeriod, type Cell } from '../common.tsx';
+import { AccountNumberPicker, Amt, PeriodFields, ReportFrame, amt, periodText, useReport, useYearPeriod, type Cell, useReportFilters } from '../common.tsx';
 import { ColumnFilter, ReportTypeSelect, usePartnerAccountFilter } from './shared.tsx';
 
 interface Row {
@@ -21,7 +20,7 @@ const FILTERS: [string, string][] = [['all', 'Всички'], ['accountingNumber
 export function PartnerMovement() {
   const period = useYearPeriod();
   const accFilter = usePartnerAccountFilter();
-  const [f, setF] = useState({ ...period, type: 0, account: '', companyId: null as number | null, companyName: '', sort: 'DocumentDate', direction: 0, filterColumn: 'all', filterText: '' });
+  const [f, setF] = useReportFilters('partnerMovement', { ...period, type: 0, account: '', companyId: null as number | null, companyName: '', sort: 'DocumentDate', direction: 0, filterColumn: 'all', filterText: '' });
   const report = useReport(
     'partnerMovement',
     f,

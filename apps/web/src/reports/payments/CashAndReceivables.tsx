@@ -1,8 +1,8 @@
-import { Fragment, useState } from 'react';
+import { Fragment } from 'react';
 import { api, qs } from '../../api.ts';
 import { Field, Select } from '../../components/ui.tsx';
 import { money } from '../../format.ts';
-import { Amt, LEVELS, PeriodFields, ReportFrame, amt, periodText, useReport, useYearPeriod, type Cell } from '../common.tsx';
+import { Amt, LEVELS, PeriodFields, ReportFrame, amt, periodText, useReport, useYearPeriod, type Cell, useReportFilters } from '../common.tsx';
 import { ReportTypeSelect } from './shared.tsx';
 
 interface Row {
@@ -20,7 +20,7 @@ const COLS = ['initialDebitBalance', 'initialCreditBalance', 'debitBalance', 'cr
  */
 export function CashAndReceivables() {
   const period = useYearPeriod();
-  const [f, setF] = useState({ ...period, type: 0, level: 0 });
+  const [f, setF] = useReportFilters('cashAndReceivables', { ...period, type: 0, level: 0 });
   const report = useReport('cashAndReceivables', f, (x) => api.get<Result>(`/reports/cash-and-receivables${qs({ from: x.from, to: x.to, level: x.level })}`));
   const a = report.applied ?? f;
   const detailed = a.type === 1;

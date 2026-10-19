@@ -179,7 +179,7 @@ function csvRows(d: Result, name: (r: Row) => string, summation: boolean): Cell[
   const head = ['Начално салдо Дебит', 'Начално салдо Кредит', 'Обороти Дебит', 'Обороти Кредит', 'Крайно салдо Дебит', 'Крайно салдо Кредит'];
   const six = (r: Amounts) => AMOUNTS.map((k) => amt(r[k]));
   if (d.type === 0) return [['Сметка', 'Наименование', ...head], ...d.rows.map((r) => [r.number, name(r), ...six(r)]), ...(summation ? [['Общо:', '', ...six(d.totals)]] : [])];
-  if (d.type === 3) return [['Партньор', 'ЕИК/ДДС Номер', ...head], ...d.rows.map((r) => [r.companyName, r.vat, ...six(r)]), ...(summation ? [['Общо:', '', ...AMOUNTS.map((k) => sum(d.rows, (r) => r[k]))]] : [])];
+  if (d.type === 3) return [['Партньор', 'ЕИК/ДДС Номер', ...head], ...d.rows.map((r) => [r.companyName, r.vat, ...six(r)]), ...(summation ? [['Общо:', '', ...AMOUNTS.map((k) => amt(sum(d.rows, (r) => r[k])))]] : [])];
   if (d.type === 4) {
     const out: Cell[][] = [['Сметка', 'Наименование', 'Месец', ...head]];
     for (const g of d.groups) g.months.forEach((m, i) => out.push([i === 0 ? g.number : '', i === 0 ? name(g as unknown as Row) : '', m.month, ...six(m)]));

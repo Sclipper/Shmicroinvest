@@ -1,10 +1,9 @@
-import { useState } from 'react';
 import { api, qs } from '../../api.ts';
 import { PartnerPicker } from '../../components/pickers.tsx';
 import { Field, TextInput } from '../../components/ui.tsx';
 import { bgDate, money } from '../../format.ts';
 import { useSession } from '../../session.tsx';
-import { AccountNumberPicker, ReportFrame, amt, useReport, useYearPeriod, type Cell } from '../common.tsx';
+import { AccountNumberPicker, ReportFrame, amt, useReport, useYearPeriod, type Cell, useReportFilters } from '../common.tsx';
 import type { LettersResult, PartnerLetter } from './letters.ts';
 import { ReportTypeSelect, Sheet, SheetPrintButton, usePartnerAccountFilter } from './shared.tsx';
 
@@ -17,7 +16,7 @@ export function Overdues() {
   const period = useYearPeriod();
   const s = useSession();
   const accFilter = usePartnerAccountFilter();
-  const [f, setF] = useState({ to: period.to, type: 0, companyId: null as number | null, companyName: '', account: '' });
+  const [f, setF] = useReportFilters('overdues', { to: period.to, type: 0, companyId: null as number | null, companyName: '', account: '' });
   const report = useReport(
     'overdues',
     f,

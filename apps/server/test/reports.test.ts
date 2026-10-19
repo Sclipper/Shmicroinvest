@@ -194,3 +194,23 @@ describe('chronological register in a mixed 2025/2026 period', () => {
     expect(old.body.map((l: any) => [l.debitAccount, l.amount])).toEqual([['503', '195.58']]);
   });
 });
+
+describe('report settings (05 1.2, 06 3.4)', () => {
+  it('stores the last filter of a report per user', async () => {
+    expect((await get('/settings/report-filters/trialBalance')).value).toBeNull();
+    const put = await t.call('PUT', '/settings/report-filters/trialBalance', { from: '2026-03-01', to: '2026-03-31', account: '501', level: 3 });
+    expect(put.status, put.text).toBe(200);
+    expect((await get('/settings/report-filters/trialBalance')).value).toEqual({ from: '2026-03-01', to: '2026-03-31', account: '501', level: 3 });
+    await asLimitedUser(t, 'Друг потребител', {}, async () => {
+      expect((await get('/settings/report-filters/trialBalance')).value).toBeNull();
+    });
+    expect((await t.call('GET', '/settings/report-filters/bad%20name')).status).toBe(400);
+  });
+
+  it('"Визуализиране на дата и час в справки" is a basic setting, off by default', async () => {
+    const list = (await get('/settings')) as { key: string; value: string; label: string }[];
+    expect(list.find((s) => s.key === 'IsVisualizeDateTimeOnReportingEnabled')).toMatchObject({ value: 'False', label: 'Визуализиране на дата и час в справки' });
+    expect((await t.call('PUT', '/settings', { IsVisualizeDateTimeOnReportingEnabled: 'True' })).status).toBe(200);
+    expect((await get('/session')).settings.IsVisualizeDateTimeOnReportingEnabled).toBe('True');
+  });
+});

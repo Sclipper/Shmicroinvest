@@ -1,9 +1,8 @@
-import { useState } from 'react';
 import { api, qs } from '../../api.ts';
 import { PartnerPicker } from '../../components/pickers.tsx';
 import { Field, Select, TextInput } from '../../components/ui.tsx';
 import { bgDate } from '../../format.ts';
-import { AccountNumberPicker, Amt, PeriodFields, ReportFrame, amt, periodText, useReport, useYearPeriod, type Cell } from '../common.tsx';
+import { AccountNumberPicker, Amt, PeriodFields, ReportFrame, amt, periodText, useReport, useYearPeriod, type Cell, useReportFilters } from '../common.tsx';
 import { DocumentTypeSelect, usePartnerAccountFilter } from './shared.tsx';
 
 interface Row {
@@ -20,7 +19,7 @@ const SORTS: [string, string][] = [['Partner', 'Партньор'], ['RefDocumen
 export function PaymentsReport() {
   const period = useYearPeriod();
   const accFilter = usePartnerAccountFilter();
-  const [f, setF] = useState({ ...period, companyId: null as number | null, companyName: '', account: '', documentTypeId: null as number | null, documentNumber: '', fromAmount: '', toAmount: '', term: '', sort: 'Partner' });
+  const [f, setF] = useReportFilters('paymentsReport', { ...period, companyId: null as number | null, companyName: '', account: '', documentTypeId: null as number | null, documentNumber: '', fromAmount: '', toAmount: '', term: '', sort: 'Partner' });
   const report = useReport('paymentsReport', f, (x) =>
     api.get<Row[]>(`/reports/payments${qs({ from: x.from, to: x.to, companyId: x.companyId, account: x.account, documentTypeId: x.documentTypeId, documentNumber: x.documentNumber, fromAmount: x.fromAmount.replace(',', '.'), toAmount: x.toAmount.replace(',', '.'), term: x.term, sort: x.sort })}`),
   (x) => [x.fromAmount, x.toAmount].some((v) => v && Number.isNaN(Number(v.replace(',', '.')))) ? 'Невалидна сума.' : null);

@@ -1,9 +1,9 @@
-import { Fragment, useState } from 'react';
+import { Fragment } from 'react';
 import { api, qs } from '../../api.ts';
 import { PartnerPicker } from '../../components/pickers.tsx';
 import { Checkbox, Field, Select, TextInput } from '../../components/ui.tsx';
 import { bgDate, money } from '../../format.ts';
-import { AccountNumberPicker, Amt, ReportFrame, amt, useReport, useYearPeriod, type Cell } from '../common.tsx';
+import { AccountNumberPicker, Amt, ReportFrame, amt, useReport, useYearPeriod, type Cell, useReportFilters } from '../common.tsx';
 import { ColumnFilter, DocumentTypeSelect, ReportTypeSelect, usePartnerAccountFilter } from './shared.tsx';
 
 type Level = 'partner' | 'document' | 'accounting';
@@ -42,7 +42,7 @@ const total = <R,>(rows: R[], pick: (r: R) => string) => Math.round(rows.reduce(
 export function PartnerDebts() {
   const period = useYearPeriod();
   const accFilter = usePartnerAccountFilter();
-  const [f, setF] = useState({
+  const [f, setF] = useReportFilters('partnerDebts', {
     to: period.to, type: 0, level: 'partner' as Level, account: '', companyId: null as number | null, companyName: '',
     documentTypeId: null as number | null, documentNumber: '', sort: 'CompanyName', closed: false, expired: false, filterColumn: 'all', filterText: '',
   });

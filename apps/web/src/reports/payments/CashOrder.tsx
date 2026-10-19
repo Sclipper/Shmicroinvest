@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { api, qs } from '../../api.ts';
 import { Field, TextInput } from '../../components/ui.tsx';
 import { bgDate, money } from '../../format.ts';
-import { PeriodFields, ReportFrame, amt, periodText, useReport, useYearPeriod, type Cell } from '../common.tsx';
+import { PeriodFields, ReportFrame, amt, periodText, useReport, useYearPeriod, type Cell, useReportFilters } from '../common.tsx';
 import { CashAccountSelect, DocumentTypeSelect, ReportTypeSelect, Sheet, SheetPrintButton } from './shared.tsx';
 
 interface Line { accountingNumber: string; debitAccount: string; creditAccount: string; amount: string; documentNumber: string; date: string; term: string; companyName: string }
@@ -16,7 +16,7 @@ interface Signatories { sender: string; senderPosition: string; recipient: strin
 /** Касов ордер ПКО/РКО (spec 05 6.9): filled cash-order forms, two per sheet. */
 export function CashOrder() {
   const period = useYearPeriod();
-  const [f, setF] = useState({ ...period, type: 0, documentTypeId: 8, account: '501', companyName: '', fromNumber: '', toNumber: '' });
+  const [f, setF] = useReportFilters('cashOrder', { ...period, type: 0, documentTypeId: 8, account: '501', companyName: '', fromNumber: '', toNumber: '' });
   const [sig, setSig] = useState<Signatories>({ sender: '', senderPosition: '', recipient: '', recipientPosition: '', accountant: '' });
   const report = useReport(
     'cashOrder',
