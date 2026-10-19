@@ -11,7 +11,7 @@ import {
   columnIndex, columnLetters, validateExcelMapping, parseExcelOperationRow, parseDirection, parseCharacter, icaDefaultTerm, cellDate, readSetupSheet,
   toEuro, convertOpenings, defaultEuroMapping, accountDifference, convertBalanceToEuro, euroBalanceKind,
   backupFileName, parseBackupFileName, sanitizeCompanyName, compareVersions,
-  parseExportReport, bindNamedParameters, writeExportCsv, exportFileName, checkExportParameters, isReadOnlyQuery,
+  parseExportReport, bindNamedParameters, writeExportCsv, exportFileName, checkExportParameters, isReadOnlyQuery, forbiddenQueryReference,
   msg, parseImportDate, fromOADate,
   type TransferData, type BankTemplateDef, type BankMapContext, type ExcelAccountInfo, type ExcelOperationsContext, type ExcelSheet,
 } from '../src/index.ts';
@@ -521,6 +521,15 @@ describe('report exports (04a 8.3)', () => {
     expect(isReadOnlyQuery('select 1')).toBe(true);
     expect(isReadOnlyQuery('delete from x')).toBe(false);
     expect(isReadOnlyQuery('select 1; drop table x')).toBe(false);
+  });
+  it('protected names in an export query', () => {
+    expect(forbiddenQueryReference('select name, password_hash from users')).toBe('users');
+    expect(forbiddenQueryReference('select u.name from public."USERS" u')).toBe('users');
+    expect(forbiddenQueryReference('select value from configuration where key = @k')).toBe('configuration');
+    expect(forbiddenQueryReference("select pg_read_file('/etc/passwd')")).toBe('pg_read_file');
+    expect(forbiddenQueryReference('select $q$x$q$')).toBe('$$');
+    expect(forbiddenQueryReference("select 'users', number from accounts -- users\n /* configuration */")).toBeNull();
+    expect(forbiddenQueryReference('select number, description from accounts where is_euro')).toBeNull();
   });
   it('CSV has a trailing separator on every line', () => {
     expect(writeExportCsv([{ a: 1, b: 'x' }, { a: 2, b: null }], ';')).toBe('1;x;\r\n2;;\r\n');

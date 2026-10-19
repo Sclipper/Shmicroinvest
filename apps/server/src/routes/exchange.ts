@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import {
@@ -35,6 +35,11 @@ const ENTITIES = ['operations', 'partners', 'chart', 'products', 'initialBalance
  * unknown key is allowed), so the menu group's key is checked as well.
  */
 const REPORT_EXPORT = ['UI_Edit_Administration', 'UI_Edit_Administration_ReportExport'] as const;
+/** Report definitions carry SQL: only an administrator may add or remove them. */
+const requireAdmin: MiddlewareHandler<AppEnv> = async (c, next) => {
+  if (!c.var.user.isAdmin) throw new ApiError(403, 'Нямате права за тази операция.');
+  await next();
+};
 
 export const exchangeRoutes = new Hono<AppEnv>()
   // ------------------------------------------------------------------ XML (04a 3)
@@ -165,12 +170,12 @@ export const exchangeRoutes = new Hono<AppEnv>()
 
   // ------------------------------------------------------------------ report exports (04a 8.3)
   .get('/exchange/report-exports', requirePermission(...REPORT_EXPORT), async (c) => c.json(await listExportReports(c.var.db)))
-  .post('/exchange/report-exports', requirePermission(...REPORT_EXPORT), async (c) => {
+  .post('/exchange/report-exports', requirePermission(...REPORT_EXPORT), requireAdmin, async (c) => {
     const up = await readUpload(c);
     const r = await importStep(() => addExportReport(c.var.db, up.fileName, decodeText(up.bytes)), false);
     return c.json(r, 201);
   })
-  .delete('/exchange/report-exports/:id', requirePermission(...REPORT_EXPORT), async (c) => {
+  .delete('/exchange/report-exports/:id', requirePermission(...REPORT_EXPORT), requireAdmin, async (c) => {
     await c.var.db.delete(s.exportReports).where(eq(s.exportReports.id, Number(c.req.param('id'))));
     return c.json({ ok: true });
   })

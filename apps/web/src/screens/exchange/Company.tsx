@@ -360,8 +360,8 @@ export function ReportExports() {
     <div className="flex h-full min-h-0 flex-col">
       <CommandBar>
         <FileInput file={file} onChange={setFile} accept=".xml" label="Дефиниция (XML)..." />
-        <Button disabled={!file} onClick={add}>Добавяне</Button>
-        <Button variant="danger" disabled={!r} onClick={async () => { if (r && (await dialogs.confirm(`Премахване на „${r.name}“?`))) { await api.del(`/exchange/report-exports/${r.id}`); setSel(null); await list.refetch(); } }}>Премахване</Button>
+        <Button disabled={!file || !s.user.isAdmin} onClick={add}>Добавяне</Button>
+        <Button variant="danger" disabled={!r || !s.user.isAdmin} onClick={async () => { if (r && (await dialogs.confirm(`Премахване на „${r.name}“?`))) { await api.del(`/exchange/report-exports/${r.id}`); setSel(null); await list.refetch(); } }}>Премахване</Button>
       </CommandBar>
       <div className="flex min-h-0 flex-1">
         <div className="w-80 shrink-0 overflow-auto border-r border-slate-300">

@@ -847,5 +847,36 @@ describe('report exports (04a 8.3)', () => {
     } finally {
       expect((await call('POST', '/login', { companyDb: t.companyDb, userId: adminId, password: 'secret1' })).status).toBe(200);
     }
+    // With the permission but not an administrator: may run, may not add or remove definitions.
+    const op = await call('POST', '/roles', { name: 'Оператор експорти' });
+    const u2 = await call('POST', '/users', { name: 'Оператор експорти', password: 'secret1', roleId: op.body.id });
+    expect(u2.status, u2.text).toBe(201);
+    expect((await call('POST', '/login', { companyDb: t.companyDb, userId: u2.body.id, password: 'secret1' })).status).toBe(200);
+    try {
+      expect((await call('POST', `/exchange/report-exports/${list[0]!.id}/run`, { parameters: { '@prefix': '41' } })).status).toBe(200);
+      expect((await call('POST', '/exchange/report-exports', { fileName: 'y.xml', text: '<x/>' })).status).toBe(403);
+      expect((await call('DELETE', `/exchange/report-exports/${list[0]!.id}`)).status).toBe(403);
+    } finally {
+      expect((await call('POST', '/login', { companyDb: t.companyDb, userId: adminId, password: 'secret1' })).status).toBe(200);
+    }
+  });
+
+  it('refuses queries on the users and other protected names', async () => {
+    const def = (query: string) => `<ExportReport xmlns="http://schemas.microinvest.net/ExportReports" xmlns:i="http://www.w3.org/2001/XMLSchema-instance">
+      <Name>Опасен</Name><Description>x</Description><Parameters/>
+      <Documents><ExportDocument i:type="CSVExportDocument"><Name>a</Name><FileNameFormat>x</FileNameFormat><Query>${query}</Query><Separator>;</Separator></ExportDocument></Documents>
+    </ExportReport>`;
+    for (const q of ['select name, password_hash from users', 'select * from "Users"', 'select key, value from configuration', 'select pg_read_file(\'/etc/passwd\')', 'select usename, passwd from pg_shadow']) {
+      const up = await call('POST', '/exchange/report-exports', { fileName: 'x.xml', text: def(q) });
+      expect(up.status, up.text).toBe(201);
+      const r = await call('POST', `/exchange/report-exports/${up.body.id}/run`, { parameters: {} });
+      expect(r.status, q).toBe(422);
+      expect(keys(r), q).toEqual(['strCannotExecuteSQLQuery', 'detail']);
+      expect(r.text).not.toContain('scrypt');
+      await call('DELETE', `/exchange/report-exports/${up.body.id}`);
+    }
+    // A literal that merely mentions the word is fine.
+    const ok = await call('POST', '/exchange/report-exports', { fileName: 'x.xml', text: def("select 'users' as label from accounts limit 1") });
+    expect((await raw(t, 'POST', `/exchange/report-exports/${ok.body.id}/run`, { parameters: {} })).status).toBe(200);
   });
 });
