@@ -163,14 +163,18 @@ export const accountingDetails = pgTable(
     index('ix_details_accounting').on(t.accountingId),
     index('ix_details_account').on(t.accountId),
     index('ix_details_company').on(t.companyId),
+    // The credit-side account filters of the registers (Кредит / "сметка" on either side).
+    index('ix_details_ref_account').on(t.refAccountId),
   ],
 );
 
+// The accounting_id indexes below: deleting entries (a re-concluded year drops all of its
+// opening entries) cascades into these tables, a scan of each per entry without them.
 export const accountingExtendedDetails = pgTable('accounting_extended_details', {
   id: integer('id').primaryKey().generatedByDefaultAsIdentity(),
   accountingId: integer('accounting_id').notNull().references(() => accountings.id, { onDelete: 'cascade' }),
   vatDiaryCode: varchar('vat_diary_code', { length: 5 }).notNull(),
-});
+}, (t) => [index('ix_extended_details_accounting').on(t.accountingId)]);
 
 export const accountingAttachments = pgTable('accounting_attachments', {
   id: integer('id').primaryKey().generatedByDefaultAsIdentity(),
@@ -180,7 +184,7 @@ export const accountingAttachments = pgTable('accounting_attachments', {
   mimeType: varchar('mime_type', { length: 255 }).notNull().default('application/octet-stream'),
   size: integer('size').notNull().default(0),
   data: bytea('data').notNull(),
-});
+}, (t) => [index('ix_attachments_accounting').on(t.accountingId)]);
 
 /** Payment-to-liability matching (spec 02c). */
 export const accountingPaymentDetails = pgTable(
@@ -195,7 +199,8 @@ export const accountingPaymentDetails = pgTable(
     amount: money('amount').notNull(),
     currencyAmount: money('currency_amount').notNull().default('0'),
   },
-  (t) => [index('ix_apd_payment').on(t.paymentAccountingId), index('ix_apd_ref').on(t.refAccountingId)],
+  // ix_apd_document: deleting a document that no entry uses any more checks the links.
+  (t) => [index('ix_apd_payment').on(t.paymentAccountingId), index('ix_apd_ref').on(t.refAccountingId), index('ix_apd_document').on(t.documentId)],
 );
 
 export const accountInitialBalances = pgTable('account_initial_balances', {
@@ -205,4 +210,4 @@ export const accountInitialBalances = pgTable('account_initial_balances', {
   companyId: integer('company_id').references(() => companies.id),
   documentId: integer('document_id').references(() => documents.id),
   financialYearId: integer('financial_year_id').notNull().references(() => financialYears.id, { onDelete: 'cascade' }),
-});
+}, (t) => [index('ix_initial_balances_accounting').on(t.accountingId)]);

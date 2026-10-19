@@ -61,7 +61,7 @@ export const bankImportedRows = pgTable('bank_imported_rows', {
   rowKey: varchar('row_key', { length: 32 }).notNull(),
   accountingId: integer('accounting_id').notNull().references(() => accountings.id, { onDelete: 'cascade' }),
   importedAt: timestamp('imported_at', { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [index('ix_bank_imported_rows_key').on(t.iban, t.rowKey)]);
+}, (t) => [index('ix_bank_imported_rows_key').on(t.iban, t.rowKey), index('ix_bank_imported_rows_accounting').on(t.accountingId)]);
 
 /** ImportedPeriods (ТРЗ Pro, ImportType 51). */
 export const importedPeriods = pgTable('imported_periods', {
