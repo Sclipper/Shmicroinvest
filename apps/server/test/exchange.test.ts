@@ -778,10 +778,15 @@ describe('euro conversion (04b 4)', { timeout: 60_000 }, () => {
       expect((await y.call('POST', '/accounts', { parentId: y.acc('504'), description: 'Банка USD', accountCategoryId: 27, currencyId: 3 })).status).toBe(201);
       await y.reloadAccounts();
       const usd = ((await y.call('GET', '/accounts')).body as { number: string }[]).map((a) => a.number).find((n) => n.startsWith('504/'))!;
+      expect((await y.call('POST', '/accounts', { parentId: y.acc('504'), description: 'Банка EUR', accountCategoryId: 27, currencyId: 2 })).status).toBe(201);
+      await y.reloadAccounts();
+      const eurAcc = ((await y.call('GET', '/accounts')).body as { number: string }[]).map((a) => a.number).find((n) => n.startsWith('504/') && n !== usd)!;
       await entry(y, { date: '2025-11-10', docNumber: 'F-91', partner: cl, dr: [['411', '1955.83']], cr: [['702', '1955.83']] });
       await entry(y, { date: '2025-11-11', docNumber: 'F-92', partner: cl, dr: [['411', '977.92']], cr: [['702', '977.92']] });
       // USD 100 000 at 1.80 BGN: EUR rate round(1.8 / 1.95583, 5) = 0.92033 -> 92 033.00 (not 180 000 / 1.95583 = 92 032.54).
       await entry(y, { date: '2025-12-01', docNumber: 'B-1', dr: [[usd, '180000', { currencyAmount: '100000' }]], cr: [['101', '180000']] });
+      // A EUR account opens with its EUR balance: 1000 x 10.01 EUR booked at 19.58 BGN -> 10 010.00 (not 19 580 / 1.95583 = 10 011.10).
+      await entry(y, { date: '2025-12-02', docNumber: 'B-2', dr: [[eurAcc, '19580', { currencyAmount: '10010' }]], cr: [['101', '19580']] });
       expect((await y.call('POST', '/years', { year: 2026 })).status).toBe(201);
       const years = (await y.call('GET', '/years')).body as { id: number; year: number }[];
       const diff = (await y.call('GET', '/euro-conversion')).body.euroAccounts.find((x: { number: string }) => x.number === '123').id;
@@ -810,6 +815,7 @@ describe('euro conversion (04b 4)', { timeout: 60_000 }, () => {
       expect([n91.source, n91.dr, n92.dr]).toEqual(['euro-conversion', '1000.00', '500.00']);
       expect(n91.id).not.toBe(f91.id);
       expect(after.filter((l) => l.number === usd).map((l) => [l.dr, l.iso, l.cur, l.rate])).toEqual([['92033.00', 'USD', '100000.00', '0.920330']]);
+      expect(after.filter((l) => l.number === eurAcc).map((l) => [l.dr, l.iso, l.cur])).toEqual([['10010.00', null, null]]);
       // The binding follows the new opening: F-91 600 open, F-92 400 open (its 2025 link moved onto the opening).
       const links = await queryRows<{ payment_accounting_id: number; ref_accounting_id: number }>(d, sql`SELECT payment_accounting_id, ref_accounting_id FROM accounting_payment_details ORDER BY payment_accounting_id`);
       expect(links).toEqual([{ payment_accounting_id: pay, ref_accounting_id: n91.id }, { payment_accounting_id: pay2, ref_accounting_id: n92.id }]);
