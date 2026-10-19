@@ -72,9 +72,18 @@ export function maskSecret(secret: string | null | undefined): string {
   return secret ? '•'.repeat(8) : '';
 }
 
-/** Attachment name of a report: short name + end date "yyyy.MM.dd" + .xlsx (05 11.1). */
-export function reportAttachmentName(shortName: string, endDate?: string | null): string {
+/** Attachment formats of "Изпращане по e-mail" (05 11.3): PDF by default, Excel as before. */
+export type ReportAttachmentFormat = 'pdf' | 'xlsx';
+
+/** Attachment name of a report: short name + end date "yyyy.MM.dd" + .pdf / .xlsx (05 11.1). */
+export function reportAttachmentName(shortName: string, endDate?: string | null, format: ReportAttachmentFormat = 'xlsx'): string {
   const clean = shortName.replace(/[\\/:*?"<>|]/g, '_').trim() || 'Справка';
   const date = endDate && /^\d{4}-\d{2}-\d{2}$/.test(endDate) ? ` ${endDate.replace(/-/g, '.')}` : '';
-  return `${clean}${date}.xlsx`;
+  return `${clean}${date}.${format}`;
+}
+
+/** The typed attachment name with the extension of the chosen format (an empty name gets the report title). */
+export function withAttachmentExtension(fileName: string, format: ReportAttachmentFormat, fallback: string): string {
+  const base = fileName.trim().replace(/\.(pdf|xlsx|docx|csv)$/i, '').trim() || fallback.replace(/[\\/:*?"<>|]/g, '_').trim() || 'Справка';
+  return `${base}.${format}`;
 }

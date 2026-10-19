@@ -35,6 +35,8 @@ export function ConfirmationLetter() {
       subtitle={`Към дата: ${bgDate(a.to)}`}
       report={report}
       isEmpty={(d) => d.letters.length === 0}
+      // One letter: the e-mail goes to that partner.
+      emailPartnerId={(d) => (d.letters.length === 1 ? d.letters[0]!.company.id : null)}
       status={(d) => `${d.letters.length} писма`}
       csvName={`Потвърдително писмо_${a.to}`}
       csv={csv}

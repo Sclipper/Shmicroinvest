@@ -1,4 +1,7 @@
+import { readFile } from 'node:fs/promises';
 import { expect, test, type Page } from '@playwright/test';
+import { extractPdfText, pdfPageCount } from '../../packages/core/src/pdf.ts';
+import { unzipStore } from '../../packages/core/src/xlsx.ts';
 import { ADMIN, accountId, activeTab, api, menu, moduleCompany } from './fixtures.ts';
 
 /**
@@ -207,6 +210,10 @@ test.describe('shell, settings and reports', () => {
     const tab = await runTrialBalance(page);
     await tab.getByRole('button', { name: 'Изпращане по e-mail' }).click();
     const dialog = page.getByRole('dialog').filter({ hasText: 'Прикачен файл' });
+    // PDF by default; Excel is still available and renames the attachment.
+    await expect(dialog.getByLabel('Формат на прикачения файл')).toHaveValue('pdf');
+    await expect(dialog.getByLabel('Прикачен файл')).toHaveValue(/^Оборотна ведомост 2026\.12\.31\.pdf$/);
+    await dialog.getByLabel('Формат на прикачения файл').selectOption('xlsx');
     await expect(dialog.getByLabel('Прикачен файл')).toHaveValue(/^Оборотна ведомост 2026\.12\.31\.xlsx$/);
     await dialog.getByLabel('До', { exact: true }).fill('лошо');
     await dialog.getByLabel('Копие до').fill('x@');
@@ -216,11 +223,89 @@ test.describe('shell, settings and reports', () => {
     await page.getByRole('button', { name: 'OK' }).click();
     await dialog.getByLabel('До', { exact: true }).fill('boss@panels.bg');
     await dialog.getByLabel('Копие до').fill('');
+    const request = page.waitForRequest((r) => r.url().endsWith('/api/email/report'));
     await dialog.getByRole('button', { name: 'Изпрати' }).click();
     await expect(page.getByText('Изпращането е успешно!')).toBeVisible();
     await page.getByRole('button', { name: 'OK' }).click();
+    const sent = (await request).postDataJSON() as { attachment: { fileName: string; contentBase64: string } };
+    expect(sent.attachment.fileName).toBe('Оборотна ведомост 2026.12.31.xlsx');
+    expect(Buffer.from(sent.attachment.contentBase64, 'base64').subarray(0, 2).toString('latin1')).toBe('PK');
     const log = await api<{ description: string }[]>(page, 'GET', '/activity?activity=export&entityType=turnoverReport');
     expect(log[0]!.description).toBe('Оборотна ведомост: e-mail до boss@panels.bg');
+  });
+
+  test('reports: PDF and Word export of the report viewer, logged like Excel', async ({ page }) => {
+    await openApp(page);
+    const tab = await runTrialBalance(page);
+
+    let download = page.waitForEvent('download');
+    await tab.getByRole('button', { name: 'Експорт PDF' }).click();
+    const pdfFile = await download;
+    expect(pdfFile.suggestedFilename()).toMatch(/^ОВ_2026-01-01_2026-12-31\.pdf$/);
+    const pdf = new Uint8Array(await readFile(await pdfFile.path()));
+    expect(Buffer.from(pdf.subarray(0, 8)).toString('latin1')).toBe('%PDF-1.7');
+    expect(pdfPageCount(pdf)).toBeGreaterThanOrEqual(1);
+    const text = (await extractPdfText(pdf)).join('\n');
+    expect(text).toContain('Оборотна ведомост');
+    expect(text).toContain(COMPANY);
+    expect(text).toContain('Начално салдо Дебит');
+    expect(text).toContain('1 000,00');
+    expect(text).toContain('Страница 1 от');
+
+    download = page.waitForEvent('download');
+    await tab.getByRole('button', { name: 'Експорт Word' }).click();
+    const docxFile = await download;
+    expect(docxFile.suggestedFilename()).toMatch(/^ОВ_2026-01-01_2026-12-31\.docx$/);
+    const files = unzipStore(new Uint8Array(await readFile(await docxFile.path())));
+    const xml = new TextDecoder().decode(files.get('word/document.xml'));
+    expect(xml).toContain('>Оборотна ведомост<');
+    expect(xml).toContain('<w:tblHeader/>');
+    expect(xml).toContain('1 000,00');
+
+    const log = await api<{ description: string }[]>(page, 'GET', '/activity?activity=export&entityType=turnoverReport');
+    expect(log.slice(0, 2).map((l) => l.description).sort()).toEqual(['Оборотна ведомост (PDF)', 'Оборотна ведомост (Word)']);
+  });
+
+  test('e-mail: a report on one partner goes to the partner e-mail with the PDF attached', async ({ page }) => {
+    await openApp(page);
+    await api(page, 'PUT', '/settings/smtp', { host: 'smtp.panels.bg', port: 587, userName: 'office', password: 'Tajna-e2e', email: 'office@panels.bg', enableSsl: true });
+    const id = uid();
+    const name = `Е2Е Имейл ${id}`;
+    const email = `klient${id}@klient.bg`;
+    const cli = (await api<{ id: number }>(page, 'POST', '/partners', { name, email, accountIds: [await accountId(page, '411')] })).id;
+    await post(page, { date: '2026-03-01', docType: 10, docNumber: `Ф-${id}`, companyId: cli, dr: ['411', '120'], cr: ['702', '120'] });
+    // The report opens with this filter (the user's last run, 05 1.2).
+    await api(page, 'PUT', '/settings/report-filters/partnerTurnover', { from: '2026-01-01', to: '2026-12-31', account: '411', zero: false, byExportMonth: false, companyId: cli, companyName: name });
+
+    const restored = page.waitForResponse((r) => r.url().includes('/settings/report-filters/partnerTurnover') && r.request().method() === 'GET');
+    await menu(page, 'Справки', 'Фирми', 'Оборотна ведомост по партньори');
+    await restored;
+    const tab = activeTab(page);
+    await expect(tab.getByPlaceholder('Партньор (F4)')).toHaveValue(name);
+    await tab.getByRole('button', { name: 'Справка', exact: true }).click();
+    await expect(tab.locator('table.grid-table')).toContainText(name);
+
+    await tab.getByRole('button', { name: 'Изпращане по e-mail' }).click();
+    const dialog = page.getByRole('dialog').filter({ hasText: 'Прикачен файл' });
+    await expect(dialog.getByLabel('До', { exact: true })).toHaveValue(email);
+    await expect(dialog.getByLabel('Формат на прикачения файл')).toHaveValue('pdf');
+    await expect(dialog.getByLabel('Прикачен файл')).toHaveValue('Задължения_вземания по партньори 2026.12.31.pdf');
+    const request = page.waitForRequest((r) => r.url().endsWith('/api/email/report'));
+    await dialog.getByRole('button', { name: 'Изпрати' }).click();
+    await expect(page.getByText('Изпращането е успешно!')).toBeVisible();
+    await page.getByRole('button', { name: 'OK' }).click();
+
+    const sent = (await request).postDataJSON() as { to: string; report: string; attachment: { fileName: string; contentBase64: string } };
+    expect(sent.to).toBe(email);
+    expect(sent.attachment.fileName).toBe('Задължения_вземания по партньори 2026.12.31.pdf');
+    const pdf = new Uint8Array(Buffer.from(sent.attachment.contentBase64, 'base64'));
+    expect(Buffer.from(pdf.subarray(0, 5)).toString('latin1')).toBe('%PDF-');
+    const text = (await extractPdfText(pdf)).join('\n');
+    expect(text).toContain('Задължения/вземания по партньори');
+    expect(text).toContain(name);
+    expect(text).toContain('120,00');
+    const log = await api<{ description: string }[]>(page, 'GET', '/activity?activity=export&entityType=report');
+    expect(log[0]!.description).toBe(`Задължения/вземания по партньори: e-mail до ${email}`);
   });
 
   test('new company carries over the accounting and bank-import templates', async ({ page }) => {
