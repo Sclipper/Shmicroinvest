@@ -146,6 +146,7 @@ export const EXCHANGE_MESSAGES = {
   strDeltaConversionAccountingError: 'Операцията в таблица {0} с AccountingID = {1} не може да бъде записана:',
   strDeltaConversionOpeningError: 'Началното салдо на сметка {0} от таблица {1} не може да бъде записано:',
   strDeltaConversionEuroYearSkipped: 'Таблица {0} не е прехвърлена: от 2026 г. основната валута е евро. Използвайте преминаването към евро след импорта.',
+  strDeltaConversionEuroChartCopied: 'Сметкопланът в евро (от 2026 г.) е заменен с копие на прехвърления сметкоплан, за да се пренесат салдата в сметки със същия номер и смисъл.',
 
   // --- report exports (04a 8.3)
   strExportReportParameterNotFilled: 'Параметър "{0}" не е попълнен.',

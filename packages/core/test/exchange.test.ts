@@ -487,6 +487,8 @@ describe('euro conversion (04b 4)', () => {
     // BGN converted per side; EUR accounts copy their currency amounts.
     expect(show(convertBalanceToEuro('bgn', sides('100', '0.01'), f))).toEqual(['51.13', '0.01', '0.00', '0.00', null, null, null]);
     expect(show(convertBalanceToEuro('eur', sides('195.58', '0', '100'), f))).toEqual(['100.00', '0.00', '0.00', '0.00', null, null, null]);
+    // ... and an EUR account without currency amounts (Delta conversion) keeps its leva at the fixed rate.
+    expect(show(convertBalanceToEuro('eur', sides('1955.83', '0'), f))).toEqual(['1000.00', '0.00', '0.00', '0.00', null, null, null]);
   });
 });
 

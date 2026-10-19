@@ -163,9 +163,9 @@ describe('Delta conversion: operations, chart and partners', () => {
       type: 'all', myCompany: true, accounts: 12, partners: 3, partnersMatched: 1, accountings: 3, openingBalances: 3, message: 'Прехвърлянето завърши.',
       years: [{ year: 2009, table: 'Year2009', accountings: 3, openingBalances: 3, skipped: 0 }],
     });
-    // Year2007 is before 2008; Year2026 is a euro year and is skipped with a warning.
-    expect(body.warnings.map((w: { key: string }) => w.key)).toEqual(['strDeltaConversionEuroYearSkipped']);
-    expect(body.warnings[0].text).toContain('Year2026');
+    // The EUR chart is a copy of the converted chart; Year2007 is before 2008; Year2026 is a euro year and is skipped with a warning.
+    expect(body.warnings.map((w: { key: string }) => w.key)).toEqual(['strDeltaConversionEuroChartCopied', 'strDeltaConversionEuroYearSkipped']);
+    expect(body.warnings[1].text).toContain('Year2026');
   });
 
   it('updates the company data from System', async () => {
@@ -189,9 +189,13 @@ describe('Delta conversion: operations, chart and partners', () => {
     expect(by('453/2')!.category).toBe(17);
     expect(by('504/1')!.currency).toBe('EUR');
     expect(by('504')!.currency).toBe('BGN');
-    // The EUR chart of the active year is untouched.
-    const [{ n }] = (await rows<{ n: number }>(db, sql`SELECT count(*)::int AS n FROM accounts WHERE is_euro AND number = '411/1'`)) as [{ n: number }];
-    expect(n).toBe(0);
+    // The EUR chart (from 2026) is a copy of it, so the balances carried to 2026 keep their accounts' meaning.
+    const eur = await rows<any>(db, sql`
+      SELECT a.number, a.description, p.number AS parent, a.account_category_id AS category, c.iso_code AS currency
+      FROM accounts a JOIN accounts p ON p.id = a.parent_id JOIN currencies c ON c.id = a.currency_id
+      WHERE a.is_euro AND a.number <> '0' ORDER BY a.number`);
+    expect(eur.map((a) => [a.number, a.description, a.parent, a.category])).toEqual(chart.map((a) => [a.number, a.description, a.parent, a.category]));
+    expect(eur.find((a) => a.number === '411/1')!.currency).toBe('EUR');
   });
 
   it('converts the partners, matching duplicates by Bulstat and ignoring the placeholder Bulstat', async () => {

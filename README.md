@@ -68,6 +68,8 @@ pnpm test:e2e       # Playwright: builds the UI and starts a fresh server on :43
 
 The e2e suite includes a smoke test that opens every menu screen and runs every report with its default filter.
 
+The Microinvest Delta conversion has a pilot (`apps/server/test/deltaPilot.test.ts`): a synthetic legacy company over 2024-2025 (VAT sales and purchases, currencies, materials, fixed assets, payments, year-end closing) is converted, and the totals computed from the legacy tables are compared with the trial balance, the VAT diaries, the partner balances and the 2026 euro openings. The default run is a small regression version; `DELTA_PILOT=full pnpm --filter @shmi/server exec vitest run test/deltaPilot.test.ts` runs the large one (400 partners, about 20 000 turnover rows, about 2 minutes).
+
 ## Known limitations
 
 - Some Bulgarian texts have no wording in the spec; those were written for this project.
