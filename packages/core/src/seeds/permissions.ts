@@ -137,6 +137,8 @@ export const PERMISSIONS: [number, string, string, number | null, number][] = [
   [143, "UI_Reporting_AccountingReschedules", "Разсрочване на приходи и разходи", 7, 14],
   [144, "UI_Microinvest_Support", "Microinvest помощ", 130, 9],
   [145, "UI_Help_RemoteConnection", "Дистанционен сервиз", 10, 4],
+  // Delta has the key but seeds no row for it (03b 1); seeded here so the report can be restricted.
+  [146, "UI_Reporting_Depreciations_InventoryListMOL", "Инвентаризационен опис на ДМА", 42, 5],
 ];
 
 /** Intended seeded denials (V1.01.033 meaning), referenced by key (spec 01b 3.5). */

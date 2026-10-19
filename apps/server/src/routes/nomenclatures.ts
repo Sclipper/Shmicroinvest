@@ -358,6 +358,12 @@ export const nomenclatureRoutes = new Hono<AppEnv>()
     const { db, user } = c.var;
     const [{ n }] = (await db.select({ n: sql<number>`count(*)::int` }).from(s.accountingDetails).where(eq(s.accountingDetails.companyId, id))) as [{ n: number }];
     if (n > 0) throw badRequest('Партньорът не може да бъде изтрит, тъй като участва в операции!');
+    // strCompanyIsConnectedToTemplate (03a 2.11): accounting templates and bank-import rules.
+    const inTemplates = (await exec(db, sql`
+      SELECT 1 FROM accounting_template_details WHERE company_id = ${id}
+      UNION ALL SELECT 1 FROM bank_template_details WHERE company_id = ${id}
+      UNION ALL SELECT 1 FROM bank_templates WHERE company_id = ${id} LIMIT 1`)).rows;
+    if (inTemplates.length) throw badRequest('Партньорът не може да бъде изтрит, тъй като участва в шаблони/шаблони за банков импорт!');
     await db.transaction(async (tx) => {
       await tx.update(s.companies).set({ isDeleted: true, groupId: 1 }).where(eq(s.companies.id, id));
       await tx.delete(s.companyAccounts).where(eq(s.companyAccounts.companyId, id));

@@ -67,6 +67,16 @@ describe('chart of accounts rules (03a 1.5-1.9)', () => {
     expect((await call('GET', `/accounts/${t.acc('401')}/delete-info`)).body.blockers).toContain('Сметката има подсметки.');
   });
 
+  it('an account used by a bank-import rule cannot be deleted', async () => {
+    const r = await add('629', {});
+    expect(r.status, r.text).toBe(201);
+    const db = await t.driver.company(t.companyDb);
+    await db.execute(`INSERT INTO bank_templates (bank_id, name) VALUES ((SELECT min(id) FROM banks), 'Такси')`);
+    await db.execute(`INSERT INTO bank_template_details (template_id, ref_account_id) VALUES ((SELECT max(id) FROM bank_templates), ${r.body.id})`);
+    expect((await call('GET', `/accounts/${r.body.id}/delete-info`)).body.blockers).toEqual(['Сметката участва в шаблони за банков импорт.']);
+    expect((await call('DELETE', `/accounts/${r.body.id}`)).status).toBe(422);
+  });
+
   it('"move" copies a subtree with new numbers', async () => {
     const beforeRows = (await call('GET', '/accounts')).body as { id: number }[];
     const before = beforeRows.length;

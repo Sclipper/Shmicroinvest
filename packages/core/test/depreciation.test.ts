@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  canApplyConservation, changeRateFrom, checkImprovement, computeRevaluation, convertScheduleToEur, costAt, dec,
+  canApplyConservation, PERMISSIONS, resolvePermission, changeRateFrom, checkImprovement, computeRevaluation, convertScheduleToEur, costAt, dec,
   deriveMethod, DEPRECIATION_METHOD, endOfMonth, firstEditableMonthDate, firstScheduledMonth, generateSchedule,
   isStartMonthIncluded, maxRateForCategory, monthsBetween, monthsFromRate, pendingDefaultPeriod, postingReference,
   rateFromMonths, rateSelection, redistributeYear, revaluationPrefill, sum, accountingLastProcessedDate,
@@ -501,5 +501,16 @@ describe('bulk rate change (03b 14.3)', () => {
     expect(yearSum(out, 2025)).toBe('1800.00');
     expect(out.find((r) => r.month === '2026-01-01')!.amount.toFixed(2)).toBe('300.00');
     expect(total(out)).toBe('12000.00');
+  });
+});
+
+describe('asset report permissions (03b 1)', () => {
+  it('the МОЛ stocktake report has its own row under the assets reports group, so denying the group denies it', () => {
+    const rows = PERMISSIONS.map(([id, key, , parentId]) => ({ id, key, parentId, defaultValue: true }));
+    const byKey = new Map(rows.map((r) => [r.key, r]));
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const group = byKey.get('UI_Reporting_Depreciations')!.id;
+    expect(resolvePermission('UI_Reporting_Depreciations_InventoryListMOL', byKey, byId, new Map([[group, false]]))).toBe(false);
+    expect(resolvePermission('UI_Reporting_Depreciations_InventoryListMOL', byKey, byId, new Map())).toBe(true);
   });
 });

@@ -299,6 +299,7 @@ export async function deleteBlockers(db: DbOrTx, id: number) {
     ['accounting_template_details', ['account_id'], 'Сметката участва в шаблони за контиране.'],
     ['fixed_assets', ['debit_account_id', 'credit_account_id', 'inventory_account_id'], 'Сметката участва в дълготрайни активи.'],
     ['accounting_reschedules', ['debit_account_id', 'credit_account_id'], 'Сметката участва в разсрочвания.'],
+    ['bank_template_details', ['account_id', 'ref_account_id'], 'Сметката участва в шаблони за банков импорт.'],
   ] as const) {
     const existing = (await db.execute(sql`SELECT column_name FROM information_schema.columns WHERE table_name = ${table}`)) as unknown as { rows: { column_name: string }[] };
     const present = cols.filter((c) => existing.rows.some((r) => r.column_name === c));

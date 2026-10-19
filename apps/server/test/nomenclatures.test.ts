@@ -81,6 +81,18 @@ describe('partners (03a 2.12 acceptance)', () => {
     expect(r.status).toBe(400);
     expect(r.body.error).toBe('Партньорът не може да бъде изтрит, тъй като участва в операции!');
   });
+
+  it('refuses to delete a partner used only in a bank-import rule (strCompanyIsConnectedToTemplate)', async () => {
+    const id = await t.partner('В банков шаблон', ['401']);
+    const db = await t.driver.company(t.companyDb);
+    await db.execute(`INSERT INTO bank_templates (bank_id, name) VALUES ((SELECT min(id) FROM banks), 'Наем')`);
+    await db.execute(`INSERT INTO bank_template_details (template_id, account_id, company_id) VALUES ((SELECT max(id) FROM bank_templates), ${t.acc('401')}, ${id})`);
+    const r = await t.call('DELETE', `/partners/${id}`);
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe('Партньорът не може да бъде изтрит, тъй като участва в шаблони/шаблони за банков импорт!');
+    const free = await t.partner('Без шаблони', ['401']);
+    expect((await t.call('DELETE', `/partners/${free}`)).status).toBe(200);
+  });
 });
 
 describe('partner groups', () => {
