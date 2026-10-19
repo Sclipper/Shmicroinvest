@@ -60,6 +60,16 @@ describe('platform services', () => {
     expect(log[0]).toMatchObject({ level: 'warning', message: 'Неуспешно вписване на потребител Администратор' });
   });
 
+  it('a failure in the browser (strProblemExporting) is written to the log of the company and the user', async () => {
+    const r = await t.call('POST', '/app-log/client-error', { context: 'Експорт: Оборотна ведомост (PDF)', message: 'Failed to fetch dynamically imported module', details: 'TypeError: Failed to fetch\n    at reportFile' });
+    expect(r.status, r.text).toBe(200);
+    const log = (await t.call('GET', '/app-log')).body as { level: string; message: string; company?: string; user?: string; details?: string }[];
+    expect(log[0]).toMatchObject({ level: 'error', message: 'Експорт: Оборотна ведомост (PDF): Failed to fetch dynamically imported module', company: t.companyDb, user: 'Администратор' });
+    expect(log[0]!.details).toContain('reportFile');
+    expect((await t.call('POST', '/app-log/client-error', { context: '', message: 'x' })).status).toBe(400);
+    expect((await t.call('POST', '/app-log/client-error', { context: 'x', message: 'y'.repeat(2001) })).status).toBe(400);
+  });
+
   it('shows only the entries of the active company', async () => {
     const { logApp } = await import('../src/services/appLog.ts');
     await logApp({ level: 'error', message: 'Грешка в друга фирма', company: 'other_company_db' });

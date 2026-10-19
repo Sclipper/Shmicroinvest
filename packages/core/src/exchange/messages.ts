@@ -149,6 +149,7 @@ export const EXCHANGE_MESSAGES = {
   strDeltaConversionEuroChartCopied: 'Сметкопланът в евро (от 2026 г.) е заменен с копие на прехвърления сметкоплан, за да се пренесат салдата в сметки със същия номер и смисъл.',
 
   // --- report exports (04a 8.3)
+  strProblemExporting: 'Възникнала е грешка при експорт на данни. Подробна информация е записана в дневника на приложението.',
   strExportReportParameterNotFilled: 'Параметър "{0}" не е попълнен.',
   strCannotExecuteSQLQuery: 'Заявката към базата не може да бъде изпълнена успешно. Моля проверете дали сте попълнили всички нужни параметри.',
   strInvalidExportReportDefinition: 'Невалидна дефиниция на отчет за експорт: {0}', // no text

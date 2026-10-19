@@ -1,4 +1,5 @@
 import { Fragment } from 'react';
+import { partnerDebtsShortName } from '@shmi/core';
 import { api, qs } from '../../api.ts';
 import { PartnerPicker } from '../../components/pickers.tsx';
 import { Checkbox, Field, Select, TextInput } from '../../components/ui.tsx';
@@ -91,7 +92,7 @@ export function PartnerDebts() {
       report={report}
       isEmpty={(d) => d.rows.length === 0}
       status={(d) => `${d.rows.length} реда`}
-      csvName={`Задължения вземания_${a.level}_${a.to}`}
+      csvName={`${partnerDebtsShortName(a.type === 1, a.level)}_${a.to}`}
       csv={csv}
       filters={
         <>

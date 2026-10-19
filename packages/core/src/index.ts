@@ -27,6 +27,7 @@ export * from './statementsEnglish.ts';
 export * from './xlsx.ts';
 export * from './zip.ts';
 export * from './reportExport.ts';
+export * from './reportShortNames.ts';
 // The PDF and Word writers (pdf.ts, ttf.ts, docx.ts) are imported as
 // '@shmi/core/pdf' and '@shmi/core/docx' so the web app can load them lazily.
 export * from './journalExtras.ts';

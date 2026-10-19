@@ -1,4 +1,5 @@
 import { useId, useState, type ReactNode } from 'react';
+import { REPORT_SHORT_NAMES } from '@shmi/core';
 import { useQuery } from '@tanstack/react-query';
 import { api, qs } from '../../api.ts';
 import { bgDate, money } from '../../format.ts';
@@ -135,7 +136,7 @@ function DeliverySale({ isPurchase }: { isPurchase: boolean }) {
       report={report}
       isEmpty={(d) => d.length === 0}
       status={(d) => `${d.length} записа`}
-      csvName={`СМЗ_${title}_${a.from}_${a.to}`}
+      csvName={`${isPurchase ? REPORT_SHORT_NAMES.strPurchaseReportShortName : REPORT_SHORT_NAMES.strSaleReportShortName}_${a.from}_${a.to}`}
       csv={(d) => [
         head,
         ...d.map((r) => [r.accounting_number, bgDate(r.accounting_date), r.account_number, ...(a.english ? [r.english_description ?? ''] : []), r.product_code ?? '', r.product_name, r.product_measure, qtyCell(r.quantity), qtyCell(r.price), amt(r.amount), r.company_name ?? '', r.document_type ?? '', r.document_number ?? '', bgDate(r.document_date)]),
@@ -216,7 +217,7 @@ export function GoodsMovementReport() {
       report={report}
       isEmpty={(d) => d.length === 0}
       status={(d) => `${d.length} записа`}
-      csvName={`СМЗ_Движение_${a.from}_${a.to}`}
+      csvName={`${REPORT_SHORT_NAMES.strGoodsMovementReportShortName}_${a.from}_${a.to}`}
       csv={(d) => [
         head,
         ...d.map((r) => [r.product_name, r.product_code ?? '', r.product_measure, r.account_number, ...(a.english ? [r.english_description ?? ''] : []), qtyCell(r.price), qtyCell(r.quantity), amt(r.amount), r.document_type ?? '', r.document_number ?? '', bgDate(r.document_date), r.company_name ?? '', r.term ?? '']),
@@ -279,7 +280,7 @@ export function AveragePriceReport() {
       report={report}
       isEmpty={(d) => d.length === 0}
       status={(d) => `${d.length} записа`}
-      csvName={`СМЗ_СрПретеглена_${a.from}_${a.to}`}
+      csvName={`${REPORT_SHORT_NAMES.strAveragePriceReportShortName}_${a.from}_${a.to}`}
       csv={(d) => [
         head,
         ...d.map((r) => [r.accountNumber, ...(a.english ? [r.englishDescription ?? ''] : []), r.code ?? '', r.measure, r.productName, qtyCell(r.materialInitialBalance), amt(r.initialBalance), qtyCell(r.materialDebitTurnover), amt(r.debitTurnover), qtyCell(r.averagePrice), qtyCell(r.materialCreditTurnover), amt(r.writeOutValue), qtyCell(r.materialFinalBalance), amt(r.finalBalance)]),
@@ -351,7 +352,7 @@ export function WriteOutReport() {
       report={report}
       isEmpty={(d) => d.length === 0}
       status={(d) => `${d.length} записа`}
-      csvName={`СМЗ_Изписване_${a.from}_${a.to}`}
+      csvName={`${REPORT_SHORT_NAMES.strWriteOutReportShortName}_${a.from}_${a.to}`}
       csv={(d) => [
         head,
         ...d.map((r) => [r.accountNumber, ...(a.english ? [r.englishDescription ?? ''] : []), r.productName, r.productCode ?? '', r.measure, qtyCell(r.initialBalanceQtty), amt(r.initialBalance), qtyCell(r.bookedQtty), amt(r.bookedSum), qtyCell(r.averagePrice), qtyCell(r.chargedQtty), amt(r.writeOff)]),

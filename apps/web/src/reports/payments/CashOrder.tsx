@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { REPORT_SHORT_NAMES } from '@shmi/core';
 import { api, qs } from '../../api.ts';
 import { Field, TextInput } from '../../components/ui.tsx';
 import { bgDate, money } from '../../format.ts';
@@ -27,7 +28,7 @@ export function CashOrder() {
   const a = report.applied ?? f;
   const fc = a.type === 1;
   const senderLabel = f.documentTypeId === 9 ? 'Изплатил' : 'Наредил';
-  const short = a.documentTypeId === 9 ? 'РКО' : 'ПКО';
+  const short = a.documentTypeId === 9 ? REPORT_SHORT_NAMES.strCashReportRKOStandardShortName : REPORT_SHORT_NAMES.strCashReportStandardShortName;
   const sheet = (d: Result, r: Result['rows'][number], i: number) => (
     <Sheet key={i}>
       <OrderForm d={d} o={r.first} fc={fc} sig={sig} />

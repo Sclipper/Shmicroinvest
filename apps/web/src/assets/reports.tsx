@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { REPORT_SHORT_NAMES, depreciationPlanShortName, depreciationQuotasShortName } from '@shmi/core';
 import { api, qs } from '../api.ts';
 import { Checkbox, Field, Select, TextInput } from '../components/ui.tsx';
 import { bgDate, money } from '../format.ts';
@@ -43,7 +44,7 @@ export function DepreciationQuotasReport() {
       report={report}
       isEmpty={(d) => d.assets.length === 0}
       status={(d) => `${d.assets.length} актива, ${d.currency}`}
-      csvName={`Квоти_${a.year || 'all'}`}
+      csvName={`${depreciationQuotasShortName(a.type)}_${a.year || 'all'}`}
       csv={csv}
       filters={
         <>
@@ -126,7 +127,7 @@ export function InventoryBookReport() {
       report={report}
       isEmpty={(d) => d.rows.length === 0}
       status={(d) => `${d.rows.length} актива, ${d.currency}`}
-      csvName={`ИнвентарнаКнига_${a.toDate}`}
+      csvName={`${REPORT_SHORT_NAMES.strInventoryBookShortName}_${a.toDate}`}
       csv={csv}
       filters={
         <>
@@ -200,7 +201,7 @@ export function DepreciationPlanReport() {
       report={report}
       isEmpty={(d) => d.rows.length === 0}
       status={(d) => `${d.rows.length} актива, ${d.currency}`}
-      csvName={`АмортизационенПлан_${a.type}_${a.month}`}
+      csvName={`${depreciationPlanShortName(a.type)}_${a.month}`}
       csv={csv}
       filters={
         <>
@@ -276,7 +277,7 @@ export function AssetsByCategoriesReport() {
       report={report}
       isEmpty={(d) => d.rows.length === 0}
       status={(d) => `${d.rows.length} актива, ${d.currency}`}
-      csvName={`АктивиПоКатегории_${a.year}`}
+      csvName={`${a.level === 'assets' ? REPORT_SHORT_NAMES.strAssetsByCategoriesByAssetsShortName : REPORT_SHORT_NAMES.strAssetsByCategoriesShortName}_${a.year}`}
       csv={csv}
       filters={
         <>

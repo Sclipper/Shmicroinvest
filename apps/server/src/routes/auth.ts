@@ -25,6 +25,29 @@ function newDatabaseName() {
   return `delta_${stamp}${randomBytes(2).toString('hex')}`;
 }
 
+/** Texts of a failed "Нова фирма" (01b 1.2). */
+export const COMPANY_CREATE_MESSAGES = {
+  strCompanyWasntCreated: 'Фирмата не беше създадена!',
+  strDatabaseCreatePermissionDenied: 'SQL потребителят няма достатъчно права!',
+} as const;
+
+/**
+ * A company whose database could not be created or filled: the Postgres role
+ * without CREATEDB (insufficient_privilege, 42501) is
+ * strDatabaseCreatePermissionDenied, any other fault strCompanyWasntCreated
+ * (logged with its details). Rule errors (ApiError) pass through.
+ */
+async function companyNotCreated(e: unknown, companyName: string): Promise<ApiError> {
+  if (e instanceof ApiError) return e;
+  const err = e as { code?: unknown; cause?: { code?: unknown }; message?: string; stack?: string };
+  const pgCode = err?.code ?? err?.cause?.code;
+  await logApp({ level: 'error', message: `${COMPANY_CREATE_MESSAGES.strCompanyWasntCreated} (${companyName})`, details: err?.stack ?? err?.message ?? String(e) });
+  if (pgCode === '42501') {
+    return new ApiError(500, `${COMPANY_CREATE_MESSAGES.strCompanyWasntCreated} ${COMPANY_CREATE_MESSAGES.strDatabaseCreatePermissionDenied}`, undefined, 'strDatabaseCreatePermissionDenied');
+  }
+  return new ApiError(500, COMPANY_CREATE_MESSAGES.strCompanyWasntCreated, undefined, 'strCompanyWasntCreated');
+}
+
 const failedLogins = new Map<string, { count: number; until: number }>();
 
 export const authRoutes = new Hono<AppEnv>()
@@ -98,7 +121,12 @@ export const authRoutes = new Hono<AppEnv>()
     const copiesChart = !!(transfer?.chartOfAccounts || transfer?.accountings || transfer?.accountingTemplates || transfer?.bankTemplates);
     if (!isStrongPassword(body.adminPassword)) throw new ApiError(400, 'Паролата трябва да е поне 6 символа.');
     const name = newDatabaseName();
-    const db = await c.var.driver.createCompanyDatabase(name);
+    let db: Awaited<ReturnType<typeof c.var.driver.createCompanyDatabase>>;
+    try {
+      db = await c.var.driver.createCompanyDatabase(name);
+    } catch (e) {
+      throw await companyNotCreated(e, body.companyName);
+    }
     try {
       await db.transaction(async (tx) => {
         // An explicit null starts without a chart and without a chart type (03a 1.1 asks for the selection).
@@ -106,8 +134,8 @@ export const authRoutes = new Hono<AppEnv>()
         if (transfer) await transferEntities(await c.var.driver.company(sourceDb!), tx, transfer);
       });
     } catch (e) {
-      await c.var.driver.dropCompanyDatabase(name);
-      throw e;
+      await c.var.driver.dropCompanyDatabase(name).catch(() => {});
+      throw await companyNotCreated(e, body.companyName);
     }
     await catalog.insert(cat.companiesCatalog).values({ name, companyName: body.companyName, version: PRODUCT_VERSION });
     await createSession(c, name, 1);
