@@ -15,6 +15,7 @@ import { requirePermission, updateSessionState, workingDate, todayInSofia, daysB
 import { getConfig, setConfig, BASIC_SETTINGS } from '../services/config.ts';
 import { logActivity } from '../services/audit.ts';
 import { addFinancialYear, deleteFinancialYear, euroChartInitialised } from '../services/years.ts';
+import { chartTemplateVersion } from '../services/chart.ts';
 import { PRODUCT_VERSION } from '../services/companySetup.ts';
 import { SETTING_CHILDREN } from './settingsExtras.ts';
 
@@ -47,6 +48,8 @@ export const sessionRoutes = new Hono<AppEnv>()
       chartIsEmpty: count === 0,
       /** Config ChartOfAccountsType; empty = no chart type chosen yet (03a 1.1 strChartOfAccountsNotDefined). */
       chartOfAccountsType: (await getConfig(db, 'ChartOfAccountsType')) ?? '',
+      /** ChartTemplateVersion of the company's chart (stored or detected); null = the current templates. */
+      chartTemplateVersion: await chartTemplateVersion(db),
       permissions,
       settings,
     });

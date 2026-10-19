@@ -1,18 +1,18 @@
-import { and, eq, ne, sql } from 'drizzle-orm';
+import { and, eq, isNull, ne, sql } from 'drizzle-orm';
 import MDBReader from 'mdb-reader';
 import {
-  DELTA_DEFAULT_PARTNER, DELTA_FALLBACK_DOCUMENT_TYPE, DataImportError, ZERO, critical, dec, deltaAccountFeatures, deltaImportsChart, deltaImportsOperations,
-  deltaRepairCp1251, deltaYearTables, isCompanyCategory, mapDeltaChart, mapDeltaCompany, mapDeltaPartner, mapDeltaYear, msg, normalizeIban,
+  CHART_TEMPLATE_VERSION, CHART_TEMPLATE_VERSION_KEY, DELTA_DEFAULT_PARTNER, DELTA_FALLBACK_DOCUMENT_TYPE, DataImportError, ZERO, critical, dec, deltaAccountFeatures, deltaImportsChart, deltaImportsOperations,
+  chartTemplateAccounts, deltaRepairCp1251, deltaYearTables, isCompanyCategory, mapDeltaChart, mapDeltaCompany, mapDeltaPartner, mapDeltaYear, msg, normalizeIban,
   requiresDocumentNumber, warning, type DeltaAccounting, type DeltaImportType, type DeltaOpening, type DeltaRow, type DeltaSource,
   type Dec, type ExchangeMessage,
 } from '@shmi/core';
 import * as s from '../../db/company/schema/index.ts';
-import type { CompanyDb, DbOrTx } from '../../db/provider.ts';
+import { exec, queryRows, type CompanyDb, type DbOrTx } from '../../db/provider.ts';
 import type { ActiveYear } from '../../context.ts';
 import { ApiError } from '../../lib/errors.ts';
 import { logApp } from '../appLog.ts';
 import { documentNumberUsed } from '../autoEntries.ts';
-import { accountSeparator, rebuildAccountsTree } from '../chart.ts';
+import { accountSeparator, chartTemplateType, cloneChartToEuro, rebuildAccountsTree } from '../chart.ts';
 import { saveInitialBalances, type BalanceRowInput } from '../initialBalances.ts';
 import { saveEntry, type LineInput } from '../journal.ts';
 import { reserveNumber } from '../sequences.ts';
@@ -123,6 +123,43 @@ export async function deltaPreconditions(db: DbOrTx, type: DeltaImportType): Pro
 /** The legacy amounts are in leva: the BGN chart (any year up to 2025). */
 const BGN_YEAR = 2025;
 
+/**
+ * The EUR chart (from 2026) must hold the converted accounts: the balances of
+ * the converted years are carried to the EUR account of the same number, so a
+ * template EUR chart (a new company created for 2026) would give them the
+ * meaning of the template's account with that number. An empty EUR chart, or
+ * an untouched template one (the accounts of a chart template, nothing posted
+ * or linked to them), is replaced with a copy of the converted BGN chart.
+ */
+async function replaceEuroChart(tx: DbOrTx): Promise<boolean> {
+  const eur = (await tx.select({ id: s.accounts.id, number: s.accounts.number, description: s.accounts.description }).from(s.accounts).where(eq(s.accounts.isEuro, true))).filter((a) => a.number !== '0');
+  if (eur.length) {
+    const type = await chartTemplateType(tx);
+    const own = new Set(eur.map((a) => `${a.number}\t${a.description}`));
+    const isTemplate = !!type && [1, CHART_TEMPLATE_VERSION].some((v) => {
+      const t = chartTemplateAccounts(type, v);
+      return t.length === own.size && t.every((a) => own.has(`${a.number}\t${a.description}`));
+    });
+    if (!isTemplate) return false;
+    const used = await queryRows<{ n: number }>(tx, sql`
+      SELECT (SELECT count(*) FROM accounting_details d JOIN accounts a ON a.id = d.account_id WHERE a.is_euro)
+           + (SELECT count(*) FROM account_initial_balances b JOIN accounts a ON a.id = b.account_id WHERE a.is_euro)
+           + (SELECT count(*) FROM company_accounts c JOIN accounts a ON a.id = c.account_id WHERE a.is_euro)
+           + (SELECT count(*) FROM product_accounts p JOIN accounts a ON a.id = p.account_id WHERE a.is_euro) AS n`);
+    if (Number(used[0]?.n ?? 0) > 0) return false;
+    try {
+      // A savepoint: any other reference (an FK) keeps the template chart.
+      await tx.transaction(async (sp) => {
+        await exec(sp, sql`UPDATE accounts SET mapped_account_id = NULL WHERE mapped_account_id IN (SELECT id FROM accounts WHERE is_euro AND number <> '0')`);
+        await exec(sp, sql`DELETE FROM accounts WHERE is_euro AND number <> '0'`);
+      });
+    } catch {
+      return false;
+    }
+  }
+  return (await cloneChartToEuro(tx)) > 0;
+}
+
 /** The run stops (and its transaction rolls back) once the client cancelled it (strCancelTransferWarning, 7). */
 function checkCancelled(signal?: AbortSignal) {
   if (signal?.aborted) throw new DataImportError(critical('strTransferCancelled'));
@@ -151,6 +188,9 @@ export async function convertDelta(tx: DbOrTx, src: DeltaSource, type: DeltaImpo
       if (r.created) result.accounts++;
     }
     await rebuildAccountsTree(tx);
+    // The chart is now Delta's own, not a template of this program.
+    await tx.delete(s.configuration).where(and(eq(s.configuration.key, CHART_TEMPLATE_VERSION_KEY), isNull(s.configuration.userId)));
+    if (await replaceEuroChart(tx)) result.warnings.push(warning('strDeltaConversionEuroChartCopied'));
   }
 
   // Partners (Part), keyed by Part.ID.
@@ -263,7 +303,9 @@ async function saveDeltaAccounting(tx: DbOrTx, a: DeltaAccounting, fy: ActiveYea
     const acc = w.chart.byNumber.get(l.accountNumber)!;
     let companyId: number | null = null;
     if (isCompanyCategory(acc.categoryId)) {
-      companyId = (l.partnerId ? w.partners.get(l.partnerId) : undefined) ?? header ?? (await w.partnerFor(null));
+      // A row of its own partner keeps it; one whose partner is not in Part (deleted) is "Служебен партньор",
+      // never another partner of the same accounting (a receipt for several clients).
+      companyId = l.ownPartner ? await w.partnerFor(l.partnerId) : header ?? (await w.partnerFor(null));
       used.set(companyId, [...(used.get(companyId) ?? []), acc.id]);
     }
     return { accountId: acc.id, amount: l.amount, vatTermId: l.vatTermId, companyId };

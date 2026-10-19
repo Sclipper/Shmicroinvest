@@ -1,0 +1,121 @@
+# CI: the same steps as `pnpm ci:all` (scripts/ci-all.ts).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # One job per runner: no machine-wide test slots needed (scripts/test-slots.ts).
+  SHMI_TEST_SLOTS: '0'
+
+jobs:
+  check:
+    name: Typecheck, unit and API tests (PGlite), web build
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm --filter @shmi/core test
+      - run: pnpm --filter @shmi/server db:check
+      - run: pnpm --filter @shmi/server test
+      - run: pnpm --filter @shmi/web build
+
+  server-postgres:
+    name: API tests on PostgreSQL 17
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @shmi/server test:pg
+
+  e2e:
+    name: End-to-end (Playwright, Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @shmi/e2e exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: e2e/test-results
+          retention-days: 7
+
+  release-bundle:
+    name: Release bundle on Node 22 (PGlite and PostgreSQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm release:bundle
+      - name: Copy the bundle out of the repository
+        run: cp -r release "$RUNNER_TEMP/shmelta"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: PGlite on disk
+        working-directory: ${{ runner.temp }}/shmelta
+        run: |
+          node --version
+          NODE_ENV=production DATA_DIR="$RUNNER_TEMP/data" SHMI_SETUP_TOKEN=ci-token PORT=4401 node server.js &
+          for i in $(seq 60); do curl -fs localhost:4401/api/health && break; sleep 1; done
+          node --experimental-strip-types "$GITHUB_WORKSPACE/scripts/release-smoke.ts" http://localhost:4401 ci-token
+      - name: PostgreSQL
+        working-directory: ${{ runner.temp }}/shmelta
+        run: |
+          NODE_ENV=production DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres SHMI_SECRET=ci-secret SHMI_SETUP_TOKEN=ci-token PORT=4402 node server.js &
+          for i in $(seq 60); do curl -fs localhost:4402/api/health && break; sleep 1; done
+          node --experimental-strip-types "$GITHUB_WORKSPACE/scripts/release-smoke.ts" http://localhost:4402 ci-token

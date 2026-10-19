@@ -77,6 +77,13 @@ describe('Delta conversion: company and partners', () => {
     expect(q.bank).toBeNull();
     expect(q.priority).toBe(255);
   });
+
+  it('names a Part row without Company after the person, then its Bulstat or VAT number (natural persons are kept)', () => {
+    expect(mapDeltaPartner({ ID: 9, Company: '', Partner: 'Петър Иванов', Bulstat: '8001011234' }).name).toBe('Петър Иванов');
+    expect(mapDeltaPartner({ ID: 10, Company: ' ', Partner: '', Bulstat: '131071587' }).name).toBe('131071587');
+    expect(mapDeltaPartner({ ID: 11, Company: '', Bulstat: '999999999', DanNo: 'DE123456789' }).name).toBe('DE123456789');
+    expect(mapDeltaPartner({ ID: 12 }).name).toBe('Партньор 12');
+  });
 });
 
 describe('Delta conversion: chart', () => {
@@ -177,10 +184,11 @@ describe('Delta conversion: operations', () => {
       table: 'Year2009', konId: 5, date: '2009-05-20', documentDate: '2009-05-19', documentNumber: '0000000123', documentType: 'Ф-ра',
       term: 'Продажба', reference: 'бележка', transactionTypeId: 3, viesId: 1, viesMonth: '2009-12-01', partnerId: 9,
     });
-    expect(a.debits).toEqual([{ accountNumber: '411', amount: '120.00', vatTermId: 7, partnerId: 9 }]);
+    // A row without its own partner takes the header's (ownPartner false): only a row's own unknown partner goes to the default partner.
+    expect(a.debits).toEqual([{ accountNumber: '411', amount: '120.00', vatTermId: 7, partnerId: 9, ownPartner: true }]);
     expect(a.credits).toEqual([
-      { accountNumber: '702', amount: '100.00', vatTermId: 7, partnerId: 9 },
-      { accountNumber: '453/2', amount: '20.00', vatTermId: 7, partnerId: 9 },
+      { accountNumber: '702', amount: '100.00', vatTermId: 7, partnerId: 9, ownPartner: false },
+      { accountNumber: '453/2', amount: '20.00', vatTermId: 7, partnerId: 9, ownPartner: false },
     ]);
   });
 

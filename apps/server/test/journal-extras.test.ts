@@ -499,7 +499,7 @@ describe('06 3 settings pages', () => {
 
   it('database page shows the active catalog', async () => {
     const r = (await call('GET', '/settings/database')).body;
-    expect(r).toMatchObject({ catalog: t.companyDb, companyName: 'Тест ООД', server: 'PGlite (вграден)' });
+    expect(r).toMatchObject({ catalog: t.companyDb, companyName: 'Тест ООД', server: t.driver.kind === 'pglite' ? 'PGlite (вграден)' : 'PostgreSQL' });
   });
 
   it('shortcuts: per-user overrides, duplicate warning, restore defaults (06 2.6)', async () => {

@@ -146,8 +146,10 @@ export const EXCHANGE_MESSAGES = {
   strDeltaConversionAccountingError: 'Операцията в таблица {0} с AccountingID = {1} не може да бъде записана:',
   strDeltaConversionOpeningError: 'Началното салдо на сметка {0} от таблица {1} не може да бъде записано:',
   strDeltaConversionEuroYearSkipped: 'Таблица {0} не е прехвърлена: от 2026 г. основната валута е евро. Използвайте преминаването към евро след импорта.',
+  strDeltaConversionEuroChartCopied: 'Сметкопланът в евро (от 2026 г.) е заменен с копие на прехвърления сметкоплан, за да се пренесат салдата в сметки със същия номер и смисъл.',
 
   // --- report exports (04a 8.3)
+  strProblemExporting: 'Възникнала е грешка при експорт на данни. Подробна информация е записана в дневника на приложението.',
   strExportReportParameterNotFilled: 'Параметър "{0}" не е попълнен.',
   strCannotExecuteSQLQuery: 'Заявката към базата не може да бъде изпълнена успешно. Моля проверете дали сте попълнили всички нужни параметри.',
   strInvalidExportReportDefinition: 'Невалидна дефиниция на отчет за експорт: {0}', // no text
@@ -216,6 +218,18 @@ export const EXCHANGE_MESSAGES = {
   strDeleteCompanyConfirm: 'Внимание! Фирма „{0}“ ще бъде изтрита безвъзвратно. Преди изтриването ще бъде направен архив. Желаете ли да продължите?', // no feature in Delta
   strDeleteCompanyDone: 'Фирма „{0}“ е изтрита. Архивът е запазен като „{1}“.',
   strCannotDeleteActiveCompany: 'Не може да бъде изтрита фирмата, с която работите в момента.',
+
+  // --- off-site (cloud) archive (01b 2, 04b 3; S3-compatible storage instead of Microinvest's SFTP)
+  strBackupDatabaseSuccededWithArchiveToCloudQuestion: 'Архивирането на фирмата завърши успешно. Желаете ли архивът да бъде качен и в облака?', // no text
+  strZipArchivedToCloud: 'Архивът „{0}“ е качен в облака успешно.', // no text
+  strCannotConnectToCloud: 'Няма връзка с облачното хранилище за архиви. Проверете настройките и връзката с интернет.', // no text
+  strCloudArchiveNotConfigured: 'Не е настроено облачно хранилище за архиви.', // no Delta key
+  strCloudArchiveNotFound: 'Архивът „{0}“ не е намерен в облака.', // no Delta key
+  strProgressArchivingDatabase: 'Архивиране на базата данни...', // no text
+  strProgressZipCompressing: 'Компресиране на архива...', // no text
+  strProgressUploading: 'Качване в облака...', // no text
+  strProgressDownloading: 'Изтегляне от облака...', // no Delta key
+  strProgressFinished: 'Готово.', // no text
 
   // --- euro conversion (04b 4)
   strEuroConversionFailed: 'Конвертирането на базата данни в евро не беше успешно.', // no text

@@ -1,8 +1,8 @@
 import { asc, eq, sql } from 'drizzle-orm';
-import { EURO_FLAGS, defaultActiveYear, loginActiveYear } from '@shmi/core';
+import { CHART_TEMPLATE_VERSION, EURO_FLAGS, defaultActiveYear, loginActiveYear } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import { exec, type DbOrTx } from '../db/provider.ts';
-import { applyChartTemplate, chartTemplateType } from './chart.ts';
+import { applyChartTemplate, chartTemplateType, chartTemplateVersion, cloneChartToEuro } from './chart.ts';
 import { getConfig, setConfig } from './config.ts';
 
 /** Financial years: create, delete and the euro-chart guard (spec 01b 6.3, 06 4.1). */
@@ -56,12 +56,21 @@ export async function addFinancialYear(tx: DbOrTx, year: number) {
   return fy!;
 }
 
-/** A EUR year needs the EUR chart; seed it from the template when empty. */
+/**
+ * A EUR year needs the EUR chart; seeded when empty. A chart of the current
+ * template version gets the template; a company whose BGN chart has an older
+ * (or unknown) numbering gets a copy of its BGN chart instead, so the BGN ->
+ * EUR conversion, which maps accounts by number, lands on accounts of the
+ * same meaning.
+ */
 export async function ensureEuroChart(tx: DbOrTx, year: number) {
   if (year < 2026) return;
   if ((await count(tx, sql`SELECT count(*)::int AS n FROM accounts WHERE is_euro AND number <> '0'`)) > 0) return;
   const type = await chartTemplateType(tx);
-  if (type) await applyChartTemplate(tx, type, true);
+  if (!type) return;
+  const hasBgn = (await count(tx, sql`SELECT count(*)::int AS n FROM accounts WHERE NOT is_euro AND number <> '0'`)) > 0;
+  if (hasBgn && (await chartTemplateVersion(tx)) !== CHART_TEMPLATE_VERSION) await cloneChartToEuro(tx);
+  else await applyChartTemplate(tx, type, true);
 }
 
 /**

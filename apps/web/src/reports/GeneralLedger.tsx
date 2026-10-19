@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { REPORT_SHORT_NAMES } from '@shmi/core';
 import { api, qs } from '../api.ts';
 import { PartnerPicker } from '../components/pickers.tsx';
 import { Checkbox, Field, Select } from '../components/ui.tsx';
@@ -58,7 +59,7 @@ export function GeneralLedger() {
       report={report}
       isEmpty={(d) => d.length === 0}
       status={(d) => `${d.length} сметки`}
-      csvName={`${withBal ? 'ГлКнига салда' : 'ГлКнига'}_${a.from}_${a.to}`}
+      csvName={`${withBal ? REPORT_SHORT_NAMES.strGeneralLedgerReportWithOpenningBalancesShortName : REPORT_SHORT_NAMES.strGeneralLedgerReportStandardShortName}_${a.from}_${a.to}`}
       csv={csv}
       filters={
         <>

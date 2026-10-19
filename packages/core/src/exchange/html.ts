@@ -191,24 +191,67 @@ export interface HtmlCell {
   classes: string[];
 }
 
-/** Rows of a table (through thead/tbody/tfoot, not into nested tables); `colspan` cells are followed by empty cells. */
-export function htmlTableRows(table: HtmlElement): HtmlCell[][] {
-  const rows: HtmlCell[][] = [];
+/** One slot of a table grid: the source cell and the position and size of its top-left corner. */
+export interface HtmlGridSlot {
+  cell: HtmlCell;
+  row: number;
+  col: number;
+  rowspan: number;
+  colspan: number;
+  /** The `th` tag (header cells). */
+  th: boolean;
+}
+
+const span = (v: string | undefined) => Math.max(1, Math.min(Math.floor(Number(v)) || 1, 50));
+
+/**
+ * The table as a grid with `colspan` and `rowspan` expanded (the HTML table
+ * model): every slot a cell covers points to that cell, so the columns of the
+ * rows below a spanning cell stay aligned. Rows go through thead/tbody/tfoot
+ * (and a wrapping form), not into nested tables; a row is as long as its last
+ * covered slot, ragged rows leave `undefined` holes.
+ */
+export function htmlTableGrid(table: HtmlElement): (HtmlGridSlot | undefined)[][] {
+  const trs: HtmlElement[] = [];
   const walk = (e: HtmlElement) => {
     for (const c of e.children) {
       if (!isHtmlElement(c)) continue;
-      if (c.tag === 'tr') {
-        const cells: HtmlCell[] = [];
-        for (const td of c.children) {
-          if (!isHtmlElement(td) || (td.tag !== 'td' && td.tag !== 'th')) continue;
-          cells.push({ text: htmlText(td), classes: (td.attrs.class ?? '').split(/\s+/).filter(Boolean) });
-          const span = Math.min(Number(td.attrs.colspan) || 1, 50);
-          for (let i = 1; i < span; i++) cells.push({ text: '', classes: [] });
-        }
-        rows.push(cells);
-      } else if (c.tag === 'thead' || c.tag === 'tbody' || c.tag === 'tfoot' || c.tag === 'form') walk(c);
+      if (c.tag === 'tr') trs.push(c);
+      else if (c.tag === 'thead' || c.tag === 'tbody' || c.tag === 'tfoot' || c.tag === 'form') walk(c);
     }
   };
   walk(table);
-  return rows;
+  const grid: (HtmlGridSlot | undefined)[][] = trs.map(() => []);
+  trs.forEach((tr, r) => {
+    let col = 0;
+    for (const td of tr.children) {
+      if (!isHtmlElement(td) || (td.tag !== 'td' && td.tag !== 'th')) continue;
+      while (grid[r]![col]) col++;
+      // rowspan="0" spans to the end of the table section; clipped to the table here.
+      const rs = td.attrs.rowspan === '0' ? trs.length - r : Math.min(span(td.attrs.rowspan), trs.length - r);
+      const slot: HtmlGridSlot = { cell: { text: htmlText(td), classes: (td.attrs.class ?? '').split(/\s+/).filter(Boolean) }, row: r, col, rowspan: rs, colspan: span(td.attrs.colspan), th: td.tag === 'th' };
+      for (let i = 0; i < rs; i++) for (let j = 0; j < slot.colspan; j++) grid[r + i]![col + j] ??= slot;
+      col += slot.colspan;
+    }
+  });
+  return grid;
+}
+
+/**
+ * Rows of a table, aligned by the grid: a `colspan` cell is followed by empty
+ * cells; the slots a `rowspan` cell covers in the rows below repeat its text
+ * (a date written once for two movements belongs to both).
+ */
+export function htmlTableRows(table: HtmlElement): HtmlCell[][] {
+  return htmlGridRows(htmlTableGrid(table));
+}
+
+/** {@link htmlTableRows} of a grid already built. */
+export function htmlGridRows(grid: (HtmlGridSlot | undefined)[][]): HtmlCell[][] {
+  return grid.map((row, r) =>
+    Array.from(row, (s, c) => {
+      if (!s || s.col !== c) return { text: '', classes: [] };
+      return s.row === r ? s.cell : { text: s.cell.text, classes: s.cell.classes };
+    }),
+  );
 }

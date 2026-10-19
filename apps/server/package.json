@@ -1,6 +1,6 @@
 {
   "name": "@shmi/server",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,9 @@
     "start": "node src/index.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "db:generate": "drizzle-kit generate --config drizzle.company.config.ts && drizzle-kit generate --config drizzle.catalog.config.ts"
+    "db:generate": "drizzle-kit generate --config drizzle.company.config.ts && drizzle-kit generate --config drizzle.catalog.config.ts && node scripts/migration-checksums.ts --add",
+    "test:pg": "node -e \"if(!process.env.TEST_DATABASE_URL){console.error('Set TEST_DATABASE_URL=postgres://user:pass@host:5432/postgres');process.exit(1)}\" && vitest run",
+    "db:check": "node scripts/migration-checksums.ts --check"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.10",

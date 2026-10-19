@@ -1,5 +1,6 @@
 {
   "name": "shmicroinvest-shmelta-pro",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@12.0.0",
@@ -7,7 +8,19 @@
     "dev": "pnpm -r --parallel --filter ./apps/* dev",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck",
-    "test:e2e": "pnpm --filter @shmi/e2e test:e2e"
+    "typecheck": "pnpm -r typecheck && tsc -p scripts",
+    "test:e2e": "pnpm --filter @shmi/e2e test:e2e",
+    "release:bundle": "node scripts/release-bundle.ts",
+    "ci:all": "node scripts/ci-all.ts",
+    "test:pg": "pnpm --filter @shmi/server test:pg",
+    "test:e2e:pg": "pnpm --filter @shmi/e2e test:e2e:pg"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "node": ">=26"
   }
 }

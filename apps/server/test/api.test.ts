@@ -286,4 +286,35 @@ describe('api', () => {
     expect([del.status, del.body.messages?.[0]?.key, del.body.error]).toEqual([422, 'strUserCountValidation', 'Въведен е само един потребител...']);
     t.session.set(saved);
   });
+
+  it('a company whose database cannot be created or filled: strDatabaseCreatePermissionDenied / strCompanyWasntCreated (01b 1.2)', async () => {
+    const driver = t.driver as unknown as Record<string, unknown>;
+    const create = t.driver.createCompanyDatabase.bind(t.driver);
+    const before = ((await call('GET', '/companies')).body as unknown[]).length;
+    const body = { companyName: 'Неуспешна ООД', adminName: 'Админ', adminPassword: 'secret1', year: 2026 };
+    try {
+      // A Postgres role without CREATEDB: insufficient_privilege.
+      driver.createCompanyDatabase = async () => { throw Object.assign(new Error('permission denied to create database'), { code: '42501' }); };
+      let r = await call('POST', '/companies', body);
+      expect([r.status, r.body.code, r.body.error]).toEqual([500, 'strDatabaseCreatePermissionDenied', 'Фирмата не беше създадена! SQL потребителят няма достатъчно права!']);
+      // Any other fault while the new database is filled: the database is dropped again.
+      let createdName = '';
+      driver.createCompanyDatabase = async (name: string) => {
+        createdName = name;
+        const db = await create(name);
+        return new Proxy(db, { get: (o, k) => (k === 'transaction' ? async () => { throw new Error('disk full'); } : Reflect.get(o, k)) });
+      };
+      r = await call('POST', '/companies', body);
+      expect([r.status, r.body.code, r.body.error]).toEqual([500, 'strCompanyWasntCreated', 'Фирмата не беше създадена!']);
+      expect(createdName).not.toBe('');
+      const log = (await call('GET', '/app-log')).body as { message: string }[];
+      expect(log.some((e) => e.message === 'Фирмата не беше създадена! (Неуспешна ООД)')).toBe(true);
+    } finally {
+      driver.createCompanyDatabase = create;
+    }
+    expect(((await call('GET', '/companies')).body as unknown[]).length).toBe(before);
+    // Rule errors keep their own text.
+    const weak = await call('POST', '/companies', { ...body, adminPassword: '1' });
+    expect(weak.status).toBe(400);
+  });
 });

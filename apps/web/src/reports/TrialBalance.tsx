@@ -1,5 +1,5 @@
 import { Fragment, useMemo, type ReactNode } from 'react';
-import { formatMoney } from '@shmi/core';
+import { formatMoney, REPORT_SHORT_NAMES } from '@shmi/core';
 import { api, qs } from '../api.ts';
 import { PartnerMultiPicker, type PickedPartner } from '../components/pickers.tsx';
 import { Checkbox, Field, Select, TextInput, cx } from '../components/ui.tsx';
@@ -52,7 +52,8 @@ const AMOUNTS = ['openingDebit', 'openingCredit', 'debitTurnover', 'creditTurnov
 
 /** "Тип справка" (strReportType2), in the order of the original combo. */
 const TYPES = ['Стандартна', 'Валутна', 'Материална', 'По партньори', 'По периоди'] as const;
-const SHORT = ['ОВ', 'ОВ валутна', 'ОВ СМЗ', 'ОВ партньори', 'ОВ по периоди'];
+const R = REPORT_SHORT_NAMES;
+const SHORT = [R.strTurnOverStandardShortName, R.strTurnOverForeignCurrencyShortName, R.strTurnOverMaterialShortName, R.strTurnOverCompanyShortName, R.strTurnOverMonthsShortName];
 const BASE_COLUMNS: [string, string][] = [
   ['InitialDebitBalance', 'Начално салдо дебит'], ['InitialCreditBalance', 'Начално салдо кредит'],
   ['DebitTurnover', 'Обороти дебит'], ['CreditTurnover', 'Оборот кредит'],

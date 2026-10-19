@@ -36,8 +36,8 @@ describe('GDPR validator (06 9)', () => {
     expect(rule(r.body, 'Поне двама')).toBe('verified');
     expect(rule(r.body, 'Сложни пароли')).toBe('verified');
     expect(rule(r.body, 'Всички потребители имат парола')).toBe('verified');
-    // Embedded database is verified; plain HTTP in tests is only a warning.
-    expect(rule(r.body, 'Базата данни')).toBe('verified');
+    // Embedded database (or a password-protected Postgres connection) is verified; plain HTTP in tests is only a warning.
+    expect(rule(r.body, t.driver.kind === 'pglite' ? 'Базата данни' : 'Връзката към базата данни')).toBe('verified');
     expect(rule(r.body, 'Криптирана')).toBe('warning');
     expect(r.body.overall).toBe('warning');
   });
@@ -58,6 +58,16 @@ describe('platform services', () => {
     t.session.set(saved);
     const log = (await t.call('GET', '/app-log')).body as { level: string; message: string }[];
     expect(log[0]).toMatchObject({ level: 'warning', message: 'Неуспешно вписване на потребител Администратор' });
+  });
+
+  it('a failure in the browser (strProblemExporting) is written to the log of the company and the user', async () => {
+    const r = await t.call('POST', '/app-log/client-error', { context: 'Експорт: Оборотна ведомост (PDF)', message: 'Failed to fetch dynamically imported module', details: 'TypeError: Failed to fetch\n    at reportFile' });
+    expect(r.status, r.text).toBe(200);
+    const log = (await t.call('GET', '/app-log')).body as { level: string; message: string; company?: string; user?: string; details?: string }[];
+    expect(log[0]).toMatchObject({ level: 'error', message: 'Експорт: Оборотна ведомост (PDF): Failed to fetch dynamically imported module', company: t.companyDb, user: 'Администратор' });
+    expect(log[0]!.details).toContain('reportFile');
+    expect((await t.call('POST', '/app-log/client-error', { context: '', message: 'x' })).status).toBe(400);
+    expect((await t.call('POST', '/app-log/client-error', { context: 'x', message: 'y'.repeat(2001) })).status).toBe(400);
   });
 
   it('shows only the entries of the active company', async () => {

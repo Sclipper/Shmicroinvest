@@ -8,6 +8,8 @@ export interface Session {
   chartIsEmpty: boolean;
   /** Config ChartOfAccountsType ("" = not chosen yet). */
   chartOfAccountsType?: string;
+  /** ChartTemplateVersion of the company's chart (stored or detected); null = the current templates. */
+  chartTemplateVersion?: number | null;
   permissions: Record<string, boolean>;
   settings: Record<string, string>;
 }

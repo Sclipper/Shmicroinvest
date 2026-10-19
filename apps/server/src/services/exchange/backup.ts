@@ -73,15 +73,19 @@ async function companyName(db: CompanyDb) {
   return sys?.companyName ?? '';
 }
 
-/** Takes a backup of a company database and stores it in the catalog's backup store. */
-export async function createBackup(driver: DbDriver, database: string, now = new Date()) {
+/** A backup file of a company database (not stored). */
+export async function buildBackup(driver: DbDriver, database: string, now = new Date()) {
   const db = await driver.company(database);
   const name = await companyName(db);
   const kind: BackupHeader['kind'] = driver.kind === 'pglite' ? 'pglite-datadir' : 'logical-json';
   const payload = await driver.dump(database);
   const header: BackupHeader = { format: BACKUP_FORMAT_VERSION, product: BACKUP_PRODUCT_NAME, version: PRODUCT_VERSION, companyName: name, database, createdAt: now.toISOString(), kind };
-  const data = encodeBackup(header, payload);
-  const fileName = backupFileName(name, now);
+  return { data: encodeBackup(header, payload), fileName: backupFileName(name, now), companyName: name, kind };
+}
+
+/** Takes a backup of a company database and stores it in the catalog's backup store. */
+export async function createBackup(driver: DbDriver, database: string, now = new Date()) {
+  const { data, fileName, companyName: name, kind } = await buildBackup(driver, database, now);
   const catalog = await driver.catalog();
   const [row] = await catalog.insert(cat.companyBackups).values({ fileName, companyName: name, database, version: PRODUCT_VERSION, kind, size: data.length, data }).returning({ id: cat.companyBackups.id });
   return { id: row!.id, fileName, size: data.length, companyName: name };

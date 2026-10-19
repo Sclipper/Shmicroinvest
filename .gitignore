@@ -8,3 +8,5 @@ dist/
 !.env.example
 coverage/
 .vite/
+release/
+deploy/backups/

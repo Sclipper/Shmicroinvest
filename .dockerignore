@@ -1,0 +1,17 @@
+**/node_modules
+.git
+.amp
+.claude
+release
+**/.data
+**/dist
+e2e/.e2e-data
+e2e/.auth
+e2e/test-results
+e2e/playwright-report
+deploy/.env
+deploy/backups
+.env
+.env.*
+!.env.example
+*.log

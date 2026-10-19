@@ -1,6 +1,8 @@
+import { randomBytes } from 'node:crypto';
 import { expect } from 'vitest';
+import pg from 'pg';
 import { createApp } from '../src/app.ts';
-import { PgliteDriver } from '../src/db/provider.ts';
+import { PgliteDriver, PostgresDriver, type DbDriver } from '../src/db/provider.ts';
 
 export interface CallResult<T = any> {
   status: number;
@@ -24,11 +26,73 @@ export interface EntrySpec {
 }
 
 /**
+ * Postgres test mode (TEST_DATABASE_URL=postgres://user:pass@host:port/postgres):
+ * every test driver gets a catalog database of its own (shmit_<random>) on that
+ * server; it and every company database created through it are dropped on close().
+ */
+class TestPostgresDriver extends PostgresDriver {
+  private created = new Set<string>();
+  private adminUrl: string;
+  private catalogName: string;
+  private closed = false;
+  constructor(adminUrl: string, catalogName: string, url: string) {
+    super(url);
+    this.adminUrl = adminUrl;
+    this.catalogName = catalogName;
+  }
+
+  override async createCompanyDatabase(name: string) {
+    this.created.add(name);
+    return super.createCompanyDatabase(name);
+  }
+
+  override async close() {
+    if (this.closed) return;
+    this.closed = true;
+    await super.close();
+    const admin = new pg.Client({ connectionString: this.adminUrl });
+    await admin.connect();
+    try {
+      for (const name of [...this.created, this.catalogName]) await admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
+    } finally {
+      await admin.end();
+    }
+  }
+}
+
+/** Drivers not closed by their test file; slot-setup.ts closes them after the file. */
+export const openTestDrivers = new Set<DbDriver>();
+
+/** The storage of a test server: in-memory PGlite, or a real Postgres server with TEST_DATABASE_URL. */
+export async function createTestDriver(): Promise<DbDriver> {
+  const adminUrl = process.env.TEST_DATABASE_URL;
+  if (!adminUrl) return new PgliteDriver();
+  const catalogName = `shmit_${process.pid}_${randomBytes(4).toString('hex')}`;
+  const admin = new pg.Client({ connectionString: adminUrl });
+  await admin.connect();
+  try {
+    await admin.query(`CREATE DATABASE "${catalogName}" ENCODING 'UTF8'`);
+  } finally {
+    await admin.end();
+  }
+  const u = new URL(adminUrl);
+  u.pathname = '/' + catalogName;
+  const driver = new TestPostgresDriver(adminUrl, catalogName, u.toString());
+  openTestDrivers.add(driver);
+  const close = driver.close.bind(driver);
+  driver.close = async () => {
+    openTestDrivers.delete(driver);
+    await close();
+  };
+  return driver;
+}
+
+/**
  * Test harness: an in-memory server with one freshly created company and a
  * logged-in administrator. Each test file gets its own instance.
  */
 export async function createTestCompany(opts: { year?: number; companyName?: string; bulstat?: string; chartTemplate?: 'commercial' | 'nonProfit' | 'budget' } = {}) {
-  const driver = new PgliteDriver();
+  const driver = await createTestDriver();
   const app = createApp(driver);
   let cookie = '';
 

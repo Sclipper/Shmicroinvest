@@ -111,7 +111,8 @@ export interface EuroConverted {
  *   round(currency amount x rate, 2), fallback round(amount / 1.95583, 2);
  * - material: price = round(BGN price / 1.95583, PriceFormat), amount =
  *   round(price x quantity, 2), same fallback;
- * - BGN: round(amount / 1.95583, 2); EUR: the currency amounts are copied.
+ * - BGN: round(amount / 1.95583, 2); EUR: the currency amounts are copied
+ *   (round(amount / 1.95583, 2) for a side without currency amount).
  */
 export function convertBalanceToEuro(kind: EuroBalanceKind, s: EuroSides, f: { priceDecimals: number; rateDecimals: number }): EuroConverted {
   const d = dec(s.debit), c = dec(s.credit), cd = dec(s.curDebit), cc = dec(s.curCredit), qd = dec(s.qtyDebit), qc = dec(s.qtyCredit);
@@ -122,8 +123,12 @@ export function convertBalanceToEuro(kind: EuroBalanceKind, s: EuroSides, f: { p
       const leva = d.plus(c);
       return { debit, credit, curDebit: d, curCredit: c, rate: leva.isZero() ? zero : round(debit.plus(credit).div(leva), f.rateDecimals), fixedRate: dec(1), price: null };
     }
-    case 'eur':
-      return { debit: cd, credit: cc, curDebit: zero, curCredit: zero, rate: null, fixedRate: null, price: null };
+    case 'eur': {
+      // An account without currency amounts (e.g. converted from Delta, where the
+      // currency feature was not carried over) keeps its leva at the fixed rate.
+      const side = (money: Dec, cur: Dec) => (cur.isZero() && !money.isZero() ? toEuro(money) : cur);
+      return { debit: side(d, cd), credit: side(c, cc), curDebit: zero, curCredit: zero, rate: null, fixedRate: null, price: null };
+    }
     case 'foreign': {
       const units = cd.plus(cc);
       const rate = units.isZero() ? null : round(d.plus(c).div(units).div(EURO_RATE), f.rateDecimals);

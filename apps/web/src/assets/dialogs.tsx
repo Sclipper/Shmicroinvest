@@ -109,10 +109,10 @@ export function TerminateDialog({ asset, onClose, onDone }: { asset: AssetRow; o
             </Select>
           </Field>
           <div className="grid grid-cols-2 gap-2">
-            <Field label="Дата на отписване (САП)">
+            <Field label="Дата на отписване от САП">
               <TextInput type="date" value={f.sapDate} onChange={(e) => setF({ ...f, sapDate: e.target.value })} />
             </Field>
-            <Field label="Дата на отписване (ДАП)">
+            <Field label="Дата на отписване от ДАП">
               <TextInput type="date" value={f.dapDate} onChange={(e) => setF({ ...f, dapDate: e.target.value })} />
             </Field>
           </div>

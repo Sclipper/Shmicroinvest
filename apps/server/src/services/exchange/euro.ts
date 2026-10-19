@@ -4,10 +4,12 @@ import {
 } from '@shmi/core';
 import * as s from '../../db/company/schema/index.ts';
 import { exec, type DbOrTx } from '../../db/provider.ts';
-import { rebuildAccountsTree } from '../chart.ts';
+import { cloneChartToEuro } from '../chart.ts';
 import { getConfig, setConfig } from '../config.ts';
 import { concludeIntoYear } from '../yearEnd.ts';
 import { convertFixedAssets, convertReschedules, convertTemplates } from './euroModules.ts';
+
+export { cloneChartToEuro };
 
 /**
  * Euro conversion of a database (04b 4, "ConvertDatabaseInEurView"). Runs in
@@ -39,30 +41,6 @@ async function years(db: DbOrTx) {
 
 async function chartAccounts(db: DbOrTx, isEuro: boolean) {
   return (await db.select().from(s.accounts).where(eq(s.accounts.isEuro, isEuro))).filter((a) => a.number !== '0');
-}
-
-/** Copies the BGN chart into an empty EUR chart (same numbers; base-currency accounts become EUR accounts). */
-export async function cloneChartToEuro(db: DbOrTx) {
-  const eur = await chartAccounts(db, true);
-  if (eur.length) return 0;
-  const [bgnCur] = await db.select().from(s.currencies).where(eq(s.currencies.isoCode, 'BGN'));
-  const [eurCur] = await db.select().from(s.currencies).where(eq(s.currencies.isoCode, 'EUR'));
-  const [root] = await db.select().from(s.accounts).where(and(eq(s.accounts.isEuro, true), eq(s.accounts.number, '0')));
-  const bgn = (await chartAccounts(db, false)).sort((a, b) => a.leftIndex - b.leftIndex);
-  const idMap = new Map<number, number>();
-  const [bgnRoot] = await db.select().from(s.accounts).where(and(eq(s.accounts.isEuro, false), eq(s.accounts.number, '0')));
-  if (bgnRoot && root) idMap.set(bgnRoot.id, root.id);
-  for (const a of bgn) {
-    const { id, leftIndex, rightIndex, level, mappedAccountId, ...rest } = a;
-    void leftIndex; void rightIndex; void level; void mappedAccountId;
-    const [row] = await db.insert(s.accounts).values({
-      ...rest, parentId: a.parentId ? idMap.get(a.parentId) ?? root?.id ?? null : root?.id ?? null, isEuro: true,
-      currencyId: a.currencyId === bgnCur?.id ? eurCur!.id : a.currencyId,
-    }).returning({ id: s.accounts.id });
-    idMap.set(id, row!.id);
-  }
-  await rebuildAccountsTree(db);
-  return bgn.length;
 }
 
 /** Mapping grid: BGN accounts with the proposed EUR account (current mapping, else same number). */

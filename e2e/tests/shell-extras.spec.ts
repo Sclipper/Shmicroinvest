@@ -266,6 +266,20 @@ test.describe('shell, settings and reports', () => {
     expect(log.slice(0, 2).map((l) => l.description).sort()).toEqual(['Оборотна ведомост (PDF)', 'Оборотна ведомост (Word)']);
   });
 
+  test('reports: a file that cannot be built shows strProblemExporting and the details go to the application log (04a 8)', async ({ page }) => {
+    await openApp(page);
+    // The PDF/Word writer is a separate chunk: when it cannot load, the export fails in the browser.
+    await page.route(/\/assets\/exportDocs[^/]*\.js$/, (route) => route.abort());
+    const tab = await runTrialBalance(page);
+    const logged = page.waitForRequest((r) => r.url().endsWith('/api/app-log/client-error'));
+    await tab.getByRole('button', { name: 'Експорт PDF' }).click();
+    await expect(page.getByText('Възникнала е грешка при експорт на данни. Подробна информация е записана в дневника на приложението.')).toBeVisible();
+    expect((await logged).postDataJSON()).toMatchObject({ context: 'Експорт: Оборотна ведомост (PDF)' });
+    await page.getByRole('button', { name: 'OK' }).click();
+    const log = await api<{ message: string }[]>(page, 'GET', '/app-log?limit=20');
+    expect(log.some((l) => l.message.startsWith('Експорт: Оборотна ведомост (PDF): '))).toBe(true);
+  });
+
   test('e-mail: a report on one partner goes to the partner e-mail with the PDF attached', async ({ page }) => {
     await openApp(page);
     await api(page, 'PUT', '/settings/smtp', { host: 'smtp.panels.bg', port: 587, userName: 'office', password: 'Tajna-e2e', email: 'office@panels.bg', enableSsl: true });

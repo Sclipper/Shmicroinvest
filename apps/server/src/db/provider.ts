@@ -1,7 +1,6 @@
 import { mkdir, rm, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { PGlite, types as pgliteTypes } from '@electric-sql/pglite';
 import { drizzle as drizzlePglite, PgliteSession } from 'drizzle-orm/pglite';
 import { migrate as migratePglite } from 'drizzle-orm/pglite/migrator';
@@ -13,6 +12,7 @@ import pg from 'pg';
 import * as companySchema from './company/schema/index.ts';
 import * as catalogSchema from './catalog/schema.ts';
 import { decodeLogicalDump, encodeLogicalDump, logicalDump, logicalRestore } from './logicalDump.ts';
+import { PATHS } from '../runtime.ts';
 
 export type CompanySchema = typeof companySchema;
 export type CompanyDb = PgDatabase<PgQueryResultHKT, CompanySchema>;
@@ -20,9 +20,8 @@ export type CatalogDb = PgDatabase<PgQueryResultHKT, typeof catalogSchema>;
 export type Tx = Parameters<Parameters<CompanyDb['transaction']>[0]>[0];
 export type DbOrTx = CompanyDb | Tx;
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const COMPANY_MIGRATIONS = path.join(here, 'company/migrations');
-const CATALOG_MIGRATIONS = path.join(here, 'catalog/migrations');
+const COMPANY_MIGRATIONS = PATHS.companyMigrations;
+const CATALOG_MIGRATIONS = PATHS.catalogMigrations;
 
 /**
  * Storage driver. Mirrors Delta's "company = database" model: a catalog
@@ -254,7 +253,30 @@ export class PostgresDriver implements DbDriver {
   private url: string;
   constructor(url: string) {
     this.url = url;
-    this.catalogPool = new pg.Pool({ connectionString: url, max: 5 });
+    this.catalogPool = this.newPool(url, 'catalog', 5);
+  }
+
+  /**
+   * A pool per database. Idle connections that the server closes (a restart,
+   * a dropped database, a hosted Postgres that ends idle sessions) emit
+   * 'error' on the pool; without a listener that would end the process.
+   */
+  private newPool(connectionString: string, label: string, max = Number(process.env.PG_POOL_MAX) || 5) {
+    const pool = new pg.Pool({ connectionString, max, idleTimeoutMillis: 30_000, connectionTimeoutMillis: 15_000 });
+    pool.on('error', (err) => {
+      if ((err as { code?: string }).code === '57P01') return; // terminated by the server: the pool replaces the connection
+      console.warn(`[postgres] idle connection to ${label}: ${err.message}`);
+    });
+    return pool;
+  }
+
+  /** The connection is password-protected (GDPR check, 06 9). */
+  connectionHasPassword() {
+    try {
+      return !!new URL(this.url).password || !!process.env.PGPASSWORD;
+    } catch {
+      return !!process.env.PGPASSWORD;
+    }
   }
 
   private urlFor(name: string) {
@@ -275,14 +297,18 @@ export class PostgresDriver implements DbDriver {
   async company(name: string) {
     let e = this.pools.get(name);
     if (!e) {
-      const pool = new pg.Pool({ connectionString: this.urlFor(name), max: 10 });
+      const pool = this.newPool(this.urlFor(name), name);
       const db = (async () => {
         const d = drizzlePg(pool, { schema: companySchema });
         await migratePg(d, { migrationsFolder: COMPANY_MIGRATIONS });
         return d as unknown as CompanyDb;
       })();
       e = { pool, db };
-      db.catch(() => this.pools.delete(name));
+      db.catch(() => {
+        // A missing database: forget the pool so a later create can open it again.
+        this.pools.delete(name);
+        void pool.end().catch(() => undefined);
+      });
       this.pools.set(name, e);
     }
     return e.db;
@@ -326,7 +352,7 @@ export class PostgresDriver implements DbDriver {
 export function createDriver(): DbDriver {
   const url = process.env.DATABASE_URL;
   if (url) return new PostgresDriver(url);
-  const root = process.env.DATA_DIR ?? path.resolve(here, '../../.data');
+  const root = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : PATHS.defaultDataDir;
   return new PgliteDriver(root);
 }
 

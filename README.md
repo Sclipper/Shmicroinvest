@@ -18,9 +18,32 @@ pnpm --filter @shmi/server dev   # API on :3000; data in apps/server/.data
 pnpm --filter @shmi/web dev      # UI on :5173; proxies /api
 ```
 
-The first visit asks you to create the first company and its administrator. After that, only a logged-in user with the "Нова фирма" permission can create more companies.
+The first visit asks you to create the first company and its administrator. After that, only a logged-in user with the "Нова фирма" permission can create more companies. On a public server, creating the first company needs a setup token (`SHMI_SETUP_TOKEN`; in production one is generated and printed in the log when it is not set).
 
-To run in production, build the UI with `pnpm --filter @shmi/web build`, then run `pnpm --filter @shmi/server start`. The server serves `apps/web/dist`.
+## Production
+
+```bash
+pnpm release:bundle          # release/: server.js for Node 22+, web/, migrations, PGlite (~50 MiB)
+cd release && NODE_ENV=production DATA_DIR=/var/lib/shmelta SHMI_SETUP_TOKEN=… PORT=3000 node server.js
+```
+
+`deploy/` has a Dockerfile and a Docker Compose stack (PostgreSQL 17, Caddy with automatic HTTPS, daily backups). [docs/DEPLOY.md](docs/DEPLOY.md) covers a VPS, Amp Apps and generic Node hosting, the first run, backups and restores, upgrades, and every setting (also in [.env.example](.env.example)). Release notes are in [CHANGELOG.md](CHANGELOG.md).
+
+### Off-site backups
+
+Delta's cloud archive is replaced by S3-compatible object storage (AWS S3, Hetzner Object Storage, Backblaze B2, MinIO, Garage, SeaweedFS). When a bucket is configured, every company is backed up daily as a ZIP of its backup file, "Архивиране на фирма" offers to upload the new archive, and administrators see the remote archives in "Възстановяване на фирма" and can restore one.
+
+| Variable | Meaning |
+|---|---|
+| `SHMI_BACKUP_S3_BUCKET` | Bucket; without it off-site backups are off |
+| `SHMI_BACKUP_S3_ENDPOINT` | e.g. `https://fsn1.your-objectstorage.com`, `https://s3.eu-central-003.backblazeb2.com`, `http://127.0.0.1:9000`; default AWS for the region |
+| `SHMI_BACKUP_S3_REGION` | Default `us-east-1` |
+| `SHMI_BACKUP_S3_ACCESS_KEY`, `SHMI_BACKUP_S3_SECRET_KEY` (or `SHMI_BACKUP_S3_SECRET_KEY_FILE`) | Credentials |
+| `SHMI_BACKUP_S3_PATH_STYLE` | `true`/`false`; default path-style except on `*.amazonaws.com` |
+| `SHMI_BACKUP_PREFIX` | Key prefix, default `shmelta/`; archives go to `<prefix><database>/<file>.zip` |
+| `SHMI_BACKUP_SCHEDULE` | `daily 02:00` (default, company time zone), several times `02:00,14:00`, or `off` |
+| `SHMI_BACKUP_KEEP` | Archives kept per company after each upload, default 14 (Delta keeps 2) |
+| `SHMI_BACKUP_ZIP_PASSWORD` | Password of the uploaded ZIPs (a user's own ZIP password is used for the uploads that user starts) |
 
 ## What it covers
 
@@ -32,7 +55,7 @@ The main menu follows Delta Pro (06 1.3); every item opens a working screen.
 - **VAT:** purchase/sales journals, declaration and VIES files for NRA, the art. 73 coefficient, art. 117 protocols, VAT closing, the registration turnover check.
 - **Year end:** closing of income/expense accounts, automatic closing, revaluation, closing of documents, conclusion and opening of the next year.
 - **Reports:** turnover, chronological and analytical registers, general ledger, partner reports, inventory and asset books, financial statements, user activities and a user-defined report manager. Every report prints, exports to PDF, Word and Excel, and can be e-mailed as a PDF or Excel attachment.
-- **Exchange:** import from text, Excel, XML, VAT journals, ТРЗ Pro and Microinvest Delta; bank statements (MT940, camt.053, Excel, per-bank XML and the HTML exports of seven banks) with rules and document binding; XML export and exports to external systems; backup and restore.
+- **Exchange:** import from text, Excel, XML, VAT journals, ТРЗ Pro and Microinvest Delta; bank statements (MT940, camt.053, Excel, per-bank XML and the HTML exports of seven banks) with rules and document binding; XML export and exports to external systems; backup and restore, with daily off-site copies in S3-compatible storage.
 - **Administration:** users, roles with Delta's permission tree (denied menu items are hidden), escalating login lockout, the application log, settings and SMTP, and Delta's nine skins ("Визуален стил", per user).
 - **Attachments:** files on entries, and scanned pages taken with the camera ("Сканиране на документ").
 
@@ -46,11 +69,18 @@ The main menu follows Delta Pro (06 1.3); every item opens a working screen.
 
 ```bash
 pnpm -r test        # core unit tests + API integration tests (in-memory PGlite)
-pnpm -r typecheck
+pnpm typecheck
 pnpm test:e2e       # Playwright: builds the UI and starts a fresh server on :4310 (E2E_PORT)
+TEST_DATABASE_URL=postgres://postgres:pw@localhost:5432/postgres pnpm test:pg      # API tests on PostgreSQL
+E2E_DATABASE_URL=postgres://postgres:pw@localhost:5432/postgres pnpm test:e2e:pg  # e2e on PostgreSQL
+pnpm ci:all         # everything CI runs (.github/workflows/ci.yml), including the release bundle
 ```
 
+Database migrations are frozen since 1.0.0: a schema change adds a new migration (`pnpm --filter @shmi/server db:generate`), and `src/db/migrations.lock.json` makes the tests fail if a released one is edited.
+
 The e2e suite includes a smoke test that opens every menu screen and runs every report with its default filter.
+
+The Microinvest Delta conversion has a pilot (`apps/server/test/deltaPilot.test.ts`): a synthetic legacy company over 2024-2025 (VAT sales and purchases, currencies, materials, fixed assets, payments, year-end closing) is converted, and the totals computed from the legacy tables are compared with the trial balance, the VAT diaries, the partner balances and the 2026 euro openings. The default run is a small regression version; `DELTA_PILOT=full pnpm --filter @shmi/server exec vitest run test/deltaPilot.test.ts` runs the large one (400 partners, about 20 000 turnover rows, about 2 minutes).
 
 ## Known limitations
 
@@ -58,4 +88,5 @@ The e2e suite includes a smoke test that opens every menu screen and runs every 
 - Online services (ECB rates and VIES) are called directly. When a service is down the screens say so; they don't fall back to a guessed value.
 - The Fibank movements XML and the payment intermediaries' IBAN lists aren't included. The default per-bank import rules were rebuilt from the spec.
 - Bank-statement import binds payments only to open documents of the active year. Unpaid invoices of the previous year are offered once its balances are carried into the new year as openings per document.
-- The commercial and ЮЛНЦ chart templates were renumbered to match Delta's statement formulas (203 сгради, 206 машини, 241/n = depreciation of 20n). Companies created before that change keep their old numbering, and their 2026 EUR chart and F4 templates would mix the two, so recreate them before use.
+- The commercial and ЮЛНЦ chart templates were renumbered to match Delta's statement formulas (203 сгради, 206 машини, 241/n = depreciation of 20n). Each company stores the template version of its chart (`ChartTemplateVersion`; older companies are recognised by their accounts): F4 and "Избор на сметкоплан" offer the accounts of that version, and an older company's 2026 EUR chart is a copy of its BGN chart, so balances are converted to accounts of the same meaning. The statement formulas follow the new numbering, so an older company's balance-sheet rows for groups 20, 21 and 24 need their formulas adjusted in "Отчети и баланс".
+- The login screen lists the companies and their users before login, as Delta does. On a public address, restrict access in the reverse proxy if that matters (docs/DEPLOY.md, "Security notes").

@@ -231,14 +231,23 @@ export interface DeltaPartner {
   priority: number;
 }
 
+/**
+ * Part row -> partner. A natural person is often kept with the person's name
+ * in Part.Partner and no firm name (Part.Company empty): the person's name
+ * becomes the partner name (else the Bulstat / VAT number, else
+ * "Партньор <ID>"), so the person's postings keep their partner instead of
+ * falling to "Служебен партньор".
+ */
 export function mapDeltaPartner(row: DeltaRow): DeltaPartner {
   const t = (n: string, max: number) => deltaText(deltaField(row, n), max);
   const bulstat = t('Bulstat', 12);
   const vat = t('DanNo', 20);
   const bankAccount = t('BanAcct', 30);
+  const sourceId = deltaInt(deltaField(row, 'ID'));
+  const usableBulstat = bulstat && bulstat !== DELTA_PLACEHOLDER_BULSTAT ? bulstat : '';
   return {
-    sourceId: deltaInt(deltaField(row, 'ID')),
-    name: t('Company', 200),
+    sourceId,
+    name: t('Company', 200) || t('Partner', 200) || usableBulstat || vat || `Партньор ${sourceId}`,
     contactName: t('Partner', 100),
     bulstat: bulstat && bulstat !== DELTA_PLACEHOLDER_BULSTAT ? bulstat : null,
     vatNumber: vat || null,
@@ -284,7 +293,13 @@ export function deltaViesId(viesCol: number): number {
   return VIESES.some((v) => v.id === id) ? id : 1;
 }
 
-export interface DeltaLine { accountNumber: string; amount: string; vatTermId: number; partnerId: number | null }
+export interface DeltaLine {
+  accountNumber: string; amount: string; vatTermId: number;
+  /** The row's PartnerID, else the accounting's (first non-zero PartnerID of the group). */
+  partnerId: number | null;
+  /** The row carries a PartnerID of its own. */
+  ownPartner: boolean;
+}
 
 export interface DeltaAccounting {
   table: string;
@@ -399,7 +414,8 @@ export function mapDeltaYear(t: DeltaYearTable, features: Set<number>, opts: Del
       const operType = deltaInt(deltaField(r, 'OperType'));
       const vatTermId = deltaVatTerm(operType);
       if (vatTermId === null) throw new DataImportError(critical('strDeltaConversionInvalidOperType', operType, t.table, konId));
-      const line: DeltaLine = { accountNumber: account(r, konId), amount: amount.toFixed(2), vatTermId, partnerId: deltaInt(deltaField(r, 'PartnerID')) || partnerId };
+      const own = deltaInt(deltaField(r, 'PartnerID'));
+      const line: DeltaLine = { accountNumber: account(r, konId), amount: amount.toFixed(2), vatTermId, partnerId: own || partnerId, ownPartner: own !== 0 };
       (side === 2 ? debits : credits).push(line);
     }
     if (!debits.length && !credits.length) {
