@@ -45,7 +45,7 @@ export function CashLimitNotice() {
     <div
       role="alertdialog"
       aria-label="Касова наличност и вземания"
-      className="absolute right-3 bottom-3 z-30 w-[26rem] rounded-sm border border-amber-300 bg-amber-50 text-[12px] text-amber-950 shadow-lg print:hidden"
+      className="fixed right-3 bottom-8 z-40 w-[26rem] rounded-sm border border-amber-300 bg-amber-50 text-[12px] text-amber-950 shadow-lg print:hidden"
     >
       <div className="flex items-center gap-1.5 border-b border-amber-200 px-2.5 py-1 font-semibold">
         <TriangleAlert className="size-3.5 text-amber-600" />
@@ -68,7 +68,7 @@ export function CashLimitNotice() {
           Касова наличност и вземания
         </button>
         <Button className="h-6 px-3" onClick={close}>
-          OK
+          Затвори
         </Button>
       </div>
     </div>

@@ -116,8 +116,9 @@ export function Shell({ screens, onCommand }: { screens: Record<string, ScreenDe
             </div>
           );
         })}
-        <CashLimitNotice />
       </main>
+      {/* Outside <main>: its children are the tab panes. */}
+      <CashLimitNotice />
       <StatusBar onCommand={(c) => (c === 'changeUser' ? setChangeUser(true) : void run({ label: '', command: c }))} />
       {changeUser && <ChangeUserDialog onClose={() => setChangeUser(false)} />}
     </div>
