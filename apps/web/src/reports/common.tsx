@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
-import { FileDown, FileSpreadsheet, Play, Printer } from 'lucide-react';
+import { FileDown, FileSpreadsheet, Mail, Play, Printer } from 'lucide-react';
 import { ZERO, buildXlsx, dec, mergeSavedFilter, periodPresets, type PeriodPreset, type XlsxCell, type XlsxSheet } from '@shmi/core';
 import { api } from '../api.ts';
 import { DateInput } from '../components/DateInput.tsx';
@@ -11,6 +11,9 @@ import { useDialogs } from '../components/dialogs.tsx';
 import { Button, CommandBar, Empty, ErrorText, Field, Select, Spinner, cx } from '../components/ui.tsx';
 import { useAccounts, useSession } from '../session.tsx';
 import type { Account } from '../types.ts';
+import { useShortcuts } from '../screens/entry/shortcuts.ts';
+import { useQuickCommands } from '../shell/quickCommands.tsx';
+import { ReportEmailDialog } from './ReportEmail.tsx';
 
 /* ------------------------------------------------------------------ */
 /* Period                                                              */
@@ -280,7 +283,26 @@ export interface ReportFrameProps<T> {
   actions?: (data: T | undefined) => ReactNode;
   /** Result table. */
   children: (data: T) => ReactNode;
+  /**
+   * Entity type of the print/export rows of the activity log (01b 8):
+   * turnoverReport, chronologicalReport, analyticalReport, icaReport; others log "report".
+   */
+  logEntity?: string;
 }
+
+/** ЕкспортНаСправка / ПечатНаСправка (01b 8); a failed log write never blocks the report. */
+export function logReportActivity(activity: 'print' | 'export', entityType: string, description: string) {
+  void api.post('/activity/log', { activity, entityType, description }).catch(() => undefined);
+}
+
+/** End date of the applied filter, for the attachment name (05 11.1). */
+const endDateOf = (applied: unknown): string | null => {
+  const a = applied as { to?: unknown; endDate?: unknown } | null;
+  const v = a?.to ?? a?.endDate;
+  return typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+};
+
+const REPORT_COMMANDS = ['Print', 'Export'] as const;
 
 /** Date and time of a printout, "dd.MM.yyyy HH:mm" (Europe/Sofia). */
 export function printedAt(d = new Date()) {
@@ -346,27 +368,66 @@ export function PrintPortal({ title, subtitle, children, signatures = true }: { 
 }
 
 /** Common report screen: command bar (Справка / Печат / Експорт CSV), filter form, result grid, print portal. */
-export function ReportFrame<T>({ title, subtitle, filters, options, report, isEmpty, status, csv, csvName, xlsx, actions, children }: ReportFrameProps<T>) {
+export function ReportFrame<T>({ title, subtitle, filters, options, report, isEmpty, status, csv, csvName, xlsx, actions, children, logEntity = 'report' }: ReportFrameProps<T>) {
   const s = useSession();
   const formId = useId();
-  const [printing, print] = usePrinting();
+  const [printing, startPrint] = usePrinting();
+  const [emailing, setEmailing] = useState(false);
+  const shortcuts = useShortcuts();
   const { q, applied, run } = report;
   const data = applied ? q.data : undefined;
   const ready = data !== undefined && !q.isFetching && !isEmpty(data);
+  const canExport = !!(csv || xlsx);
+
+  const print = () => {
+    if (!ready) return;
+    logReportActivity('print', logEntity, title);
+    startPrint();
+  };
 
   const exportCsv = () => {
-    if (!data || !csv) return;
+    if (!ready || !data || !csv) return;
+    logReportActivity('export', logEntity, `${title} (CSV)`);
     downloadCsv(`${csvName}.csv`, [[`${title} на ${s.company.name}`], typeof subtitle === 'string' ? [subtitle] : [], [], ...csv(data)]);
   };
 
-  const exportXlsx = () => {
-    if (!data) return;
+  const sheets = (d: T) => {
     const titleRows: Cell[][] = [[`${title} на ${s.company.name}`], typeof subtitle === 'string' ? [subtitle] : [], []];
-    downloadXlsx(csvName, xlsx ? xlsx(data) : [rowsToSheet(title, [...titleRows, ...(csv?.(data) ?? [])], titleRows.length)]);
+    return xlsx ? xlsx(d) : [rowsToSheet(title, [...titleRows, ...(csv?.(d) ?? [])], titleRows.length)];
   };
 
+  const exportXlsx = () => {
+    if (!ready || !data || !canExport) return;
+    logReportActivity('export', logEntity, `${title} (Excel)`);
+    downloadXlsx(csvName, sheets(data));
+  };
+
+  // Window shortcuts of the reports (06 2.6): Печат Ctrl+P, Експорт Ctrl+E, with the user's overrides.
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const cmd = shortcuts.match(e, REPORT_COMMANDS);
+    if (!cmd) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (cmd === 'Print') print();
+    else exportXlsx();
+  };
+
+  useQuickCommands([
+    {
+      title: title,
+      items: [
+        { label: 'Справка', run },
+        { label: 'Печат', run: print, disabled: !ready, gesture: shortcuts.gesture('Print') },
+        ...(canExport ? [
+          { label: 'Експорт Excel', run: exportXlsx, disabled: !ready, gesture: shortcuts.gesture('Export') },
+          { label: 'Изпращане по e-mail', run: () => ready && setEmailing(true), disabled: !ready },
+        ] : []),
+      ],
+    },
+  ]);
+
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col outline-none" tabIndex={-1} onKeyDown={onKeyDown}>
       <style href="shmi-report-print" precedence="default">
         {PRINT_CSS}
       </style>
@@ -374,7 +435,7 @@ export function ReportFrame<T>({ title, subtitle, filters, options, report, isEm
         <Button type="submit" form={formId} variant="primary" icon={<Play className="size-3.5" />}>
           Справка
         </Button>
-        <Button icon={<Printer className="size-3.5" />} disabled={!ready} onClick={print}>
+        <Button icon={<Printer className="size-3.5" />} disabled={!ready} onClick={print} title={shortcuts.gesture('Print')}>
           Печат
         </Button>
         {csv && (
@@ -382,9 +443,14 @@ export function ReportFrame<T>({ title, subtitle, filters, options, report, isEm
             Експорт CSV
           </Button>
         )}
-        {(csv || xlsx) && (
-          <Button icon={<FileSpreadsheet className="size-3.5" />} disabled={!ready} onClick={exportXlsx}>
+        {canExport && (
+          <Button icon={<FileSpreadsheet className="size-3.5" />} disabled={!ready} onClick={exportXlsx} title={shortcuts.gesture('Export')}>
             Експорт Excel
+          </Button>
+        )}
+        {canExport && (
+          <Button icon={<Mail className="size-3.5" />} disabled={!ready} onClick={() => setEmailing(true)}>
+            Изпращане по e-mail
           </Button>
         )}
         {actions?.(ready ? data : undefined)}
@@ -429,6 +495,9 @@ export function ReportFrame<T>({ title, subtitle, filters, options, report, isEm
         <PrintPortal title={title} subtitle={subtitle}>
           {children(data)}
         </PrintPortal>
+      )}
+      {emailing && data !== undefined && (
+        <ReportEmailDialog title={title} sheets={() => sheets(data)} endDate={endDateOf(applied)} entityType={logEntity} onClose={() => setEmailing(false)} />
       )}
     </div>
   );

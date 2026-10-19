@@ -118,6 +118,7 @@ export function TrialBalance() {
   return (
     <ReportFrame<Result>
       title="Оборотна ведомост"
+      logEntity="turnoverReport"
       subtitle={subtitle}
       report={report}
       isEmpty={(d) => (d.type === 4 ? d.groups.length === 0 : d.rows.length === 0)}

@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { RotateCcw, Save } from 'lucide-react';
+import { parseVatTermConfig, vatTermConfigValue } from '@shmi/core';
 import { api } from '../../api.ts';
 import { useDialogs } from '../../components/dialogs.tsx';
-import { Button, Checkbox, CommandBar, Empty, Panel, Spinner, TextInput, cx } from '../../components/ui.tsx';
-import { useCan, useInvalidate } from '../../session.tsx';
+import { Button, Checkbox, CommandBar, Empty, Panel, Select, Spinner, TextInput, cx } from '../../components/ui.tsx';
+import { useCan, useInvalidate, useLookups } from '../../session.tsx';
 import { DatabasePage, DocumentTypesPage, SequencesPage, useSettingsPages } from '../settings/SettingsPages.tsx';
+import { SmtpPage } from '../settings/SmtpPage.tsx';
 
 interface Setting { key: string; label: string; value: string; default: string }
 
@@ -18,6 +20,8 @@ const PARENT: Record<string, string> = {
   IsShowAccountingAttachmentsInList: 'IsAllowAccountingAttachments',
 };
 const NUMERIC = new Set(['QuantityFormat', 'PriceFormat', 'ExchangeRateFormat']);
+/** Most-used VAT operation per transaction type (06 3.4 SaleVatTerm / PurchaseVatTerm, enum name). */
+const VAT_TERM_SETTINGS: Record<string, 2 | 3> = { SaleVatTerm: 3, PurchaseVatTerm: 2 };
 
 /** Настройки > Основни (spec 06 3.4). */
 function BasicSettings() {
@@ -25,6 +29,7 @@ function BasicSettings() {
   const dialogs = useDialogs();
   const invalidate = useInvalidate();
   const editable = can('UI_Other_Settings');
+  const lookups = useLookups();
   const q = useQuery({ queryKey: ['settings'], queryFn: () => api.get<Setting[]>('/settings') });
   const [values, setValues] = useState<Record<string, string>>({});
   useEffect(() => {
@@ -50,7 +55,8 @@ function BasicSettings() {
   };
 
   const bools = q.data.filter(isBool);
-  const others = q.data.filter((s) => !isBool(s));
+  const vatTerms = q.data.filter((s) => s.key in VAT_TERM_SETTINGS);
+  const others = q.data.filter((s) => !isBool(s) && !(s.key in VAT_TERM_SETTINGS));
   return (
     <div className="flex h-full flex-col">
       <CommandBar right={changed.length ? <span className="text-[12px] text-amber-700">Незаписани промени: {changed.length}</span> : undefined}>
@@ -80,6 +86,25 @@ function BasicSettings() {
                     disabled={!editable || off}
                     onChange={(v) => set(s.key, v ? 'True' : 'False')}
                   />
+                );
+              })}
+            </div>
+          </Panel>
+          <Panel title="Операции по ДДС" className="w-[420px]">
+            <div className="flex flex-col gap-1.5 p-3">
+              {vatTerms.map((s) => {
+                const type = VAT_TERM_SETTINGS[s.key]!;
+                const current = parseVatTermConfig(values[s.key], type);
+                return (
+                  <label key={s.key} className={cx('flex flex-col gap-0.5', values[s.key] !== s.value && 'font-medium text-amber-800')}>
+                    <span>{s.label}</span>
+                    <Select aria-label={s.label} value={current ?? ''} disabled={!editable} onChange={(e) => set(s.key, vatTermConfigValue(Number(e.target.value) || null))}>
+                      <option value="">Първата операция от списъка</option>
+                      {(lookups.data?.vatTerms ?? []).filter((t) => t.transactionTypeId === type).map((t) => (
+                        <option key={t.id} value={t.id}>{t.description}</option>
+                      ))}
+                    </Select>
+                  </label>
                 );
               })}
             </div>
@@ -122,6 +147,7 @@ export function Settings() {
         {page === 'database' && <DatabasePage />}
         {page === 'sequences' && <SequencesPage />}
         {page === 'documents' && <DocumentTypesPage />}
+        {page === 'smtp' && <SmtpPage />}
       </div>
     </div>
   );
