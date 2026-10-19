@@ -23,6 +23,7 @@ export interface Account {
   isActive: boolean | null;
   concludeAccountId: number | null;
   isHidden: boolean;
+  isForBanks: boolean;
   iban: string | null;
   isLeaf: boolean;
   isForeignCurrency: boolean;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isValidAccountNumber, nextAccountNumber, normalizeAccountNumber } from '../src/index.ts';
+import { canHaveConcludeAccount, effectiveConcludeAccountId, isValidAccountNumber, nextAccountNumber, normalizeAccountNumber } from '../src/index.ts';
 import {
   rebuildNestedSet, nextSubAccountNumber, lockMonth, unlockMonth, isMonthLocked,
   isValidEik, isValidEgn, isValidEgnChecksum, isValidLnch, isValidIban, amountInWords,
@@ -219,5 +219,21 @@ describe('account numbers (03a 1.5)', () => {
     expect(nextAccountNumber('0', ['1', '2'])).toBe('3');
     expect(normalizeAccountNumber('401.2')).toBe('401/2');
     expect(normalizeAccountNumber(' 401 2 ')).toBe('401/2');
+  });
+});
+
+describe('conclude account (01a 4.1, 07 3.5)', () => {
+  it('is available for active and passive accounts only', () => {
+    expect(canHaveConcludeAccount(true)).toBe(true);
+    expect(canHaveConcludeAccount(false)).toBe(true);
+    expect(canHaveConcludeAccount(null)).toBe(false);
+  });
+  it('is cleared for active-passive accounts and never points at the account itself', () => {
+    expect(effectiveConcludeAccountId(10, true, 20)).toBe(20);
+    expect(effectiveConcludeAccountId(10, false, 20)).toBe(20);
+    expect(effectiveConcludeAccountId(10, null, 20)).toBeNull();
+    expect(effectiveConcludeAccountId(10, true, 10)).toBeNull();
+    expect(effectiveConcludeAccountId(null, true, 20)).toBe(20);
+    expect(effectiveConcludeAccountId(10, true, null)).toBeNull();
   });
 });

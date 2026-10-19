@@ -124,3 +124,18 @@ export function natureFromIsActive(isActive: boolean | null): AccountNature {
 export function isActiveFromNature(n: AccountNature): boolean | null {
   return n === 'active' ? true : n === 'passive' ? false : null;
 }
+
+/**
+ * "Сметка за приключване" applies to active and passive accounts only: the
+ * account editor disables the picker for active-passive accounts
+ * (CanModifyConcludeAccount = !IsActivePassiveChecked, 01a 4.1, 07 3.5).
+ */
+export function canHaveConcludeAccount(isActive: boolean | null): boolean {
+  return isActive !== null;
+}
+
+/** Conclude account stored for an account: cleared for active-passive accounts and when it points at the account itself. */
+export function effectiveConcludeAccountId(accountId: number | null, isActive: boolean | null, concludeAccountId: number | null): number | null {
+  if (!canHaveConcludeAccount(isActive) || concludeAccountId == null) return null;
+  return concludeAccountId === accountId ? null : concludeAccountId;
+}

@@ -2,7 +2,7 @@ import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import {
   ACCOUNT_CATEGORIES, COMMERCIAL_CHART, MULTI_CATEGORIES, isValidAccountNumber, nextAccountNumber, normalizeAccountNumber,
   parseChartTemplate, rebuildNestedSet, isProductCategory, isProductReleaseCategory, productAccountTypeFor, stockMessage,
-  type ChartTemplateType, type ValidationMessage,
+  effectiveConcludeAccountId, type ChartTemplateType, type ValidationMessage,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import { exec, type DbOrTx } from '../db/provider.ts';
@@ -89,6 +89,8 @@ export interface AccountInput {
   isActive?: boolean | null;
   concludeAccountId?: number | null;
   isHidden?: boolean;
+  /** Usable for bank statements (IsForBanks, 01a 4.1). */
+  isForBanks?: boolean;
   iban?: string | null;
   /** Editor type radios (03a 1.5): omitted = keep legacy behaviour (currency/product as given). */
   accountType?: 'standard' | 'currency' | 'material';
@@ -209,6 +211,7 @@ export async function addAccount(db: DbOrTx, input: AccountInput) {
   }
   const base = await chartBaseCurrency(db, parent.isEuro);
   const currencyId = input.accountType === 'currency' ? input.currencyId! : input.accountType ? base : (input.currencyId ?? parent.currencyId);
+  const isActive = input.isActive === undefined ? parent.isActive : input.isActive;
   const [row] = await db.insert(s.accounts).values({
     parentId: parent.id,
     number,
@@ -217,15 +220,24 @@ export async function addAccount(db: DbOrTx, input: AccountInput) {
     accountCategoryId: category,
     currencyId,
     productId: input.productId ?? null,
-    isActive: input.isActive === undefined ? parent.isActive : input.isActive,
-    concludeAccountId: input.concludeAccountId ?? null,
+    isActive,
+    concludeAccountId: effectiveConcludeAccountId(null, isActive, await checkConcludeAccount(db, parent.isEuro, input.concludeAccountId ?? null)),
     isHidden: input.isHidden ?? false,
+    isForBanks: input.isForBanks ?? false,
     isEuro: parent.isEuro,
     iban: input.iban ?? null,
   }).returning();
   if (input.accountType === 'material') row!.productId = await upsertAccountProduct(db, row!, input);
   await rebuildAccountsTree(db);
   return row!;
+}
+
+/** The conclude account must be an account of the same chart. */
+async function checkConcludeAccount(db: DbOrTx, isEuro: boolean, id: number | null) {
+  if (id == null) return null;
+  const [c] = await db.select({ id: s.accounts.id, number: s.accounts.number }).from(s.accounts).where(and(eq(s.accounts.id, id), eq(s.accounts.isEuro, isEuro)));
+  if (!c || c.number === '0') throw badRequest('Невалидна сметка за приключване.');
+  return c.id;
 }
 
 export async function isAccountUsed(db: DbOrTx, accountId: number) {
@@ -261,6 +273,8 @@ export async function editAccount(db: DbOrTx, id: number, input: Partial<Account
     const kids = await db.select({ id: s.accounts.id }).from(s.accounts).where(eq(s.accounts.parentId, id));
     if (kids.length || acc.level <= 2) throw badRequest('Типът може да се променя само на аналитична сметка без подсметки.');
   }
+  const isActive = input.isActive === undefined ? acc.isActive : input.isActive;
+  const concludeAccountId = input.concludeAccountId === undefined ? acc.concludeAccountId : await checkConcludeAccount(db, acc.isEuro, input.concludeAccountId);
   const [row] = await db.update(s.accounts).set({
     number,
     description: input.description?.trim() ?? acc.description,
@@ -268,9 +282,10 @@ export async function editAccount(db: DbOrTx, id: number, input: Partial<Account
     accountCategoryId: input.accountCategoryId === undefined ? acc.accountCategoryId : input.accountCategoryId,
     currencyId,
     productId: input.productId === undefined ? acc.productId : input.productId,
-    isActive: input.isActive === undefined ? acc.isActive : input.isActive,
-    concludeAccountId: input.concludeAccountId === undefined ? acc.concludeAccountId : input.concludeAccountId,
+    isActive,
+    concludeAccountId: effectiveConcludeAccountId(acc.id, isActive, concludeAccountId),
     isHidden: input.isHidden ?? acc.isHidden,
+    isForBanks: input.isForBanks ?? acc.isForBanks,
     iban: input.iban === undefined ? acc.iban : input.iban,
   }).where(eq(s.accounts.id, id)).returning();
   if (becomesMaterial) row!.productId = await upsertAccountProduct(db, row!, input);
