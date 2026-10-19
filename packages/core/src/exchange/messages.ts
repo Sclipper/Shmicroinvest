@@ -121,6 +121,29 @@ export const EXCHANGE_MESSAGES = {
 
   // --- legacy Delta (04a 7)
   strDeltaConversionNotSupported: 'Импортът от Microinvest Делта (.mdb, Microsoft Jet) не се поддържа в уеб версията. Използвайте експорт към текстов файл или XML от старата програма.',
+  strPartners: 'Партньори',
+  strChartAndPartners: 'Сметкоплан и партньори',
+  strOperationsChartPartners: 'Операции, сметкоплан и партньори',
+  strDeltaConversionWarningMessage: 'При импорта от Microinvest Делта ще бъдат прехвърлени номенклатурите на партньорите, структурата на сметкоплана и всички осчетоводени операции след 31.12.2007г. Не се прехвърлят количествени движения на материални и валутни сметки, както и счетоводни и данъчни амортизационни планове. За да бъде извършен успешно импорта, моля изключете активната настройка за номерация на документите от меню Други / Настройки / Номерация.',
+  strAccountsAlreadyExist: 'Вече съществуват сметки в индивидуалния сметкоплан. Те трябва да бъдат изтрити преди импорт.',
+  strImportDatabaseNotEmptyError: 'Фирмата не е празна: в нея вече има операции, сметки или партньори. Импортът от Microinvest Делта се извършва в празна фирма.', // no text
+  strTransferringMyCompany: 'Прехвърляне на данните за фирмата', // no text
+  strTransferringChartOfAccounts: 'Прехвърляне на сметкоплана', // no text
+  strTransferringPartners: 'Прехвърляне на партньорите', // no text
+  strTransferringOperations: 'Прехвърляне на операциите', // no text
+  strErrorMDBFileNotFound: 'Не е избран файл на Microinvest Делта (*.mdb).', // no text
+  strErrorMDBUnrecognizedDatabaseFormat: 'Некоректен файлов формат!',
+  strErrorReadingMDBFile: 'Грешка при четене на файла на Microinvest Делта: {0}', // no text
+  strImportFromDeltaFailed: 'Неуспешен импорт от Microinvest Делта!', // no text
+  DeltaConversionInvalidAccountError: 'Сметка {0} в таблица {1} с AccountingID = {2} е невалидна!',
+  strDefaultPartner: 'Служебен партньор',
+  // Rebuild texts (the conversion fails on these without a dictionary key).
+  strDeltaConversionMissingTable: 'липсва таблица {0}',
+  strDeltaConversionInvalidOperType: 'Невалиден тип операция по ДДС (OperType = {0}) в таблица {1} с AccountingID = {2}!',
+  strDeltaConversionUnbalanced: 'Различни суми в дебит и кредит в таблица {0} с AccountingID = {1} (Дебит: {2}, Кредит: {3}).',
+  strDeltaConversionAccountingError: 'Операцията в таблица {0} с AccountingID = {1} не може да бъде записана:',
+  strDeltaConversionOpeningError: 'Началното салдо на сметка {0} от таблица {1} не може да бъде записано:',
+  strDeltaConversionEuroYearSkipped: 'Таблица {0} не е прехвърлена: от 2026 г. основната валута е евро. Използвайте преминаването към евро след импорта.',
 
   // --- report exports (04a 8.3)
   strExportReportParameterNotFilled: 'Параметър "{0}" не е попълнен.',
