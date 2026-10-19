@@ -29,10 +29,11 @@ export interface TemplateBody {
 const crit = (key: keyof typeof SCHEDULE_MESSAGES): ValidationMessage => ({ key, text: SCHEDULE_MESSAGES[key], severity: 'critical' });
 const nn = (v: string | null | undefined) => (v && v.trim() ? v.trim() : null);
 
-async function assertName(db: DbOrTx, name: string, exceptId?: number) {
+/** Names are unique within a ledger (BGN templates up to 2025, EUR templates from 2026). */
+async function assertName(db: DbOrTx, name: string, isEuro: boolean, exceptId?: number) {
   if (!name.trim()) throw new ApiError(422, SCHEDULE_MESSAGES.strTemplateNameError, [crit('strTemplateNameError')]);
   const same = await db.select({ id: s.accountingTemplates.id }).from(s.accountingTemplates)
-    .where(and(sql`lower(trim(${s.accountingTemplates.name})) = lower(${name.trim()})`, exceptId ? ne(s.accountingTemplates.id, exceptId) : undefined));
+    .where(and(sql`lower(trim(${s.accountingTemplates.name})) = lower(${name.trim()})`, eq(s.accountingTemplates.isEuro, isEuro), exceptId ? ne(s.accountingTemplates.id, exceptId) : undefined));
   if (same.length) throw new ApiError(422, SCHEDULE_MESSAGES.strTemplateNameExistWarning, [crit('strTemplateNameExistWarning')]);
 }
 
@@ -74,7 +75,7 @@ export async function saveTemplate(db: DbOrTx, body: TemplateBody, ctx: { year: 
     const [t] = await db.select({ id: s.accountingTemplates.id }).from(s.accountingTemplates).where(eq(s.accountingTemplates.id, id));
     if (!t) throw notFound('Шаблонът');
   }
-  await assertName(db, body.name, id);
+  await assertName(db, body.name, ctx.year.year >= 2026, id);
   const header = {
     name: body.name.trim().slice(0, 255),
     documentTypeId: body.documentTypeId ?? null,
@@ -107,7 +108,8 @@ export async function listTemplates(db: DbOrTx, q: { q?: string; account?: strin
   }).from(s.accountingTemplates)
     .leftJoin(s.documentTypes, eq(s.documentTypes.id, s.accountingTemplates.documentTypeId))
     .leftJoin(s.companies, eq(s.companies.id, s.accountingTemplates.companyId))
-    .where(q.q ? ilike(s.accountingTemplates.name, `%${q.q}%`) : undefined)
+    // Templates of the ledger of the active year (GetTemplates by IsEuro).
+    .where(and(eq(s.accountingTemplates.isEuro, year.year >= 2026), q.q ? ilike(s.accountingTemplates.name, `%${q.q}%`) : undefined))
     .orderBy(asc(s.accountingTemplates.name));
   const ids = rows.map((r) => r.id);
   const details = ids.length

@@ -72,7 +72,7 @@ export async function saveReschedule(db: DbOrTx, body: RescheduleBody, year: Act
   return loadReschedule(db, rid);
 }
 
-async function regenerateDetails(db: DbOrTx, id: number) {
+export async function regenerateDetails(db: DbOrTx, id: number) {
   const [r] = await db.select().from(s.accountingReschedules).where(eq(s.accountingReschedules.id, id));
   const details = await db.select().from(s.accountingRescheduleDetails).where(eq(s.accountingRescheduleDetails.rescheduleId, id));
   const processed = details.filter((d) => d.isProcessed);

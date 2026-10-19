@@ -554,7 +554,7 @@ describe('euro conversion (04b 4)', { timeout: 60_000 }, () => {
     expect(keys(r)).toEqual(['strEuroConversionDifferenceAccountMissing']);
     r = await e.call('POST', '/euro-conversion', { differencesAccountId: diff, fixedAssets: true, backupFirst: true });
     expect(r.status, r.text).toBe(200);
-    expect(r.body.report.fixedAssets).toBe('модулът не е наличен');
+    expect(r.body.report.fixedAssets).toBe(0);
     expect(r.body.backup.fileName).toContain('Евро ООД');
     expect((await e.call('PUT', '/years/active', { year: 2026 })).status).toBe(200);
     const tb = await balances(e, '2026-01-01', '2026-12-31');
@@ -569,6 +569,48 @@ describe('euro conversion (04b 4)', { timeout: 60_000 }, () => {
     // Partner accounts follow the euro chart.
     const partner = (await e.call('GET', `/partners/${p}`)).body;
     expect(partner.accounts.map((a: { number: string }) => a.number).filter((n: string) => n === '411')).toHaveLength(2);
+  });
+
+  it('converts fixed assets, templates and reschedules (04b 4)', async () => {
+    const y = await sibling('Евро Модули ООД', 2025);
+    try {
+      const asset = await y.call('POST', '/assets', {
+        inventoryNumber: 'E-1', name: 'Машина', personInCharge: 'Иван Петров', categoryId: 2, locationId: null, synchronized: false,
+        inventoryAccountId: y.acc('203'), debitAccountId: y.acc('603'), creditAccountId: y.acc('241/2'),
+        accounting: { depreciationAmount: '12000', nonDepreciableAmount: '0', acquisitionDate: '2025-03-15', startDate: '2025-03-15', calcType: 'period', activePeriodLength: 60, annualRate: null, conservation: null, note: '', serialNumber: '' },
+        tax: { depreciationAmount: '12000', nonDepreciableAmount: '0', acquisitionDate: '2025-03-15', startDate: '2025-03-15', calcType: 'rate', activePeriodLength: 60, annualRate: '30', conservation: null, note: '', serialNumber: '' },
+      });
+      expect(asset.status, asset.text).toBe(201);
+      const rent = await y.call('POST', '/templates', { name: 'Наем', debits: [{ accountId: y.acc('602'), amount: '500' }], credits: [{ accountId: y.acc('503'), amount: '500' }] });
+      expect(rent.status, rent.text).toBe(201);
+      // Cash in base currency has no EUR counterpart by default: the template is skipped.
+      expect((await y.call('POST', '/templates', { name: 'Каса', debits: [{ accountId: y.acc('501'), amount: '10' }], credits: [{ accountId: y.acc('702'), amount: '10' }] })).status).toBe(201);
+      const card = await y.call('POST', '/reschedules', {
+        name: 'Застраховка', amount: '1200', documentTypeId: 1, documentNumber: '1', documentDate: '2025-07-01',
+        fromDate: '2025-07-01', toDate: '2026-06-30', isRescheduleByDays: false, debitAccountId: y.acc('609'), creditAccountId: y.acc('651'),
+      });
+      expect(card.status, card.text).toBe(201);
+
+      expect((await y.call('POST', '/years', { year: 2026 })).status).toBe(201);
+      const diff = (await y.call('GET', '/euro-conversion')).body.euroAccounts.find((x: { number: string }) => x.number === '123').id;
+      const r = await y.call('POST', '/euro-conversion', { differencesAccountId: diff, fixedAssets: true, templates: true, reschedules: true });
+      expect(r.status, r.text).toBe(200);
+      expect(r.body.report).toMatchObject({ fixedAssets: 1, templates: '1 (пропуснати шаблони: 1)', reschedules: 1 });
+
+      expect((await y.call('PUT', '/years/active', { year: 2026 })).status).toBe(200);
+      const templates = (await y.call('GET', '/templates')).body as { name: string; amount: string; debitAccounts: string }[];
+      expect(templates.map((x) => [x.name, x.amount, x.debitAccounts])).toEqual([['Наем', '0.00', '602']]);
+      // Six unprocessed 2026 months of 100 BGN: 600 / 1.95583 = 306.78 EUR from 2026-01-01.
+      const cards = (await y.call('GET', '/reschedules')).body as { name: string; amount: string; fromDate: string; toDate: string }[];
+      expect(cards.map((x) => [x.name, x.amount, x.fromDate, x.toDate])).toEqual([['Застраховка', '306.78', '2026-01-01', '2026-06-30']]);
+      const assets = (await y.call('GET', '/assets')).body as { inventoryNumber: string }[] | { rows: { inventoryNumber: string }[] };
+      expect((Array.isArray(assets) ? assets : assets.rows).map((a) => a.inventoryNumber)).toEqual(['E-1']);
+      // A second run converts nothing twice.
+      const again = await y.call('POST', '/euro-conversion', { differencesAccountId: diff, fixedAssets: true, templates: true, reschedules: true });
+      expect(again.body.report).toMatchObject({ fixedAssets: 'вече конвертирани', templates: 'вече конвертирани', reschedules: 'вече конвертирани' });
+    } finally {
+      await y.drop();
+    }
   });
 
   it('replaces the openings of an earlier year-end transfer instead of adding to them', async () => {

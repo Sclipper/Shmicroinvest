@@ -6,6 +6,7 @@ import * as s from '../../db/company/schema/index.ts';
 import type { DbOrTx } from '../../db/provider.ts';
 import { rebuildAccountsTree } from '../chart.ts';
 import { getConfig, setConfig } from '../config.ts';
+import { convertFixedAssets, convertReschedules, convertTemplates } from './euroModules.ts';
 
 /**
  * Euro conversion of a database (04b 4, "ConvertDatabaseInEurView"). Runs in
@@ -16,8 +17,10 @@ import { getConfig, setConfig } from '../config.ts';
 export interface EuroHookResult { converted: number; note?: string }
 export type EuroHook = (tx: DbOrTx, mapping: Map<number, number>, userId: number) => Promise<EuroHookResult>;
 
-/** Optional steps owned by other modules (fixed assets, accounting templates, reschedules). */
-export const euroConversionHooks: { fixedAssets?: EuroHook; templates?: EuroHook; reschedules?: EuroHook } = {};
+/** Steps owned by other modules (fixed assets, accounting templates, reschedules); replaceable in tests. */
+export const euroConversionHooks: { fixedAssets?: EuroHook; templates?: EuroHook; reschedules?: EuroHook } = {
+  fixedAssets: convertFixedAssets, templates: convertTemplates, reschedules: convertReschedules,
+};
 
 export interface EuroOptions {
   /** BGN account id -> EUR account id (null = leave unmapped); overrides the by-number default. */
@@ -229,7 +232,8 @@ export async function convertDatabaseToEuro(db: DbOrTx, o: EuroOptions, userId: 
       report[k] = 'модулът не е наличен';
       continue;
     }
-    report[k] = (await hook(db, mapping, userId)).converted;
+    const r = await hook(db, mapping, userId);
+    report[k] = r.note ? `${r.converted} (${r.note})` : r.converted;
     await setConfig(db, EURO_FLAGS[k], 'True');
   }
   // The active year becomes 2026 for this user.
