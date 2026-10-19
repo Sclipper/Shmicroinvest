@@ -85,7 +85,7 @@ type DictionaryTable = typeof s.terms | typeof s.referenceTexts | typeof s.parag
 
 /** The list row of a text: lookups compare lower-cased, trimmed text, an exact match first (03a 8.1). */
 async function findDictionary(db: DbOrTx, table: DictionaryTable, t: string) {
-  const rows = await db.select({ id: table.id, description: table.description }).from(table).where(sql`lower(${table.description}) = ${dictionaryKey(t)}`).limit(20);
+  const rows = await db.select({ id: table.id, description: table.description }).from(table).where(sql`lower(${table.description}) = lower(${t.trim()})`).limit(20);
   return (rows.find((r) => r.description === t) ?? rows[0])?.id ?? null;
 }
 

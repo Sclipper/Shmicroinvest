@@ -94,7 +94,7 @@ test('users: the base group warns, a weak password asks strPasswordNotSecure and
   await warn.getByRole('button', { name: 'OK' }).click();
   await tab.getByRole('cell', { name: /^Оперативни счетоводители\(\d+\)$/ }).click();
   await tab.getByRole('button', { name: 'Нов потребител' }).click();
-  const name = `Слаба парола ${Date.now()}`;
+  const name = `Оператор с кратък ключ ${Date.now()}`;
   await tab.getByLabel('Потребителско име').fill(name);
   await tab.getByLabel('Парола', { exact: true }).fill('123');
   await tab.getByLabel('Повторете паролата').fill('123');

@@ -75,7 +75,7 @@ export function Users() {
   const newUser = () => {
     // strSelectBaseUserRoleToAddUserOrRole (01b 3.4): users are added in a group, not in the base group.
     if (roleId === ROOT_ROLE) return void dialogs.messages('Нов потребител', [{ key: 'strSelectBaseUserRoleToAddUserOrRole', text: UM.strSelectBaseUserRoleToAddUserOrRole, severity: 'warning' }]);
-    setForm({ name: '', roleId: roleId === ROOT_ROLE ? null : roleId, email: '', password: '', password2: '' });
+    setForm({ name: '', roleId, email: '', password: '', password2: '' });
     setTab('users');
   };
   const editUser = (u: User) => setForm({ id: u.id, name: u.name, roleId: u.roleId, email: u.email ?? '', password: '', password2: '' });

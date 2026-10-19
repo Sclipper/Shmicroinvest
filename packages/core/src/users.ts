@@ -2,7 +2,7 @@ import type { ValidationMessage } from './journal.ts';
 
 /** Users screen messages (UsersListViewModel, spec 01b 3.4). */
 export const USER_SCREEN_MESSAGES = {
-  strUserNameIsEmpty: 'Попълнете потребителско име',
+  strUserNameIsEmpty: 'Попълнете потребителски име', // sic (spec 01b 3.4)
   strUserNameExists: 'Вече съществува потребител с такова име.',
   strUserPasswordsDontMatch: 'Паролите не съвпадат',
   strUserPasswordMissing: 'Потребителят няма въведена парола.',

@@ -481,7 +481,9 @@ describe('06 3 settings pages', () => {
   });
 
   it('per-user keep-open option', async () => {
-    expect((await call('GET', '/settings/user')).body).toEqual({ KeepAccountingOpen: 'False' });
+    expect((await call('GET', '/settings/user')).body).toEqual({
+      KeepAccountingOpen: 'False', EmailUserName: '', EmailSignature: '', IsZipPasswordEnabled: 'False', IsFileOpenAutomatically: 'False', HasZipPassword: 'False',
+    });
     await call('PUT', '/settings/user', { KeepAccountingOpen: 'True' });
     expect((await call('GET', '/settings/user')).body.KeepAccountingOpen).toBe('True');
   });
