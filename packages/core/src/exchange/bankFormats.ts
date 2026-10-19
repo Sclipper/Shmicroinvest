@@ -2,7 +2,7 @@ import { dec, round2 } from '../money.ts';
 import { normalizeIban } from '../validators.ts';
 import { child, children, descendants, parseXml, pathText, type XmlElement } from './xml.ts';
 import { fromOADate, parseImportDate, parseDecimalText } from './messages.ts';
-import { hasClass, htmlChild, htmlDescendants, htmlTableRows, htmlText, parseHtml, type HtmlCell } from './html.ts';
+import { hasClass, htmlChild, htmlDescendants, htmlGridRows, htmlTableGrid, htmlTableRows, htmlText, parseHtml, type HtmlCell, type HtmlGridSlot } from './html.ts';
 
 /**
  * Bank statement files (spec 04b 1.3, 1.13). Every bank has a "model"
@@ -884,7 +884,7 @@ export function parseHtmlAmount(raw: string | undefined): string | null {
 
 const capNorm = (t: string) => t.toLowerCase().replace(/\u00a0/g, ' ').replace(/\s*\/\s*/g, '/').replace(/\s+/g, ' ').replace(/[\s:*]+$/, '').trim();
 
-type HtmlRole = 'date' | 'valueDate' | 'reference' | 'debit' | 'credit' | 'amount' | 'dtkt' | 'counterparty' | 'payer' | 'beneficiary' | 'iban' | 'details' | 'additional' | 'balance';
+type HtmlRole = 'date' | 'valueDate' | 'reference' | 'debit' | 'credit' | 'amount' | 'dtkt' | 'counterparty' | 'payer' | 'beneficiary' | 'iban' | 'payerIban' | 'beneficiaryIban' | 'details' | 'additional' | 'balance';
 
 /** Column captions of the movements table (HtmlImportConsts and the captions of the Excel layouts). */
 const HTML_ROLE_CAPTIONS: [HtmlRole, string[]][] = [
@@ -1057,34 +1057,121 @@ function fibankHtmlMovements(rows: HtmlCell[][]): HtmlMovement[] {
   return out;
 }
 
-/** Header-driven movements (the other six banks): the first row whose captions bind a date and an amount is the header. */
-function tableHtmlMovements(rows: HtmlCell[][], mapper: BankMapperDef): { movements: HtmlMovement[]; headerAt: number } {
+type HtmlGrid = (HtmlGridSlot | undefined)[][];
+
+/** Sub-captions of a party group ("Наредител / Получател" over "Име | IBAN"): the party's name. */
+const PARTY_NAME_CAPS = new Set(['име', 'имена', 'наименование', 'наименование/име', 'name', 'фирма', 'титуляр', 'контрагент']);
+const PARTY_ROLES = new Set<string>(['counterparty', 'payer', 'beneficiary']);
+const SIDE_ROLES = new Set<string>(['debit', 'credit', 'dtkt']);
+
+/** A cell that holds a value (a date or a number), so its row is data, not a row of sub-captions. */
+const looksLikeValue = (c: HtmlCell) => !!c.text.trim() && (parseStatementDate(c.text.trim()) !== null || parseHtmlAmount(c.text) !== null);
+
+/**
+ * Height (1-3 rows) of a header that starts at row `r`: the rows its cells
+ * span (`rowspan`), plus a row of sub-captions under a group caption
+ * (`colspan` > 1 on the band's last row), unless that row holds values.
+ */
+function headerBandHeight(grid: HtmlGrid, rows: HtmlCell[][], r: number): number {
+  let h = 1;
+  for (;;) {
+    let need = h;
+    let group = false;
+    for (let i = r; i < r + h; i++) {
+      for (const [c, s] of (grid[i] ?? []).entries()) {
+        if (!s || s.row !== i || s.col !== c) continue;
+        need = Math.max(need, s.row + s.rowspan - r);
+        if (s.colspan > 1 && s.row + s.rowspan === r + h && s.cell.text.trim()) group = true;
+      }
+    }
+    if (need === h && group && r + h < rows.length && !rows[r + h]!.some(looksLikeValue)) need = h + 1;
+    if (need === h || need > 3) return Math.min(need, 3);
+    h = need;
+  }
+}
+
+/** Caption path of every column of a header band, outermost caption first (`Сума` > `Дебит`). */
+function bandPaths(grid: HtmlGrid, r: number, h: number): string[][] {
+  const width = Math.max(0, ...grid.slice(r, r + h).map((row) => row.length));
+  return Array.from({ length: width }, (_, c) => {
+    const path: string[] = [];
+    let prev: HtmlGridSlot | undefined;
+    for (let i = r; i < r + h; i++) {
+      const s = grid[i]?.[c];
+      if (s && s !== prev && s.cell.text.trim()) path.push(capNorm(s.cell.text));
+      prev = s ?? prev;
+    }
+    return path;
+  });
+}
+
+/**
+ * The role of a column by its caption path: the whole path read as one
+ * caption ("Сума" + "Дебит" = "сума дебит"), else the leaf in the sense of its
+ * group: under a party group the name and IBAN sub-columns belong to that party,
+ * under "Салдо" a debit/credit pair is a balance (never a movement amount),
+ * under "Сума"/"Дата" the leaf decides (Дебит/Кредит, Вальор).
+ */
+function columnRole(path: string[], one: (t: string) => string | null): string | null {
+  if (!path.length) return null;
+  const joined = one(path.join(' '));
+  if (joined || path.length === 1) return joined;
+  const leafText = path[path.length - 1]!;
+  const leaf = one(leafText);
+  const parent = path.slice(0, -1).map(one).filter((x): x is string => !!x).pop() ?? null;
+  if (parent && PARTY_ROLES.has(parent)) {
+    if (leaf === 'iban') return parent === 'payer' ? 'payerIban' : parent === 'beneficiary' ? 'beneficiaryIban' : 'iban';
+    if (leaf && PARTY_ROLES.has(leaf)) return leaf;
+    return PARTY_NAME_CAPS.has(leafText) ? parent : null;
+  }
+  if (parent === 'balance') return leaf && (SIDE_ROLES.has(leaf) || leaf === 'amount') ? null : 'balance';
+  if (parent === 'date') return leaf === 'valueDate' ? 'valueDate' : leaf === null || leaf === 'date' ? 'date' : leaf;
+  if (parent === 'amount') return leaf && (SIDE_ROLES.has(leaf) || leaf === 'amount') ? leaf : leaf === null ? 'amount' : null;
+  return leaf ?? parent;
+}
+
+/**
+ * Header-driven movements (the other six banks): the first header whose
+ * captions bind a date and an amount. A header may take two or three rows
+ * (`rowspan`/`colspan`, e.g. "Сума" over "Дебит | Кредит" or
+ * "Наредител / Получател" over "Име | IBAN"); its columns are bound by their
+ * combined caption path over the expanded grid.
+ */
+function tableHtmlMovements(grid: HtmlGrid, rows: HtmlCell[][], mapper: BankMapperDef): { movements: HtmlMovement[]; headerAt: number } {
   const propLookup = new Map<string, string>();
   for (const p of mapper.properties) for (const c of [p.name, p.caption, ...(p.aliases ?? [])]) if (!propLookup.has(capNorm(c))) propLookup.set(capNorm(c), p.name);
+  const one = (t: string): string | null => {
+    const role = HTML_ROLE.get(t);
+    if (role) return role;
+    const p = propLookup.get(t);
+    return p ? `prop:${p}` : null;
+  };
   let headerAt = -1;
+  let dataAt = -1;
   let binding: (string | null)[] = [];
-  for (let r = 0; r < Math.min(rows.length, 60); r++) {
+  for (let r = 0; r < Math.min(rows.length, 60) && headerAt < 0; r++) {
     const cells = rows[r]!;
-    if (cells.length <= 1) continue;
-    const b = cells.map((c) => {
-      const n = capNorm(c.text);
-      const role = HTML_ROLE.get(n);
-      if (role) return role;
-      const p = propLookup.get(n);
-      return p ? `prop:${p}` : null;
-    });
-    const used = new Set(b.filter(Boolean));
-    // DSK's amount cells are td.amt: its header row needs no amount caption.
-    if (used.size >= 3 && used.has('date') && (used.has('debit') || used.has('credit') || used.has('amount') || mapper.id === 'DSK')) {
-      headerAt = r;
-      binding = b.map((x, i) => (x && b.indexOf(x) === i ? x : null));
-      break;
+    // A header row has at least three captions of its own (a title row spanning the table is not one).
+    const own = (grid[r] ?? []).filter((s, c) => s && s.row === r && s.col === c && s.cell.text.trim()).length;
+    if (cells.length <= 1 || own < 3) continue;
+    const band = headerBandHeight(grid, rows, r);
+    for (const h of band > 1 ? [band, 1] : [1]) {
+      const b = bandPaths(grid, r, h).map((path) => columnRole(path, one));
+      const used = new Set(b.filter(Boolean));
+      // DSK's amount cells are td.amt: its header row needs no amount caption.
+      if (used.size >= 3 && used.has('date') && (used.has('debit') || used.has('credit') || used.has('amount') || mapper.id === 'DSK')) {
+        headerAt = r;
+        dataAt = r + h;
+        binding = b.map((x, i) => (x && b.indexOf(x) === i ? x : null));
+        break;
+      }
     }
   }
   const movements: HtmlMovement[] = [];
   if (headerAt < 0) return { movements, headerAt };
   const both = binding.includes('payer') && binding.includes('beneficiary');
-  for (const cells of rows.slice(headerAt + 1)) {
+  const bothIban = binding.includes('payerIban') && binding.includes('beneficiaryIban');
+  for (const cells of rows.slice(dataAt)) {
     if (cells.length <= 1 || isSummaryRow(cells)) continue;
     const rec: Partial<Record<HtmlRole, string>> = {};
     const props: Model = {};
@@ -1113,7 +1200,8 @@ function tableHtmlMovements(rows: HtmlCell[][], mapper: BankMapperDef): { moveme
     if (value === null) continue;
     const nameCell = rec.counterparty ?? (both ? (isDebit ? rec.beneficiary : rec.payer) : (rec.beneficiary ?? rec.payer)) ?? '';
     const fromName = splitNameIban(nameCell);
-    const ibanCell = splitNameIban(rec.iban ?? '');
+    // An outflow goes to the beneficiary, an inflow comes from the payer.
+    const ibanCell = splitNameIban(rec.iban ?? (bothIban ? (isDebit ? rec.beneficiaryIban : rec.payerIban) : (rec.beneficiaryIban ?? rec.payerIban)) ?? '');
     movements.push({
       date: rec.date ?? '', valueDate: rec.valueDate ?? '', reference: oneLine(rec.reference), isDebit, amount: dec(value).abs().toString(),
       iban: ibanCell.iban || fromName.iban || ibanCell.rest, name: fromName.rest, details: oneLine(rec.details), additional: oneLine(rec.additional), props,
@@ -1144,12 +1232,13 @@ export function parseHtmlStatement(text: string, bankCode: string | null | undef
   const tables = htmlDescendants(body, 'table');
   const first = tables[0];
   if (!first) return null;
-  const rows = htmlTableRows(first);
+  const grid = htmlTableGrid(first);
+  const rows = htmlGridRows(grid);
   let movements: HtmlMovement[];
   let before: HtmlCell[][] = [];
   if (mapper.id === 'Fibank') movements = fibankHtmlMovements(rows);
   else {
-    const t = tableHtmlMovements(rows, mapper);
+    const t = tableHtmlMovements(grid, rows, mapper);
     movements = t.movements;
     before = rows.slice(0, Math.max(t.headerAt, 0));
   }

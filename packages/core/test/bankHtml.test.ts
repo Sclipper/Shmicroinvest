@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeText, htmlTableRows, htmlText, isHtmlText, parseBankStatement, parseHtml, parseHtmlAmount, parseHtmlStatement, htmlDescendants } from '../src/index.ts';
+import { decodeText, htmlTableGrid, htmlTableRows, htmlText, isHtmlText, parseBankStatement, parseHtml, parseHtmlAmount, parseHtmlStatement, htmlDescendants } from '../src/index.ts';
 
 /** HTML bank statements (spec 04b 1.13): the seven HTML services, their probes, Bulgarian numbers and encodings. */
 
@@ -260,5 +260,91 @@ describe('decodeText and <meta charset>', () => {
     expect(decodeText(new TextEncoder().encode(page('utf-8')))).toContain('Движение по сметка');
     // Declared utf-8, written in windows-1251: the declaration does not decode, the cp1251 fallback does.
     expect(decodeText(cp1251(page('utf-8')))).toContain('Движение по сметка');
+  });
+});
+
+describe('two-row headers (rowspan / colspan)', () => {
+  it('htmlTableGrid expands rowspan and colspan; htmlTableRows keeps the columns aligned', () => {
+    const doc = parseHtml(`<html><head></head><body><table>
+      <tr><th rowspan="2">Дата</th><th colspan="2">Сума</th><th rowspan=2>Описание</th></tr>
+      <tr><th>Дебит</th><th>Кредит</th></tr>
+      <tr><td rowspan="2">01.09.2026</td><td>1</td><td></td><td>a</td></tr>
+      <tr><td></td><td>2</td><td>b</td></tr>
+    </table></body></html>`);
+    const table = htmlDescendants(doc.root, 'table')[0]!;
+    const grid = htmlTableGrid(table);
+    expect(grid.map((r) => r.map((s) => s && `${s.cell.text}@${s.row},${s.col}`))).toEqual([
+      ['Дата@0,0', 'Сума@0,1', 'Сума@0,1', 'Описание@0,3'],
+      ['Дата@0,0', 'Дебит@1,1', 'Кредит@1,2', 'Описание@0,3'],
+      ['01.09.2026@2,0', '1@2,1', '@2,2', 'a@2,3'],
+      ['01.09.2026@2,0', '@3,1', '2@3,2', 'b@3,3'],
+    ]);
+    // A date written once for two movements belongs to both rows; colspan slots stay empty.
+    expect(htmlTableRows(table).map((r) => r.map((c) => c.text))).toEqual([
+      ['Дата', 'Сума', '', 'Описание'],
+      ['Дата', 'Дебит', 'Кредит', 'Описание'],
+      ['01.09.2026', '1', '', 'a'],
+      ['01.09.2026', '', '2', 'b'],
+    ]);
+  });
+
+  it('"Сума" over "Дебит | Кредит" and "Наредител / Получател" over "Име | IBAN": columns bound by the caption path, direction from the side', () => {
+    const html = `<html><head></head><body>
+      <p>ОТЧЕТ ПО СМЕТКА: BG44UBBS80021012345678 EUR</p>
+      <table>
+        <tr><th rowspan="2">Дата</th><th rowspan="2">Референция</th><th colspan="2">Салдо</th><th colspan="2">Сума</th><th colspan="2">Наредител / Получател</th><th rowspan="2">Основание</th></tr>
+        <tr><th>Дебит</th><th>Кредит</th><th>Дебит</th><th>Кредит</th><th>Име</th><th>IBAN</th></tr>
+        <tr><td>11.09.2026</td><td>R1</td><td>0,00</td><td>8 765,44</td><td>1 234,56</td><td></td><td>Доставчик ООД</td><td>${SUPPLIER}</td><td>Плащане ф-ра 5</td></tr>
+        <tr><td>12.09.2026</td><td>R2</td><td>0,00</td><td>8 865,34</td><td></td><td>99,90</td><td>Клиент ЕООД</td><td>${CLIENT}</td><td>Ф-ра 6</td></tr>
+        <tr><td>Оборот за периода</td><td></td><td></td><td></td><td>1 234,56</td><td>99,90</td></tr>
+      </table></body></html>`;
+    const s = parseHtmlStatement(html, 'UBBSBGSF')!;
+    expect(s).toMatchObject({ format: 'OBB HTML', iban: 'BG44UBBS80021012345678' });
+    // The "Салдо" Дебит/Кредит pair is a balance: the amounts come from the "Сума" pair.
+    expect(rowsOf(s)).toEqual([
+      ['2026-09-11', false, '1234.56', SUPPLIER, 'Доставчик ООД', 'Плащане ф-ра 5', 'R1'],
+      ['2026-09-12', true, '99.90', CLIENT, 'Клиент ЕООД', 'Ф-ра 6', 'R2'],
+    ]);
+    expect(s.rows[0]!.props).toMatchObject({ DebitSum: '1234.56', CreditSum: '', OppositeSideName: 'Доставчик ООД', OppositeSideIBAN: SUPPLIER });
+    expect(s.rows[1]!.props).toMatchObject({ DebitSum: '', CreditSum: '99.9' });
+  });
+
+  it('"Наредител" and "Получател" groups each over "Име | IBAN": an outflow takes the beneficiary, an inflow the payer', () => {
+    const html = `<html><head></head><body><table>
+      <tr><td>IBAN</td><td>BG55BUIN95611000123456</td><td>EUR</td></tr>
+      <tr><th rowspan="2">Дата</th><th colspan="2">Сума</th><th colspan="2">Наредител</th><th colspan="2">Получател</th><th rowspan="2">Основание</th></tr>
+      <tr><th>Стойност</th><th>Дт/Кт</th><th>Име</th><th>IBAN</th><th>Име</th><th>IBAN</th></tr>
+      <tr><td>03.09.2026</td><td>1,250.50</td><td>D</td><td>Тест ООД</td><td>BG55BUIN95611000123456</td><td>Доставчик ООД</td><td>${SUPPLIER}</td><td>Наем</td></tr>
+      <tr><td>10.09.2026</td><td>2,000.00</td><td>C</td><td>Клиент ЕООД</td><td>${CLIENT}</td><td>Тест ООД</td><td>BG55BUIN95611000123456</td><td>Ф-ра 77</td></tr>
+    </table></body></html>`;
+    const s = parseHtmlStatement(html, 'BUINBGSF')!;
+    expect(s.iban).toBe('BG55BUIN95611000123456');
+    expect(rowsOf(s)).toEqual([
+      ['2026-09-03', false, '1250.50', SUPPLIER, 'Доставчик ООД', 'Наем', ''],
+      ['2026-09-10', true, '2000.00', CLIENT, 'Клиент ЕООД', 'Ф-ра 77', ''],
+    ]);
+    expect(s.rows.map((r) => r.props.MovementType)).toEqual(['D', 'C']);
+  });
+
+  it('"Дата" over "Операция | Вальор", a rowspan date in the data, and a group caption over values is no header band', () => {
+    const html = `<html><head></head><body><table>
+      <tr><td>Сметка</td><td>BG13RZBB91551001234567 EUR</td></tr>
+      <tr><th colspan="2">Дата</th><th rowspan="2">Сума</th><th rowspan="2">Контрагент</th><th rowspan="2">Основание</th></tr>
+      <tr><th>Операция</th><th>Вальор</th></tr>
+      <tr><td rowspan="2">14.09.2026</td><td>15.09.2026</td><td>-150,00</td><td>Доставчик ООД</td><td>Ток</td></tr>
+      <tr><td>16.09.2026</td><td>+300,00</td><td>Клиент ЕООД</td><td>Ф-ра 8</td></tr>
+    </table></body></html>`;
+    const s = parseHtmlStatement(html, 'RZBBBGSF')!;
+    expect(s.rows.map((r) => [r.date, r.isInflow, r.amount, r.partnerName, r.reason])).toEqual([
+      ['2026-09-14', false, '150.00', 'Доставчик ООД', 'Ток'],
+      ['2026-09-14', true, '300.00', 'Клиент ЕООД', 'Ф-ра 8'],
+    ]);
+    expect(s.rows.map((r) => r.props.ValueDate)).toEqual(['15.09.2026', '16.09.2026']);
+    // "Основание" spans two data columns: the row below holds values, so the header is one row.
+    const one = `<html><head></head><body><table>
+      <tr><th>Дата</th><th>Сума</th><th>Контрагент</th><th colspan="2">Основание</th></tr>
+      <tr><td>14.09.2026</td><td>-150,00</td><td>Доставчик ООД</td><td>Ток</td><td>08.2026</td></tr>
+    </table></body></html>`;
+    expect(parseHtmlStatement(one, 'RZBBBGSF')!.rows.map((r) => [r.date, r.amount, r.reason])).toEqual([['2026-09-14', '150.00', 'Ток']]);
   });
 });
