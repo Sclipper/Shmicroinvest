@@ -824,7 +824,7 @@ describe('euro conversion (04b 4)', { timeout: 60_000 }, () => {
       await entry(y, { date: '2025-11-10', docNumber: 'F-77', partner: cl, dr: [['411', '1955.83']], cr: [['702', '1955.83']] });
       await entry(y, { date: '2025-12-01', docNumber: 'F-78', partner: cl, dr: [['411', '391.17']], cr: [['702', '391.17']] });
       await y.post({ date: '2025-12-02', dr: [['501', '1000']], cr: [['101', '1000']] });
-      expect((await y.call('POST', '/years', { year: 2026 })).status).toBe(201);
+      expect((await y.call('POST', '/years', { year: 2026, force: true })).status).toBe(201);
       const diff = (await y.call('GET', '/euro-conversion')).body.euroAccounts.find((x: { number: string }) => x.number === '123').id;
       // No relations: the cash account is mapped to the EUR 501 instead of blocking.
       const r = await y.call('POST', '/euro-conversion', { differencesAccountId: diff });
@@ -857,7 +857,7 @@ describe('euro conversion (04b 4)', { timeout: 60_000 }, () => {
       await entry(y, { date: '2025-12-01', docNumber: 'B-1', dr: [[usd, '180000', { currencyAmount: '100000' }]], cr: [['101', '180000']] });
       // A EUR account opens with its EUR balance: 1000 x 10.01 EUR booked at 19.58 BGN -> 10 010.00 (not 19 580 / 1.95583 = 10 011.10).
       await entry(y, { date: '2025-12-02', docNumber: 'B-2', dr: [[eurAcc, '19580', { currencyAmount: '10010' }]], cr: [['101', '19580']] });
-      expect((await y.call('POST', '/years', { year: 2026 })).status).toBe(201);
+      expect((await y.call('POST', '/years', { year: 2026, force: true })).status).toBe(201);
       const years = (await y.call('GET', '/years')).body as { id: number; year: number }[];
       const diff = (await y.call('GET', '/euro-conversion')).body.euroAccounts.find((x: { number: string }) => x.number === '123').id;
       expect((await y.call('POST', `/years/${years.find((x) => x.year === 2025)!.id}/conclude`, { differencesAccountId: diff })).status).toBe(200);
