@@ -28,6 +28,8 @@ export const PAYMENT_MESSAGES = {
   strNoDocumentsSelected: 'Не са избрани документи за разплащане!',
   strNoPaymentsSelected: 'Не са избрани документи за плащане!',
   strPaymentExceedsOpenAmount: 'Сумата за разплащане на документ {0} надвишава неплатената сума ({1})!',
+  // Not in Delta (its grid has no negative input); guards the API.
+  strPaymentAllocationNotPositive: 'Сумата за разплащане на документ {0} трябва да бъде положителна!',
   strAllocationExceedsPayment: 'Сумата на обвързаните документи надвишава сумата на плащането!',
   strDifferentPartnerOrAccount: 'Избраните документи трябва да бъдат към един и същ партньор и сметка!',
   strNoPartnerLineForPayment: 'В контирането няма сметка с партньор, по която да се извърши разплащане!',
@@ -347,6 +349,10 @@ export interface PaymentAllocationCheck {
 export function validatePaymentAllocations(paymentAmount: DecInput, rows: PaymentAllocationCheck[], isCurrency = false): { key: PaymentMessageKey; text: string }[] {
   const out: { key: PaymentMessageKey; text: string }[] = [];
   for (const r of rows) {
+    if (!round2(r.amount).greaterThan(0)) {
+      out.push({ key: 'strPaymentAllocationNotPositive', text: paymentMessage('strPaymentAllocationNotPositive', r.label) });
+      continue;
+    }
     if (round2(r.amount).greaterThan(round2(dec(r.open).abs()))) {
       out.push({ key: 'strPaymentExceedsOpenAmount', text: paymentMessage('strPaymentExceedsOpenAmount', r.label, round2(dec(r.open).abs()).toFixed(2)) });
     }

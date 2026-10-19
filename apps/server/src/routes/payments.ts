@@ -18,7 +18,8 @@ const amount = z.string().regex(/^-?\d+(\.\d+)?$/, 'Невалидна сума.
 const optAmount = amount.nullable().optional();
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const id = z.number().int().positive();
-const bindRow = z.object({ accountingId: id, amount: optAmount, currencyAmount: optAmount });
+const positive = z.string().regex(/^\d+(\.\d+)?$/, 'Невалидна сума.');
+const bindRow = z.object({ accountingId: id, amount: positive.nullable().optional(), currencyAmount: positive.nullable().optional() });
 
 const paymentBody = z.object({
   companyId: id,
@@ -32,7 +33,7 @@ const paymentBody = z.object({
   reference: z.string().max(255).nullable().optional(),
   amount,
   currencyAmount: optAmount,
-  exchangeRate: optAmount,
+  exchangeRate: positive.nullable().optional(),
   allocations: z.array(bindRow).default([]),
 });
 

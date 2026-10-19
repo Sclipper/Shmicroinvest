@@ -112,6 +112,10 @@ export async function postRequests(db: CompanyDb, ctx: AssetCtx, ids: number[]) 
     }
     try {
       const out = await db.transaction(async (tx) => {
+        // Claim the month first: a second request (double click, another user) finds it processed.
+        const claimed = await tx.update(s.depreciationSchedules).set({ isProcessed: true })
+          .where(and(eq(s.depreciationSchedules.id, id), eq(s.depreciationSchedules.isProcessed, false))).returning({ id: s.depreciationSchedules.id });
+        if (!claimed.length) return null;
         const date = endOfMonth(r.month);
         const documentNumber = await nextMemorialNumber(tx, ctx.year);
         const entry: EntryInput = {
@@ -123,10 +127,10 @@ export async function postRequests(db: CompanyDb, ctx: AssetCtx, ids: number[]) 
           credits: [{ accountId: r.debit_account_id!, amount: dec(r.amount).toFixed(2) }],
         };
         const saved = await saveEntry(tx, entry, { year: ctx.year, userId: ctx.userId });
-        await tx.update(s.depreciationSchedules).set({ isProcessed: true, accountingId: saved.id }).where(eq(s.depreciationSchedules.id, id));
+        await tx.update(s.depreciationSchedules).set({ accountingId: saved.id }).where(eq(s.depreciationSchedules.id, id));
         return { scheduleId: id, accountingId: saved.id, number: saved.number, documentNumber };
       });
-      posted.push(out);
+      if (out) posted.push(out);
     } catch (e) {
       if (!(e instanceof ApiError)) throw e;
       failed.push(id);

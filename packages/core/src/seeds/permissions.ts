@@ -139,6 +139,8 @@ export const PERMISSIONS: [number, string, string, number | null, number][] = [
   [145, "UI_Help_RemoteConnection", "Дистанционен сервиз", 10, 4],
   // Delta has the key but seeds no row for it (03b 1); seeded here so the report can be restricted.
   [146, "UI_Reporting_Depreciations_InventoryListMOL", "Инвентаризационен опис на ДМА", 42, 5],
+  // Used by the menu and its CanExecute but not seeded by Delta (01b 3.6); seeded so it can be restricted.
+  [147, "UI_Other_GDPRValidator", "GDPR проверка", 8, 4],
 ];
 
 /** Intended seeded denials (V1.01.033 meaning), referenced by key (spec 01b 3.5). */

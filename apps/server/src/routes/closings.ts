@@ -73,7 +73,7 @@ export const closingsRoutes = new Hono<AppEnv>()
     date, rates: z.array(z.object({ currencyId: z.number().int(), rate: decimal })),
   })), async (c) => {
     const { date: d, rates } = c.req.valid('json');
-    await saveRates(c.var.db, d, c.var.year.year, rates);
+    await c.var.db.transaction((tx) => saveRates(tx, d, c.var.year.year, rates));
     return c.json(await getRates(c.var.db, d, c.var.year.year));
   })
   .post('/revaluation/rates/download', requirePermission(REVALUATION), zValidator('json', z.object({ date })), async (c) =>

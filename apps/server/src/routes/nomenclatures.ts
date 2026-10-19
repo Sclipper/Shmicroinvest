@@ -385,15 +385,30 @@ export const nomenclatureRoutes = new Hono<AppEnv>()
       while (used.has(`Нова група ${n}`)) n++;
       name = `Нова група ${n}`;
     }
-    const [row] = await db.insert(s.companyGroups).values({ name, parentId: b.parentId }).returning();
-    await rebuildGroupTree(db);
+    const row = await db.transaction(async (tx) => {
+      const [r] = await tx.insert(s.companyGroups).values({ name, parentId: b.parentId }).returning();
+      await rebuildGroupTree(tx);
+      return r;
+    });
     return c.json(row, 201);
   })
   .put('/partner-groups/:id', requirePermission('UI_Edit_Companies'), zValidator('json', z.object({ name: z.string().trim().min(1).max(50), parentId: z.number().int().optional() })), async (c) => {
     const id = Number(c.req.param('id'));
     if (id === 1) throw badRequest('Основната група не може да бъде редактирана.');
-    await c.var.db.update(s.companyGroups).set(c.req.valid('json')).where(eq(s.companyGroups.id, id));
-    await rebuildGroupTree(c.var.db);
+    const b = c.req.valid('json');
+    await c.var.db.transaction(async (tx) => {
+      if (b.parentId !== undefined) {
+        // The new parent may not be the group itself or one of its subgroups.
+        const groups = await tx.select({ id: s.companyGroups.id, parentId: s.companyGroups.parentId }).from(s.companyGroups);
+        const parentOf = new Map(groups.map((g) => [g.id, g.parentId]));
+        if (!parentOf.has(b.parentId)) throw badRequest('Избраната група не съществува.');
+        for (let p: number | null | undefined = b.parentId; p != null; p = parentOf.get(p)) {
+          if (p === id) throw badRequest('Групата не може да бъде преместена в своя подгрупа.');
+        }
+      }
+      await tx.update(s.companyGroups).set(b).where(eq(s.companyGroups.id, id));
+      await rebuildGroupTree(tx);
+    });
     return c.json({ ok: true });
   })
   .delete('/partner-groups/:id', requirePermission('UI_Edit_Companies'), async (c) => {
@@ -404,8 +419,10 @@ export const nomenclatureRoutes = new Hono<AppEnv>()
     if (subs.length) throw badRequest('Избраната група не може да бъде изтрита, тъй като съдържа подгрупи!');
     const members = await db.select({ id: s.companies.id }).from(s.companies).where(and(eq(s.companies.groupId, id), eq(s.companies.isDeleted, false))).limit(1);
     if (members.length) throw badRequest('Избраната група не може да бъде изтрита, тъй като не е празна!');
-    await db.delete(s.companyGroups).where(eq(s.companyGroups.id, id));
-    await rebuildGroupTree(db);
+    await db.transaction(async (tx) => {
+      await tx.delete(s.companyGroups).where(eq(s.companyGroups.id, id));
+      await rebuildGroupTree(tx);
+    });
     return c.json({ ok: true });
   })
 

@@ -96,6 +96,16 @@ describe('partners (03a 2.12 acceptance)', () => {
 });
 
 describe('partner groups', () => {
+  it('refuses to move a group under itself or one of its subgroups', async () => {
+    const a = await t.call('POST', '/partner-groups', { parentId: 1, name: 'Цикъл А' });
+    const b = await t.call('POST', '/partner-groups', { parentId: a.body.id, name: 'Цикъл Б' });
+    const self = await t.call('PUT', `/partner-groups/${a.body.id}`, { name: 'Цикъл А', parentId: a.body.id });
+    expect(self.status).toBe(400);
+    const loop = await t.call('PUT', `/partner-groups/${a.body.id}`, { name: 'Цикъл А', parentId: b.body.id });
+    expect(loop.body.error).toBe('Групата не може да бъде преместена в своя подгрупа.');
+    expect((await t.call('PUT', `/partner-groups/${b.body.id}`, { name: 'Цикъл Б', parentId: 1 })).status).toBe(200);
+  });
+
   it('names new groups "Нова група N" and protects groups with children or members', async () => {
     const g1 = await t.call('POST', '/partner-groups', { parentId: 1 });
     const g2 = await t.call('POST', '/partner-groups', { parentId: 1 });

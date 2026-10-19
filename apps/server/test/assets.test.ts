@@ -293,6 +293,14 @@ describe('monthly posting (03b 12, acceptance 7-8)', () => {
     await h.call('PUT', `/years/${fy.id}/locks`, { months: [] });
   });
 
+  it('a month requested twice (double click) is posted once', async () => {
+    const other = (await h.create({ name: 'Двоен клик' })).id;
+    const row = (await h.pending({ from: '2025-04-01', to: '2025-04-30' })).rows.find((x) => x.assetId === other)!;
+    const r = await h.call('POST', '/accounting-requests/post', { ids: [row.id, row.id] });
+    expect(r.status, r.text).toBe(200);
+    expect(r.body.posted).toHaveLength(1);
+  });
+
   it('acceptance 9: changing a posted month offers delete / unlink; a locked month refuses the save', async () => {
     await h.postMonths(assetId, '2025-03-01', '2025-04-30');
     const v = await h.view(assetId);

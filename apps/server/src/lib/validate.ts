@@ -1,7 +1,10 @@
 import { zValidator as zv } from '@hono/zod-validator';
 import type { ValidationTargets } from 'hono';
-import type { ZodType } from 'zod';
+import { config, locales, type ZodType } from 'zod';
 import { ApiError } from './errors.ts';
+
+// Built-in zod messages in Bulgarian (user-facing texts are Bulgarian).
+config(locales.bg());
 
 /** zod validator that fails with an ApiError carrying the first issue's message. */
 export const zValidator = <T extends ZodType, Target extends keyof ValidationTargets>(target: Target, schema: T) =>

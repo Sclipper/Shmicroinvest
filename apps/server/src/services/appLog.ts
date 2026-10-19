@@ -30,8 +30,12 @@ export async function logApp(entry: Omit<LogEntry, 'dateTime'>) {
   if (file) await appendFile(file, `${JSON.stringify(e)}\n`).catch(() => {});
 }
 
-/** Newest first. Reads the file when configured so the log survives restarts. */
-export async function readAppLog(limit = 500): Promise<LogEntry[]> {
+/**
+ * Newest first. Reads the file when configured so the log survives restarts.
+ * A company sees its own entries; server-wide entries (no company) are shown
+ * to administrators only, and error details (stacks) too.
+ */
+export async function readAppLog(limit = 500, scope?: { company: string; isAdmin: boolean }): Promise<LogEntry[]> {
   let rows = memory;
   if (file) {
     const text = await readFile(file, 'utf8').catch(() => '');
@@ -42,6 +46,11 @@ export async function readAppLog(limit = 500): Promise<LogEntry[]> {
         return [];
       }
     });
+  }
+  if (scope) {
+    rows = rows
+      .filter((e) => (e.company ? e.company === scope.company : scope.isAdmin))
+      .map((e) => (scope.isAdmin || !e.details ? e : { ...e, details: undefined }));
   }
   return rows.slice(-limit).reverse();
 }

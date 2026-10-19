@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { and, eq, sql } from 'drizzle-orm';
+import { dec, round2 } from '@shmi/core';
 import type { AppEnv } from '../context.ts';
 import * as s from '../db/company/schema/index.ts';
 import { exec } from '../db/provider.ts';
@@ -243,7 +244,7 @@ export const journalExtraRoutes = new Hono<AppEnv>()
         AND d.account_id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})
       GROUP BY d.account_id`);
     const rows = (r.rows as { account_id: number; debit: string; credit: string }[]).map((x) => ({
-      accountId: x.account_id, debit: Number(x.debit).toFixed(2), credit: Number(x.credit).toFixed(2), balance: (Number(x.debit) - Number(x.credit)).toFixed(2),
+      accountId: x.account_id, debit: round2(x.debit).toFixed(2), credit: round2(x.credit).toFixed(2), balance: round2(dec(x.debit).minus(x.credit)).toFixed(2),
     }));
     return c.json({ rows });
   })

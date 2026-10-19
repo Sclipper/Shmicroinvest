@@ -104,9 +104,11 @@ export const authRoutes = new Hono<AppEnv>()
     const db = await c.var.driver.company(companyDb);
     const [u] = await db.select().from(s.users).where(and(eq(s.users.id, userId), eq(s.users.isDeleted, false)));
     if (!u || !(await verifyPassword(password, u.passwordHash))) {
-      // Three consecutive failures -> short lock-out (Delta sleeps 5 s client-side).
+      // Every third consecutive failure locks the user out (Delta sleeps 5 s client-side);
+      // the pause doubles each time, up to 15 minutes, until a successful login.
       const count = (f?.count ?? 0) + 1;
-      failedLogins.set(key, { count: count >= 3 ? 0 : count, until: count >= 3 ? Date.now() + 5000 : 0 });
+      const pause = count % 3 === 0 ? Math.min(5000 * 2 ** (count / 3 - 1), 15 * 60_000) : 0;
+      failedLogins.set(key, { count, until: pause ? Date.now() + pause : 0 });
       await logApp({ level: 'warning', message: `Неуспешно вписване на потребител ${u?.name ?? userId}`, company: companyDb, user: u?.name ?? null });
       throw new ApiError(401, 'Въведено е грешно потребителско име или парола!');
     }

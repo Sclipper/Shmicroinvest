@@ -76,9 +76,11 @@ test('change active user (Ctrl+0)', async ({ page }) => {
   await dlg.getByRole('button', { name: 'OK' }).click();
   await page.getByRole('button', { name: 'Да', exact: true }).click();
   await expect(page.locator('footer')).toContainText('Оператор Е2Е');
-  // Operators may not manage users: the menu item is disabled.
+  // Operators may not manage users: the menu item is hidden (06 1.2).
   await menu(page, 'Редакция', 'Администриране');
-  await expect(page.getByRole('button', { name: /^Потребители/ })).toBeDisabled();
+  await expect(page.getByTestId('menu-list').last().getByRole('button', { name: /^Смяна на активния потребител/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Моята фирма/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Потребители/ })).toHaveCount(0);
 });
 
 test('new company: duplicate name asks, partners are carried over', async ({ page }) => {

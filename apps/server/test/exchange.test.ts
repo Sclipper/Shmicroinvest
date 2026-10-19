@@ -485,6 +485,18 @@ describe('backup, restore, delete company (01b 2)', { timeout: 60_000 }, () => {
     expect((await call('GET', '/backups')).body.length).toBeGreaterThanOrEqual(2); // automatic backup before deleting
   });
 
+  it('a company sees only its own stored backups', async () => {
+    const other = await sibling('Чужда архивирана ООД');
+    const foreign = await other.call('POST', '/backups');
+    expect(foreign.status, foreign.text).toBe(201);
+    expect((await other.call('GET', '/backups')).body.map((b: { id: number }) => b.id)).toContain(foreign.body.id);
+    expect((await call('GET', '/backups')).body.map((b: { id: number }) => b.id)).not.toContain(foreign.body.id);
+    expect((await call('GET', `/backups/${foreign.body.id}/download`)).status).toBe(404);
+    expect((await call('POST', '/backups/restore', { id: foreign.body.id, mode: 'current' })).status).toBe(404);
+    expect((await call('DELETE', `/backups/${foreign.body.id}`)).status).toBe(404);
+    expect((await other.call('GET', `/backups/${foreign.body.id}/download`)).status).toBe(200);
+  });
+
   it('restore into the current company replaces its data', async () => {
     const b = await call('POST', '/backups');
     const count = await entryCount(t);

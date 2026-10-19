@@ -10,7 +10,7 @@ import { verifyPassword } from '../lib/password.ts';
 import { zValidator } from '../lib/validate.ts';
 import { createSession, requirePermission } from '../session.ts';
 import { logActivity } from '../services/audit.ts';
-import { backupData, createBackup, deleteCompany, listBackups, restoreBackup } from '../services/exchange/backup.ts';
+import { backupData, createBackup, deleteBackup, deleteCompany, listBackups, restoreBackup, type BackupScope } from '../services/exchange/backup.ts';
 import { importStep, readUpload } from '../services/exchange/common.ts';
 import { convertDatabaseToEuro, euroMappingGrid } from '../services/exchange/euro.ts';
 
@@ -28,6 +28,8 @@ async function switchTo(c: Parameters<typeof createSession>[0], database: string
   await createSession(c, database, same?.id ?? users[0]?.id ?? 1);
 }
 
+const scopeOf = (c: { var: AppEnv['Variables'] }): BackupScope => ({ database: c.var.session.companyDb!, isAdmin: !!c.var.user.isAdmin });
+
 export const companyOpsRoutes = new Hono<AppEnv>()
   /** "Активна фирма" (Ctrl+A). */
   .get('/company/active', async (c) => {
@@ -38,19 +40,18 @@ export const companyOpsRoutes = new Hono<AppEnv>()
   })
 
   // ------------------------------------------------------------------ backup / restore (01b 2)
-  .get('/backups', requirePermission('UI_File_RestoreDatabaseBackup'), async (c) => c.json(await listBackups(c.var.driver)))
+  .get('/backups', requirePermission('UI_File_RestoreDatabaseBackup'), async (c) => c.json(await listBackups(c.var.driver, scopeOf(c))))
   .post('/backups', requirePermission('UI_File_BackupDatabase'), async (c) => {
     const r = await createBackup(c.var.driver, c.var.session.companyDb!);
     return c.json({ ...r, message: msg('strBackupDatabaseSucceded') }, 201);
   })
   .get('/backups/:id/download', requirePermission('UI_File_BackupDatabase'), async (c) => {
-    const row = await backupData(c.var.driver, Number(c.req.param('id')));
+    const row = await backupData(c.var.driver, Number(c.req.param('id')), scopeOf(c));
     if (!row) throw notFound('Архивът');
     return download(c, row.data, row.fileName);
   })
   .delete('/backups/:id', requirePermission('UI_File_RestoreDatabaseBackup'), async (c) => {
-    const catalog = await c.var.driver.catalog();
-    await catalog.delete(cat.companyBackups).where(eq(cat.companyBackups.id, Number(c.req.param('id'))));
+    if (!(await deleteBackup(c.var.driver, Number(c.req.param('id')), scopeOf(c)))) throw notFound('Архивът');
     return c.json({ ok: true });
   })
   /** Restore from the store (body { id, mode }) or from an uploaded file (fields mode). */
@@ -60,7 +61,7 @@ export const companyOpsRoutes = new Hono<AppEnv>()
     const type = c.req.header('content-type') ?? '';
     const json = type.includes('application/json') ? ((await c.req.raw.clone().json().catch(() => ({}))) as Record<string, unknown>) : {};
     if (typeof json.id === 'number') {
-      const row = await backupData(c.var.driver, json.id);
+      const row = await backupData(c.var.driver, json.id, scopeOf(c));
       if (!row) throw notFound('Архивът');
       bytes = row.data;
       mode = json.mode === 'current' ? 'current' : 'new';

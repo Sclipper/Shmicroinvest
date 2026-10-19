@@ -110,6 +110,11 @@ describe('payment validation', () => {
     expect(keys).toEqual(['strPaymentExceedsOpenAmount', 'strAllocationExceedsPayment']);
     expect(validatePaymentAllocations('100', [{ label: 'x', amount: '100', open: '-100' }])).toEqual([]);
   });
+  it('refuses a negative allocation that would make the total fit the payment', () => {
+    const r = validatePaymentAllocations('50', [{ label: 'Ф-ра A', amount: '-100', open: '200' }, { label: 'Ф-ра B', amount: '150', open: '200' }]);
+    expect(r.map((m) => m.key)).toEqual(['strPaymentAllocationNotPositive']);
+    expect(r[0]!.text).toBe('Сумата за разплащане на документ Ф-ра A трябва да бъде положителна!');
+  });
   it('documents of a currency account must share one rate', () => {
     expect(sameExchangeRate(['1.95583', '1.955830', '0'])).toBe(true);
     expect(sameExchangeRate(['1.1', '1.2'])).toBe(false);

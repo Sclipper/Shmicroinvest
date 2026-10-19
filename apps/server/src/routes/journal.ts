@@ -14,6 +14,7 @@ import { entryFilterConditions } from '../services/journalExtras.ts';
 
 const amount = z.string().regex(/^-?\d+(\.\d+)?$/, 'Невалидна сума.');
 const optAmount = amount.nullable().optional();
+const positiveAmount = z.string().regex(/^\d+(\.\d+)?$/, 'Невалидна сума.');
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 const lineBody = z.object({
@@ -58,7 +59,7 @@ const entryBody = z.object({
     documentNumber: z.string().max(50).nullable().optional(),
   }).optional(),
   /** Обвързване of the saved entry with chosen documents, in the same transaction. */
-  bindDocuments: z.array(z.object({ accountingId: z.number().int().positive(), amount: optAmount, currencyAmount: optAmount })).optional(),
+  bindDocuments: z.array(z.object({ accountingId: z.number().int().positive(), amount: positiveAmount.nullable().optional(), currencyAmount: positiveAmount.nullable().optional() })).optional(),
 });
 
 /**

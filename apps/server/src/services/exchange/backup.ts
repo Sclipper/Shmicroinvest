@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle as drizzlePglite } from 'drizzle-orm/pglite';
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq, or, sql } from 'drizzle-orm';
 import {
   BACKUP_FORMAT_VERSION, BACKUP_PRODUCT_NAME, backupFileName, compareVersions, critical, DataImportError, msg, type BackupHeader,
 } from '@shmi/core';
@@ -69,18 +69,36 @@ export async function createBackup(driver: DbDriver, database: string, now = new
   return { id: row!.id, fileName, size: data.length, companyName: name };
 }
 
-export async function listBackups(driver: DbDriver) {
+/**
+ * Who may see a stored backup: users of the company it was made from; an
+ * administrator also sees the backups of deleted companies (to restore them).
+ */
+export interface BackupScope { database: string; isAdmin: boolean }
+
+function scoped(scope: BackupScope) {
+  const own = eq(cat.companyBackups.database, scope.database);
+  if (!scope.isAdmin) return own;
+  return or(own, sql`NOT EXISTS (SELECT 1 FROM companies_catalog WHERE companies_catalog.name = company_backups.database)`)!;
+}
+
+export async function listBackups(driver: DbDriver, scope: BackupScope) {
   const catalog = await driver.catalog();
   return catalog.select({
     id: cat.companyBackups.id, fileName: cat.companyBackups.fileName, companyName: cat.companyBackups.companyName, database: cat.companyBackups.database,
     version: cat.companyBackups.version, kind: cat.companyBackups.kind, size: cat.companyBackups.size, createdAt: cat.companyBackups.createdAt,
-  }).from(cat.companyBackups).orderBy(desc(cat.companyBackups.createdAt), desc(cat.companyBackups.id));
+  }).from(cat.companyBackups).where(scoped(scope)).orderBy(desc(cat.companyBackups.createdAt), desc(cat.companyBackups.id));
 }
 
-export async function backupData(driver: DbDriver, id: number) {
+export async function backupData(driver: DbDriver, id: number, scope: BackupScope) {
   const catalog = await driver.catalog();
-  const [row] = await catalog.select().from(cat.companyBackups).where(eq(cat.companyBackups.id, id));
+  const [row] = await catalog.select().from(cat.companyBackups).where(and(eq(cat.companyBackups.id, id), scoped(scope)));
   return row ?? null;
+}
+
+export async function deleteBackup(driver: DbDriver, id: number, scope: BackupScope) {
+  const catalog = await driver.catalog();
+  const rows = await catalog.delete(cat.companyBackups).where(and(eq(cat.companyBackups.id, id), scoped(scope))).returning({ id: cat.companyBackups.id });
+  return rows.length > 0;
 }
 
 /** Loads a backup payload into database `name` (replacing it when it exists). */

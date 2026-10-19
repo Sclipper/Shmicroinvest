@@ -291,9 +291,13 @@ export async function processScheduleRows(db: DbOrTx, ids: number[], ctx: { year
   const entries: { id: number; number: string; date: string }[] = [];
   for (const { r, name } of own) {
     try {
+      // Claim the row first: a concurrent run finds it processed and skips it.
+      const claimed = await db.update(s.accountingTemplateSchedules).set({ isProcessed: true })
+        .where(and(eq(s.accountingTemplateSchedules.id, r.id), eq(s.accountingTemplateSchedules.isProcessed, false))).returning({ id: s.accountingTemplateSchedules.id });
+      if (!claimed.length) continue;
       const input = await entryFromTemplate(db, r.templateId, r.date, ctx.year, 'schedule');
       const saved = await saveEntry(db, input, { year: ctx.year, userId: ctx.userId, branchId: ctx.branchId });
-      await db.update(s.accountingTemplateSchedules).set({ isProcessed: true, accountingId: saved.id }).where(eq(s.accountingTemplateSchedules.id, r.id));
+      await db.update(s.accountingTemplateSchedules).set({ accountingId: saved.id }).where(eq(s.accountingTemplateSchedules.id, r.id));
       entries.push({ id: saved.id, number: saved.number, date: r.date });
     } catch (e) {
       if (e instanceof ApiError) throw new ApiError(e.status, `Шаблон „${name}“ от ${bg(r.date)}: ${e.message}`, e.messages, e.code);

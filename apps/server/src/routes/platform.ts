@@ -13,7 +13,8 @@ export const platformRoutes = new Hono<AppEnv>()
   })
 
   /** Дневник на приложението (Помощ, UI_Help_ApplicationLog; 06 7.2). */
-  .get('/app-log', requirePermission('UI_Help_ApplicationLog'), async (c) => c.json(await readAppLog(Number(c.req.query('limit') ?? 500))))
+  .get('/app-log', requirePermission('UI_Help_ApplicationLog'), async (c) =>
+    c.json(await readAppLog(Number(c.req.query('limit')) || 500, { company: c.var.session.companyDb!, isAdmin: !!c.var.user.isAdmin })))
 
   /** Нови версии (UI_Help_UpdateCheck; 06 5): the web app is updated on the server, so it only reports the version. */
   .get('/version', (c) => c.json({ version: PRODUCT_VERSION, upToDate: true }));

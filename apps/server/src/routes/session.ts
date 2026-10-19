@@ -172,14 +172,16 @@ export const sessionRoutes = new Hono<AppEnv>()
   })
   .put('/settings', requirePermission('UI_Other_Settings'), zValidator('json', z.record(z.string(), z.string())), async (c) => {
     const body = c.req.valid('json');
-    for (const [k, v] of Object.entries(body)) {
-      if (!(k in BASIC_SETTINGS)) throw new ApiError(400, `Непозната настройка ${k}.`);
-      await setConfig(c.var.db, k, v);
-    }
-    // 06 3.5: a parent option turned off clears its dependent options.
-    for (const [parent, children] of Object.entries(SETTING_CHILDREN)) {
-      if (body[parent] === 'False') for (const child of children) if (child in BASIC_SETTINGS) await setConfig(c.var.db, child, 'False');
-    }
+    // Validate everything first, then write in one transaction.
+    const unknown = Object.keys(body).find((k) => !(k in BASIC_SETTINGS));
+    if (unknown) throw new ApiError(400, `Непозната настройка ${unknown}.`);
+    await c.var.db.transaction(async (tx) => {
+      for (const [k, v] of Object.entries(body)) await setConfig(tx, k, v);
+      // 06 3.5: a parent option turned off clears its dependent options.
+      for (const [parent, children] of Object.entries(SETTING_CHILDREN)) {
+        if (body[parent] === 'False') for (const child of children) if (child in BASIC_SETTINGS) await setConfig(tx, child, 'False');
+      }
+    });
     return c.json({ ok: true });
   });
 

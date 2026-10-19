@@ -75,14 +75,15 @@ export function Shell({ screens, onCommand }: { screens: Record<string, ScreenDe
   runRef.current = run;
   useEffect(() => {
     const map = new Map<string, Extract<MenuItem, { label: string }>>();
+    // A denied item makes its whole subtree inaccessible (06 1.2), shortcuts included.
     const walk = (items: MenuItem[]) => {
       for (const i of items) {
-        if ('sep' in i) continue;
-        if (i.gesture && (i.screen || i.command) && can(i.permission)) map.set(i.gesture.replace(/\s/g, ''), i);
+        if ('sep' in i || !can(i.permission)) continue;
+        if (i.gesture && (i.screen || i.command)) map.set(i.gesture.replace(/\s/g, ''), i);
         if (i.children) walk(i.children);
       }
     };
-    for (const m of MENU) walk(m.items);
+    for (const m of MENU) if (can(m.permission)) walk(m.items);
     const onKey = (e: KeyboardEvent) => {
       // A screen's own bindings win (the editor's Shift+F2 adds the VAT line, not Шаблони).
       if (e.defaultPrevented) return;
@@ -238,11 +239,10 @@ function MenuBar({ run, screens }: { run: (i: Extract<MenuItem, { label: string 
         <span className="grid size-5 place-items-center rounded-sm bg-brand-600 text-[11px] font-bold text-white">Ш</span>
         Шмелта Про
       </div>
-      {MENU.map((m, i) => (
+      {MENU.map((m, i) => can(m.permission) && (
         <div key={m.label} className="relative">
           <button
-            className={cx('px-2.5 py-1 hover:bg-brand-50', open === i && 'bg-brand-100', !can(m.permission) && 'text-slate-400')}
-            disabled={!can(m.permission)}
+            className={cx('px-2.5 py-1 hover:bg-brand-50', open === i && 'bg-brand-100')}
             onMouseDown={(e) => {
               e.preventDefault();
               setOpen(open === i ? null : i);
@@ -264,17 +264,23 @@ function MenuBar({ run, screens }: { run: (i: Extract<MenuItem, { label: string 
 function MenuList({ items, pick, screens, nested }: { items: MenuItem[]; pick: (i: Extract<MenuItem, { label: string }>) => void; screens: Record<string, ScreenDef>; nested?: boolean }) {
   const can = useCan();
   const [sub, setSub] = useState<number | null>(null);
+  // 06 1.2: Visible = IsActivated and IsAccessible; a denied item (and so its children) is hidden,
+  // and separators left at either end or next to each other are dropped.
+  const rows = items.map((it, i) => ({ it, i })).filter(({ it }) => 'sep' in it || can(it.permission));
+  const cleaned: typeof rows = [];
+  for (const r of rows) if (!('sep' in r.it) || (cleaned.length && !('sep' in cleaned[cleaned.length - 1]!.it))) cleaned.push(r);
+  if (cleaned.length && 'sep' in cleaned[cleaned.length - 1]!.it) cleaned.pop();
   return (
     <div data-testid="menu-list" className={cx('absolute z-40 min-w-64 border border-slate-300 bg-white py-1 shadow-lg', nested ? 'top-[-5px] left-full' : 'top-full left-0')}>
-      {items.map((it, i) => {
+      {cleaned.map(({ it, i }) => {
         if ('sep' in it) return <div key={i} className="my-1 border-t border-slate-200" />;
         const implemented = !!it.children || !!it.command || (!!it.screen && !!screens[it.screen]);
-        const enabled = can(it.permission) && implemented;
+        const enabled = implemented;
         return (
           <div key={i} className="relative" onMouseEnter={() => setSub(it.children ? i : null)}>
             <button
               disabled={!enabled}
-              title={!implemented ? 'Предстои' : !can(it.permission) ? 'Нямате права' : undefined}
+              title={!implemented ? 'Предстои' : undefined}
               onClick={() => !it.children && pick(it)}
               className={cx('flex w-full items-center gap-6 px-4 py-1 text-left', enabled ? 'hover:bg-brand-500 hover:text-white' : 'text-slate-400')}
             >

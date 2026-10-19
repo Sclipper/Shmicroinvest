@@ -49,7 +49,8 @@ const reportBody = z.object({
     number: z.number().int().min(1).max(9999),
     name: z.string().max(500),
     cells: z.array(z.object({
-      key: z.string().max(50).optional(),
+      // The filter formula is stored as `${key}_filter` in varchar(50).
+      key: z.string().max(43).optional(),
       expression: z.string().max(4000),
       isOnlyPositive: z.boolean().optional(),
       isCurrencyAmount: z.boolean().optional(),
@@ -91,13 +92,13 @@ export const statementRoutes = new Hono<AppEnv>()
   // ---- User-defined reports (Мениджър потребителски справки) ----
   .get('/user-reports', requirePermission(USER_REPORTS), async (c) => c.json(await listUserReports(c.var.db)))
   .get('/user-reports/:id', requirePermission(USER_REPORTS), async (c) => c.json(await loadUserReport(c.var.db, Number(c.req.param('id')))))
-  .post('/user-reports', requirePermission(USER_REPORTS), zValidator('json', reportBody), async (c) => c.json(await saveUserReport(c.var.db, c.req.valid('json')), 201))
-  .put('/user-reports/:id', requirePermission(USER_REPORTS), zValidator('json', reportBody), async (c) => c.json(await saveUserReport(c.var.db, c.req.valid('json'), Number(c.req.param('id')))))
+  .post('/user-reports', requirePermission(USER_REPORTS), zValidator('json', reportBody), async (c) => c.json(await c.var.db.transaction((tx) => saveUserReport(tx, c.req.valid('json'))), 201))
+  .put('/user-reports/:id', requirePermission(USER_REPORTS), zValidator('json', reportBody), async (c) => c.json(await c.var.db.transaction((tx) => saveUserReport(tx, c.req.valid('json'), Number(c.req.param('id'))))))
   .delete('/user-reports/:id', requirePermission(USER_REPORTS), async (c) => {
-    await deleteUserReport(c.var.db, Number(c.req.param('id')));
+    await c.var.db.transaction((tx) => deleteUserReport(tx, Number(c.req.param('id'))));
     return c.json({ ok: true });
   })
-  .post('/user-reports/:id/copy', requirePermission(USER_REPORTS), async (c) => c.json(await copyUserReport(c.var.db, Number(c.req.param('id'))), 201))
+  .post('/user-reports/:id/copy', requirePermission(USER_REPORTS), async (c) => c.json(await c.var.db.transaction((tx) => copyUserReport(tx, Number(c.req.param('id')))), 201))
   .get('/user-reports/:id/run', requirePermission(USER_REPORTS), async (c) => {
     const q = c.req.query();
     const y = c.var.year.year;

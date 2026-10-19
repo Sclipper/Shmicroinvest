@@ -71,6 +71,9 @@ export function createApp(driver: DbDriver, opts: { serveWeb?: boolean } = {}) {
   });
   app.onError((err, c) => {
     if (err instanceof ApiError) return c.json({ error: err.message, messages: err.messages, code: err.code }, err.status);
+    // Data exceptions (class 22: a non-numeric id, an impossible date, a value out of range) are bad input, not server faults.
+    const pgCode = (err as { code?: unknown }).code ?? (err.cause as { code?: unknown } | undefined)?.code;
+    if (typeof pgCode === 'string' && pgCode.startsWith('22')) return c.json({ error: 'Невалидни данни.' }, 400);
     console.error(err);
     void logApp({ level: 'error', message: `${c.req.method} ${c.req.path}: ${err.message}`, details: err.stack, company: c.get('session')?.companyDb ?? null, user: c.get('user')?.name ?? null });
     return c.json({ error: 'Възникна неочаквана грешка.' }, 500);
