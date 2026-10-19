@@ -1,13 +1,14 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { STATEMENTS, type StatementCode } from '@shmi/core';
+import { STATEMENTS, STATEMENT_FORMATS, type StatementCode, type StatementFormat } from '@shmi/core';
 import type { AppEnv } from '../context.ts';
 import { zValidator } from '../lib/validate.ts';
 import { badRequest } from '../lib/errors.ts';
 import { requirePermission } from '../session.ts';
 import { logActivity } from '../services/audit.ts';
 import {
-  loadStatementFormulas, restoreStatementFormulas, runStatements, saveStatementFormulas, verifyStatements, type StatementRunOptions,
+  loadStatementFormulas, restoreStatementFormulas, runAbbreviatedStatements, runStatements, saveStatementFormulas, verifyStatements,
+  type StatementRunOptions,
 } from '../services/statements.ts';
 import {
   FILTER_FIELDS, FILTER_OPS, copyUserReport, deleteUserFormula, deleteUserReport, listUserFormulas, listUserReports, loadUserReport,
@@ -21,7 +22,9 @@ const USER_REPORTS = 'UI_Reporting_UserReportsManager';
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const CODES = STATEMENTS.map((s) => s.code) as [StatementCode, ...StatementCode[]];
 
-/** Query: from, to, statements=balance,opr, thousands=1, usePrev=1, sameInterval=1, nsi=1. */
+const FORMATS: StatementFormat[] = STATEMENT_FORMATS.map((f) => f.value);
+
+/** Query: from, to, statements=balance,opr, thousands=1, usePrev=1, sameInterval=1, format=national|nsi|f2015|micro (or nsi=1), lang=bg|en. */
 function runOptions(q: Record<string, string>, year: number): StatementRunOptions {
   const startDate = q.from ?? `${year}-01-01`;
   const endDate = q.to ?? `${year}-12-31`;
@@ -29,9 +32,12 @@ function runOptions(q: Record<string, string>, year: number): StatementRunOption
   if (startDate > endDate) throw badRequest('Началната дата е след крайната дата.');
   const statements = (q.statements ?? '').split(',').filter(Boolean) as StatementCode[];
   for (const c of statements) if (!CODES.includes(c)) throw badRequest('Непознат отчет.');
+  const format = (q.format ?? (q.nsi === '1' ? 'nsi' : 'national')) as StatementFormat;
+  if (!FORMATS.includes(format)) throw badRequest('Непознат тип справка.');
+  if (q.lang !== undefined && q.lang !== 'bg' && q.lang !== 'en') throw badRequest('Непознат език.');
   return {
-    startDate, endDate, statements,
-    thousands: q.thousands === '1', usePreviousPeriodValues: q.usePrev === '1', sameIntervalPreviousYear: q.sameInterval === '1', nsi: q.nsi === '1',
+    startDate, endDate, statements, format, lang: q.lang === 'en' ? 'en' : 'bg',
+    thousands: q.thousands === '1', usePreviousPeriodValues: q.usePrev === '1', sameIntervalPreviousYear: q.sameInterval === '1', nsi: format === 'nsi',
   };
 }
 
@@ -68,6 +74,12 @@ export const statementRoutes = new Hono<AppEnv>()
     const o = runOptions(c.req.query(), c.var.year.year);
     const r = await runStatements(c.var.db, o);
     await logActivity(c.var.db, c.var.user.id, 'print', 'report', null, `Отчети и баланс ${o.startDate} - ${o.endDate}`);
+    return c.json(r);
+  })
+  .get('/statements/abbreviated', requirePermission(REPORT), async (c) => {
+    const o = runOptions(c.req.query(), c.var.year.year);
+    const r = await runAbbreviatedStatements(c.var.db, o);
+    await logActivity(c.var.db, c.var.user.id, 'export', 'report', null, `Съкратени отчети ${o.startDate} - ${o.endDate}`);
     return c.json(r);
   })
   .get('/statements/verify', requirePermission(REPORT), async (c) => {

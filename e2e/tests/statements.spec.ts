@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
 import { BASE_URL, accountId, activeTab, api, menu, moduleCompany } from './fixtures.ts';
 
@@ -104,6 +105,56 @@ test.describe('financial statements', () => {
     } finally {
       await api(page, 'POST', '/statements/formulas/restore', { statement: 'balance' });
     }
+  });
+
+  test('micro-enterprise format: abbreviated statements, ГФО Микро and the workbook', async ({ page }) => {
+    await openApp(page);
+    await page.keyboard.press('Alt+b');
+    const tab = activeTab(page);
+    await tab.getByRole('combobox', { name: 'Тип справка' }).selectOption('micro');
+    await tab.getByRole('combobox', { name: 'Отчети' }).selectOption('');
+    await expect(tab.getByRole('combobox', { name: 'Отчети' }).locator('option')).toHaveCount(3);
+    await tab.getByRole('button', { name: 'Справка', exact: true }).click();
+    await expect(tab.getByRole('heading', { name: 'СЪКРАТЕН СЧЕТОВОДЕН БАЛАНС' })).toBeVisible();
+    await expect(tab.getByRole('heading', { name: 'СЪКРАТЕН ОТЧЕТ ЗА ПРИХОДИТЕ И РАЗХОДИТЕ' })).toBeVisible();
+    await expect(tab.getByRole('heading', { name: 'ОТЧЕТ ЗА ПАРИЧНИТЕ ПОТОЦИ ПО ПРЕКИЯ МЕТОД' })).toHaveCount(0);
+    // Total assets = total liabilities, and the micro form repeats them.
+    const assets = (await cell(page, 'sb14').textContent())?.trim();
+    expect(assets).toBeTruthy();
+    await expect(cell(page, 'sb27')).toHaveText(assets!);
+    await expect(tab.locator('table[data-gfo] tr[data-key="m08"] td').nth(2)).toHaveText(assets!);
+    await expect(tab.locator('table[data-gfo] tr[data-key="m32"] td').nth(2)).toHaveText((await cell(page, 'sr11').textContent())!.trim());
+
+    const download = page.waitForEvent('download');
+    await tab.getByRole('button', { name: 'Експорт Excel' }).click();
+    const file = await download;
+    expect(file.suggestedFilename()).toMatch(/\.xlsx$/);
+    const data = readFileSync((await file.path())!);
+    expect(data.includes(Buffer.from('ГФО Микро'))).toBe(true);
+
+    // "Експорт на съкратени отчети" works for any format.
+    await tab.getByRole('combobox', { name: 'Тип справка' }).selectOption('national');
+    const abbreviated = page.waitForEvent('download');
+    await tab.getByRole('button', { name: 'Експорт на съкратени отчети' }).click();
+    const abbr = await abbreviated;
+    expect(abbr.suggestedFilename()).toMatch(/^Съкратени_отчети_.*\.xlsx$/);
+    const abbrData = readFileSync((await abbr.path())!);
+    expect(abbrData.includes(Buffer.from('Съкратен баланс'))).toBe(true);
+    expect(abbrData.includes(Buffer.from('Съкратен ОПР'))).toBe(true);
+  });
+
+  test('NSI format in English', async ({ page }) => {
+    await openApp(page);
+    await page.keyboard.press('Alt+b');
+    const tab = activeTab(page);
+    await tab.getByRole('combobox', { name: 'Тип справка' }).selectOption('nsi');
+    await tab.getByRole('combobox', { name: 'Език' }).selectOption('en');
+    await tab.getByRole('combobox', { name: 'Отчети' }).selectOption('balance');
+    await runBalance(page);
+    await expect(tab.getByRole('heading', { name: 'B A L A N C E   S H E E T' })).toBeVisible();
+    await expect(tab.locator('tr[data-key="b50"] td').first()).toHaveText('Total assets (A+B+C+D)');
+    await tab.getByRole('combobox', { name: 'Тип справка' }).selectOption('national');
+    await expect(tab.getByRole('combobox', { name: 'Език' })).toHaveCount(0);
   });
 
   test('exports the statements to Excel', async ({ page }) => {
