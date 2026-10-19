@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
+import { sql } from 'drizzle-orm';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -94,10 +95,10 @@ export function createApp(driver: DbDriver, opts: { serveWeb?: boolean; webDist?
     void logApp({ level: 'error', message: `${c.req.method} ${c.req.path}: ${err.message}`, details: err.stack, company: c.get('session')?.companyDb ?? null, user: c.get('user')?.name ?? null });
     return c.json({ error: 'Възникна неочаквана грешка.' }, 500);
   });
-  // Liveness for load balancers and container health checks; also proves the catalog database answers.
+  // Health for load balancers and container health checks: the catalog database answers a query.
   app.get('/api/health', async (c) => {
     try {
-      await driver.catalog();
+      await (await driver.catalog()).execute(sql`SELECT 1`);
       return c.json({ ok: true, version: APP_VERSION });
     } catch {
       return c.json({ ok: false, version: APP_VERSION }, 503);

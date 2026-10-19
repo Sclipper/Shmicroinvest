@@ -259,6 +259,8 @@ describe('a server with a company', () => {
     const origError = console.error;
     console.error = () => undefined;
     try {
+      // The health check reports the unavailable database.
+      expect((await app.request('/api/health')).status).toBe(503);
       const r = await app.request('/api/companies');
       expect(r.status).toBe(500);
       const text = await r.text();
