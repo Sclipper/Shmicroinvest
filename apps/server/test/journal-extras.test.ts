@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { listToMask, SCHEDULER_MODE } from '@shmi/core';
+import { listToMask, SCAN_FORMATS, scanAttachmentFileName, SCHEDULER_MODE } from '@shmi/core';
 import { createTestCompany, type EntrySpec, type TestCompany } from './helpers.ts';
 
 /**
@@ -108,6 +108,24 @@ describe('02a 4.8 acceptance checks', () => {
     expect(row.map((r: { id: number; attachments: number }) => [r.id, r.attachments])).toEqual([[e.id, 1]]);
     expect((await call('DELETE', `/journal/attachments/${list[0].id}`)).status).toBe(200);
     expect((await call('GET', `/journal/entries/${e.id}/attachments`)).body.rows).toEqual([]);
+  });
+
+  it('a scanned page (Сканиране на документ) is stored as a JPEG attachment with its image type', async () => {
+    await call('PUT', '/settings', { IsAllowAccountingAttachments: 'True' });
+    const e = await t.post({ date: '2026-02-13', docType: 10, dr: [['503', '6']], cr: [['501', '6']] });
+    // A JPEG as the camera capture produces it: SOI marker, JFIF header ... EOI.
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, ...new Array(64).fill(0x20), 0xff, 0xd9]);
+    const name = scanAttachmentFileName(new Date(2026, 1, 13, 10, 0, 0));
+    const r = await t.app.request(`/api/journal/entries/${e.id}/attachments?fileName=${encodeURIComponent(name)}`, {
+      method: 'POST', headers: { cookie: t.session.get(), 'content-type': SCAN_FORMATS.jpeg.mime }, body: jpeg,
+    });
+    expect(r.status, await r.clone().text()).toBe(201);
+    const [a] = (await call('GET', `/journal/entries/${e.id}/attachments`)).body.rows;
+    expect(a).toMatchObject({ fileName: 'Сканиран документ 13.02.2026 10-00-00.jpg', mimeType: 'image/jpeg', size: jpeg.length });
+    const dl = await t.app.request(`/api/journal/attachments/${a.id}/download`, { headers: { cookie: t.session.get() } });
+    expect(dl.headers.get('content-type')).toBe('image/jpeg');
+    expect(new Uint8Array(await dl.arrayBuffer())).toEqual(jpeg);
+    await call('DELETE', `/journal/attachments/${a.id}`);
   });
 
   it('attachments are refused when the setting is off; turning it off clears the list column option', async () => {

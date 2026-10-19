@@ -3,7 +3,7 @@ import {
   amountFromCurrency, buildLegs, massEditConfirmations, currencyLine, currencyShares, DEFAULT_SHORTCUTS, distributeExpenses, defaultDistributionSide,
   documentNumberWarnings, duplicateShortcutWarnings, effectiveShortcuts, fastRowAccountMessages, fastRowDuplicates,
   fastRowTransactionType, formatMessage, group60ClosingDrafts, isAllowedEditableGesture, JOURNAL_EXTRA_MESSAGES as M, materialLine,
-  preSaveConfirmations, reorderNumbers, sequenceEditorValues, sequencePreview, sequenceStorage, splitByWeights, validateAttachment,
+  preSaveConfirmations, reorderNumbers, sequenceEditorValues, sequencePreview, sequenceStorage, scanAttachmentFileName, splitByWeights, validateAttachment,
   validateMassEdit, validateSequence, type MassEditAccount, type MassEditEntry,
 } from '../src/index.ts';
 
@@ -93,6 +93,15 @@ describe('02a 4.6 attachments (acceptance 7)', () => {
     expect(validateAttachment('a.bat', 1)[0]!.key).toBe('strUnsupportedFileTypeMessage');
     expect(validateAttachment('lib.dll', 1)).toHaveLength(1);
     expect(validateAttachment('invoice.pdf', 10 * 1024 * 1024)).toEqual([]);
+  });
+
+  it('scanned pages: "Сканиране на документ", JPEG by default, a dated file name the attachment rules accept', () => {
+    expect(M.strAddAttachmentFromScan).toBe('Сканиране на документ');
+    expect(M.strScanDocument).toBe('Сканиране на документ');
+    const at = new Date(2026, 9, 19, 9, 5, 7);
+    expect(scanAttachmentFileName(at)).toBe('Сканиран документ 19.10.2026 09-05-07.jpg');
+    expect(scanAttachmentFileName(at, 'png')).toBe('Сканиран документ 19.10.2026 09-05-07.png');
+    expect(validateAttachment(scanAttachmentFileName(at), 1)).toEqual([]);
   });
 });
 

@@ -31,6 +31,7 @@ export const JOURNAL_EXTRA_MESSAGES = {
   strIOErrorReadingFile: 'Входно-изходна грешка при четене на файла...',
   strAddAttachmentFromFile: 'Добавяне на файл',
   strAddAttachmentFromScan: 'Сканиране на документ',
+  strScanDocument: 'Сканиране на документ',
   // 5 void / reversal / copy
   strConfirmVoid: 'Желаете ли да изтриете избрания документ?',
   strConfirmMultiVoid: 'Внимание!!! Информацията за извършени плащания или начислени амортизации във всички {0} избрани документа ще бъде изгубена! Желаете ли да изтриете тези документи?',
@@ -246,6 +247,16 @@ export function validateAttachment(fileName: string, size: number): Message[] {
   if ((ATTACHMENT_BLACKLIST as readonly string[]).includes(ext)) out.push(msg('strUnsupportedFileTypeMessage', 'critical', ext));
   if (size > ATTACHMENT_MAX_BYTES) out.push(msg('strMaxFileSizeExceededMessage', 'critical', 10, 'MB'));
   return out;
+}
+
+/** Image formats of a scanned page (the scanner's JPEG encoder is the default). */
+export const SCAN_FORMATS = { jpeg: { mime: 'image/jpeg', ext: 'jpg' }, png: { mime: 'image/png', ext: 'png' } } as const;
+export type ScanFormat = keyof typeof SCAN_FORMATS;
+
+/** File name of a scanned attachment: "Сканиран документ 19.10.2026 14-30-05.jpg" (local time of the scan). */
+export function scanAttachmentFileName(at: Date, format: ScanFormat = 'jpeg'): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `Сканиран документ ${p(at.getDate())}.${p(at.getMonth() + 1)}.${at.getFullYear()} ${p(at.getHours())}-${p(at.getMinutes())}-${p(at.getSeconds())}.${SCAN_FORMATS[format].ext}`;
 }
 
 // ---------------------------------------------------------------------------

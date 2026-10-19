@@ -1,12 +1,13 @@
 import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Download, Paperclip, Trash2 } from 'lucide-react';
+import { Download, Paperclip, ScanLine, Trash2 } from 'lucide-react';
 import { JOURNAL_EXTRA_MESSAGES as X, validateAttachment } from '@shmi/core';
 import { api, ApiError } from '../../api.ts';
 import { useDialogs } from '../../components/dialogs.tsx';
 import { Button, Dialog, Field, Select, TextInput } from '../../components/ui.tsx';
 import { money } from '../../format.ts';
 import type { Account } from '../../types.ts';
+import { ScanDialog } from './ScanDialog.tsx';
 
 interface Attachment {
   id: number;
@@ -18,7 +19,7 @@ interface Attachment {
 
 const kb = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 
-/** Прикачени файлове (02a 4.6): add from file (10 MB, no .exe/.bat/.dll), open, delete. */
+/** Прикачени файлове (02a 4.6): add from file (10 MB, no .exe/.bat/.dll) or from the scanner (camera), open, delete. */
 export function AttachmentsPanel({ entryId, readOnly }: { entryId: number; readOnly?: boolean }) {
   const dialogs = useDialogs();
   const qc = useQueryClient();
@@ -26,10 +27,15 @@ export function AttachmentsPanel({ entryId, readOnly }: { entryId: number; readO
   const key = ['entries', 'attachments', entryId];
   const q = useQuery({ queryKey: key, queryFn: () => api.get<{ rows: Attachment[] }>(`/journal/entries/${entryId}/attachments`) });
   const [busy, setBusy] = useState(false);
+  const [scanning, setScanning] = useState(false);
 
-  const upload = async (file: File) => {
+  /** Uploads one file; false when it was refused or the upload failed. */
+  const upload = async (file: File): Promise<boolean> => {
     const errs = validateAttachment(file.name, file.size);
-    if (errs.length) return dialogs.alert(errs.map((m) => m.text).join('\n'), 'Прикачени файлове');
+    if (errs.length) {
+      await dialogs.alert(errs.map((m) => m.text).join('\n'), 'Прикачени файлове');
+      return false;
+    }
     setBusy(true);
     try {
       const res = await fetch(`/api/journal/entries/${entryId}/attachments?fileName=${encodeURIComponent(file.name)}`, {
@@ -40,8 +46,10 @@ export function AttachmentsPanel({ entryId, readOnly }: { entryId: number; readO
         throw new ApiError(res.status, data.error ?? X.strIOErrorReadingFile, data.messages);
       }
       await qc.invalidateQueries({ queryKey: ['entries'] });
+      return true;
     } catch (e) {
       await dialogs.error(e);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -67,10 +75,16 @@ export function AttachmentsPanel({ entryId, readOnly }: { entryId: number; readO
           e.target.value = '';
           if (f) void upload(f);
         }} />
-        <Button variant="ghost" className="h-6 px-2" icon={<Paperclip className="size-3.5" />} disabled={readOnly || busy} onClick={() => input.current?.click()}>
-          {X.strAddAttachmentFromFile}
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" className="h-6 px-2" icon={<Paperclip className="size-3.5" />} disabled={readOnly || busy} onClick={() => input.current?.click()}>
+            {X.strAddAttachmentFromFile}
+          </Button>
+          <Button variant="ghost" className="h-6 px-2" icon={<ScanLine className="size-3.5" />} disabled={readOnly || busy} onClick={() => setScanning(true)}>
+            {X.strAddAttachmentFromScan}
+          </Button>
+        </div>
       </div>
+      {scanning && <ScanDialog onSave={upload} onClose={() => setScanning(false)} />}
       {rows.length > 0 && (
         <ul className="divide-y divide-slate-100">
           {rows.map((a) => (
