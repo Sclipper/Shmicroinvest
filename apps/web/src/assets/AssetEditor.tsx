@@ -222,6 +222,11 @@ export function AssetEditor({ tab }: ScreenProps) {
         if (choice) return save({ ...extra, postingsResolution: choice });
         return;
       }
+      if (e instanceof CodedError && e.status === 409 && e.code === 'plansDiffer') {
+        setSaving(false);
+        if (await dialogs.confirm(e.message)) return save({ ...extra, plansDifferAccepted: true });
+        return;
+      }
       if (e instanceof CodedError && e.status === 409 && e.code === 'improvements') {
         setSaving(false);
         if (await dialogs.confirm(e.message)) return save({ ...extra, clearImprovements: true });

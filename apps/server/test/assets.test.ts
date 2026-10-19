@@ -96,6 +96,20 @@ describe('register, locations, asset form (03b 1, 2, 6)', () => {
     expect((await h.call('POST', '/asset-locations', { name: ' ', parentId: 1 })).status).toBe(422);
   });
 
+  it('asks before saving plans that differ in cost or dates (03b 4); an unchanged difference is not asked again', async () => {
+    const body = h.body({ tax: { depreciationAmount: '11000', startDate: '2025-04-01' } });
+    const asked = await h.call('POST', '/assets', body);
+    expect(asked.status).toBe(409);
+    expect(asked.body).toMatchObject({ code: 'plansDiffer', error: 'Счетоводният и данъчният амортизационен план се различават по основни параметри (стойност, начало на амортизация). Желаете ли да запишете актива?' });
+    const r = await h.call('POST', '/assets', { ...body, plansDifferAccepted: true });
+    expect(r.status, r.text).toBe(201);
+    expect((await h.call('PUT', `/assets/${r.body.id}`, { ...body, name: 'Преименувана' })).status).toBe(200);
+    const changed = await h.call('PUT', `/assets/${r.body.id}`, { ...body, tax: { ...body.tax, depreciationAmount: '12000', regenerate: true } });
+    expect(changed.body.code, changed.text).toBe('plansDiffer');
+    // Rate and non-depreciable part differ legitimately and are not asked.
+    expect((await h.call('POST', '/assets', h.body({ accounting: { nonDepreciableAmount: '500' } }))).status).toBe(201);
+  });
+
   it('new asset defaults: next inventory number of channel 8 (10 digits), dates = application date', async () => {
     await h.setDate('2025-05-20');
     const r = await h.call('GET', '/assets/new');

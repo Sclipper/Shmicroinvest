@@ -53,6 +53,7 @@ const assetBody = z.object({
   tax: planBody,
   postingsResolution: z.enum(['delete', 'unlink']).nullable().optional(),
   clearImprovements: z.boolean().optional(),
+  plansDifferAccepted: z.boolean().optional(),
 });
 
 function ctxOf(c: Context<AppEnv>): AssetCtx {

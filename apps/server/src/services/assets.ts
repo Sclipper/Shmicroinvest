@@ -2,7 +2,7 @@ import { and, asc, eq, inArray, ne, sql } from 'drizzle-orm';
 import {
   accountingLastProcessedDate, amountByDate, ASSET_MESSAGES, assetMessage, D, dec, DEPRECIATION_CATEGORY, deriveMethod,
   endOfMonth, firstEditableMonthDate as firstEditable, firstOfMonth, fmtMsg, generateSchedule, hasCritical, isLeaf,
-  isMonthLocked, isStartMonthIncluded, monthIndex, monthLabelBg, monthsFromRate, NO_END_DATE, rateFromMonths, sum,
+  isMonthLocked, isStartMonthIncluded, monthIndex, monthLabelBg, monthsFromRate, NO_END_DATE, planMainDifferences, rateFromMonths, sum,
   taxLastProcessedDate, validatePlan, yearPlans, ZERO, type Dec, type MonthAmount, type ValidationMessage,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
@@ -240,6 +240,8 @@ export interface AssetInput {
   postingsResolution?: 'delete' | 'unlink' | null;
   /** OK to strRemoveImprovementsOnAmountChangedConfirmation. */
   clearImprovements?: boolean;
+  /** Yes to strDepreciationsAccountingAndTaxDepreciationDiffer. */
+  plansDifferAccepted?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -548,6 +550,15 @@ export async function saveAsset(db: DbOrTx, ctx: AssetCtx, input: AssetInput, id
   for (const [p, st] of [[c.accounting, storedSap], [c.tax, storedDap]] as const) {
     if (st?.improvements.length && !decEq(st.dep.depreciationAmount, p.input.depreciationAmount) && !input.clearImprovements) {
       throw new ApiError(409, ASSET_MESSAGES.strRemoveImprovementsOnAmountChangedConfirmation, undefined, 'improvements');
+    }
+  }
+  // 03b 4: unsynchronised plans that differ in their main parameters are confirmed;
+  // an edit asks only when the difference is new.
+  if (!input.synchronized && !input.plansDifferAccepted) {
+    const diff = planMainDifferences(input.accounting, input.tax);
+    const before = storedSap && storedDap ? planMainDifferences(storedSap.dep, storedDap.dep) : [];
+    if (diff.length && diff.join() !== before.join()) {
+      throw new ApiError(409, fmtMsg(ASSET_MESSAGES.strDepreciationsAccountingAndTaxDepreciationDiffer, diff.join(', ')), undefined, 'plansDiffer');
     }
   }
   if (c.accounting.conflicts.length && !input.postingsResolution) {

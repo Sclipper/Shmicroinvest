@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  canApplyConservation, PERMISSIONS, resolvePermission, changeRateFrom, checkImprovement, computeRevaluation, convertScheduleToEur, costAt, dec,
+  canApplyConservation, PERMISSIONS, planMainDifferences, resolvePermission, changeRateFrom, checkImprovement, computeRevaluation, convertScheduleToEur, costAt, dec,
   deriveMethod, DEPRECIATION_METHOD, endOfMonth, firstEditableMonthDate, firstScheduledMonth, generateSchedule,
   isStartMonthIncluded, maxRateForCategory, monthsBetween, monthsFromRate, pendingDefaultPeriod, postingReference,
   rateFromMonths, rateSelection, redistributeYear, revaluationPrefill, sum, accountingLastProcessedDate,
@@ -512,5 +512,14 @@ describe('asset report permissions (03b 1)', () => {
     const group = byKey.get('UI_Reporting_Depreciations')!.id;
     expect(resolvePermission('UI_Reporting_Depreciations_InventoryListMOL', byKey, byId, new Map([[group, false]]))).toBe(false);
     expect(resolvePermission('UI_Reporting_Depreciations_InventoryListMOL', byKey, byId, new Map())).toBe(true);
+  });
+});
+
+describe('planMainDifferences (03b 4)', () => {
+  const p = { depreciationAmount: '1200.00', acquisitionDate: '2026-02-01', startDate: '2026-02-01' };
+  it('compares cost and dates only, as numbers', () => {
+    expect(planMainDifferences(p, { ...p, depreciationAmount: '1200' })).toEqual([]);
+    expect(planMainDifferences(p, { ...p, depreciationAmount: '1200.01', startDate: '2026-03-01' })).toEqual(['стойност', 'начало на амортизация']);
+    expect(planMainDifferences(p, { ...p, acquisitionDate: '2026-01-31' })).toEqual(['дата на придобиване']);
   });
 });

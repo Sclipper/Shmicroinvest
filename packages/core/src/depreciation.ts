@@ -45,6 +45,8 @@ export function maxRateForCategory(categoryId: number | null | undefined): Dec {
 /* ------------------------------------------------------------------ */
 
 export const ASSET_MESSAGES = {
+  // 03b 4: Delta defines the key, its text is not in the spec.
+  strDepreciationsAccountingAndTaxDepreciationDiffer: 'Счетоводният и данъчният амортизационен план се различават по основни параметри ({0}). Желаете ли да запишете актива?',
   strAssetNameIsMissing: 'Не е попълнено име на актива',
   strAssetInventoryNumberIsMissing: 'Не е попълнен инвентарен номер на актива',
   strAssetInventoryNumberExists: 'Вече има въведен актив със същия инвентарен номер',
@@ -800,4 +802,24 @@ export function convertScheduleToEur(rows: ScheduleRow[], base: DecInput): Sched
 export function validPercentage(plans: { percentage: DecInput }[]): Dec {
   for (let i = plans.length - 1; i >= 0; i--) if (!dec(plans[i]!.percentage).isZero()) return dec(plans[i]!.percentage);
   return ZERO;
+}
+
+/** Main parameters of a plan compared before save (03b 4): cost and dates. */
+export interface PlanMainParameters {
+  depreciationAmount: DecInput;
+  acquisitionDate: string;
+  startDate: string;
+}
+
+/**
+ * Labels of the main parameters where the accounting (САП) and tax (ДАП)
+ * plans differ. The rate, period and non-depreciable part legitimately
+ * differ (statutory tax rates; the tax plan depreciates the whole cost).
+ */
+export function planMainDifferences(sap: PlanMainParameters, dap: PlanMainParameters): string[] {
+  const out: string[] = [];
+  if (!dec(sap.depreciationAmount).eq(dec(dap.depreciationAmount))) out.push('стойност');
+  if (sap.acquisitionDate !== dap.acquisitionDate) out.push('дата на придобиване');
+  if (sap.startDate !== dap.startDate) out.push('начало на амортизация');
+  return out;
 }
