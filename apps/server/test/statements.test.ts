@@ -491,3 +491,45 @@ describe('user-defined reports (section 10)', () => {
     expect((await t.call('GET', '/user-formulas')).body.map((x: { key: string }) => x.key)).toContain('cash');
   });
 });
+
+describe('fixed assets of the commercial template land on their balance-sheet rows', () => {
+  let c: TestCompany;
+  beforeAll(async () => {
+    c = await createTestCompany({ chartTemplate: 'commercial', companyName: 'Активи ООД' });
+    const { post } = c;
+    await post({ date: '2026-01-01', isInitialBalance: true, docType: null, dr: [['503', 100000]], cr: [['101', 100000]] });
+    await post({ date: '2026-01-15', term: 'Покупка на сграда', dr: [['203', 60000]], cr: [['503', 60000]] });
+    await post({ date: '2026-02-01', term: 'Покупка на машина', dr: [['206', 12000]], cr: [['503', 12000]] });
+    await post({ date: '2026-12-31', term: 'Амортизация на сградата', dr: [['603', 2400]], cr: [['241/3', 2400]] });
+    await post({ date: '2026-12-31', term: 'Амортизация на машината', dr: [['603', 2200]], cr: [['241/6', 2200]] });
+    await post({ date: '2026-12-31', term: 'Приключване на разходи', dr: [['123', 4600]], cr: [['603', 4600]] });
+  }, 120_000);
+  afterAll(() => c.close());
+
+  it('buildings on b9, machines on b10, and assets equal liabilities', async () => {
+    const accounts = (await c.call('GET', '/accounts')).body as { number: string; description: string }[];
+    const name = (n: string) => accounts.find((a) => a.number === n)?.description;
+    expect([name('203'), name('241/3'), name('206'), name('241/6')]).toEqual([
+      'Сгради и конструкции', 'Амортизация на сгради и конструкции',
+      'Машини, производствено оборудване и апаратура', 'Амортизация на машини, производствено оборудване и апаратура',
+    ]);
+    const r = await c.call<Run>('GET', '/statements/report?from=2026-01-01&to=2026-12-31&statements=balance');
+    expect(r.status, r.text).toBe(200);
+    const cell = cellsOf(r.body);
+    const cp = (key: string) => cell.get(key)!.cp;
+    expect(cp('b9')).toBe('57600.00'); // сгради: 203 - 241/3
+    expect(cp('b8')).toBe('0.00'); // земи
+    expect(cp('b10')).toBe('9800.00'); // машини: 206 - 241/6
+    expect(cp('b11')).toBe('0.00'); // съоръжения и други
+    expect(cp('b13')).toBe('67400.00');
+    expect(cp('b50')).toBe('95400.00'); // + 503: 28 000
+    expect(cp('b108')).toBe(cp('b50'));
+    expect(cp('b62')).toBe('-4600.00');
+    const v = await c.call('GET', '/statements/verify?from=2026-01-01&to=2026-12-31');
+    expect(v.status).toBe(200);
+    const failed = (v.body.checks as { id: string; ok: boolean }[]).filter((x) => !x.ok).map((x) => x.id);
+    expect(failed).not.toContain('balance');
+    // The СДА reads the same accounts.
+    expect(failed.filter((id) => ['sda_b9', 'sda_b10', 'sda_b13'].includes(id))).toEqual([]);
+  });
+});

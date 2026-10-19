@@ -256,10 +256,10 @@ describe('chart editor: material accounts, templates, copy (03a 1)', () => {
   });
 
   it('offers template accounts missing from the chart (F4)', async () => {
-    expect(((await call('GET', '/accounts/templates?q=309')).body as unknown[])).toEqual([]);
-    expect((await call('DELETE', `/accounts/${acc('309')}`)).status).toBe(200);
-    const r = (await call('GET', '/accounts/templates?q=309')).body as { number: string; description: string; isActive: boolean }[];
-    expect(r).toEqual([expect.objectContaining({ number: '309', description: 'Други материални запаси', isActive: true, parentNumber: '30' })]);
+    expect(((await call('GET', '/accounts/templates?q=319')).body as unknown[])).toEqual([]);
+    expect((await call('DELETE', `/accounts/${acc('319')}`)).status).toBe(200);
+    const r = (await call('GET', '/accounts/templates?q=319')).body as { number: string; description: string; isActive: boolean }[];
+    expect(r).toEqual([expect.objectContaining({ number: '319', description: 'Други краткотрайни биологични активи', isActive: true, parentNumber: '31' })]);
   });
 
   it('copies sub-account trees under a target with new numbers', async () => {

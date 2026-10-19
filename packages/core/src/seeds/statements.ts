@@ -4,7 +4,10 @@
  * row caption, column identifier, formula. Order = order of the appendix,
  * which is the printed order of the statement rows.
  *
- * Generated file; do not edit by hand.
+ * Generated file; do not edit by hand, except for the cells marked
+ * "DEVIATION", which differ from Appendix A so that every postable account of
+ * classes 1-5 of the commercial and ЮЛНЦ chart templates lands in the balance
+ * sheet (packages/core/test/chartStatements.test.ts).
  */
 
 export type SeedStatementCell = readonly [key: string, row: string, column: string, formula: string];
@@ -188,7 +191,10 @@ export const STATEMENT_SEED: Readonly<Record<string, readonly SeedStatementCell[
     ["b34", "- над 1 година", "BalansCol1", "0"],
     ["b35", "3. Вземания, свързани с асоциирани и смесени предприятия, в т.ч.:", "BalansCol1", "0"],
     ["b36", "- над 1 година", "BalansCol1", "0"],
-    ["b37", "4. Други вземания, в т.ч.:", "BalansCol1", "fdb(413)+fdb(422)+fdb(424)+fdb(425)+fdb(441)+fdb(442)+fdb(443)+fdb(444)+fdb(445)+fdb(45*)+fdb(46*)+fdb(47*)+fdb(49*)"],
+    // DEVIATION: Appendix A has no "+fdb(429)". 429 "Други разчети с персонала" (needed by the ТРЗ Pro
+    // import, read by Delta's own cr3) is in no balance cell, so its balance fell out of the balance sheet.
+    // This row was not "0" in Delta; the counterpart is in b90.
+    ["b37", "4. Други вземания, в т.ч.:", "BalansCol1", "fdb(413)+fdb(422)+fdb(424)+fdb(425)+fdb(429)+fdb(441)+fdb(442)+fdb(443)+fdb(444)+fdb(445)+fdb(45*)+fdb(46*)+fdb(47*)+fdb(49*)"],
     ["b38", "- над 1 година", "BalansCol1", "0"],
     ["b39", "Общо за група II:", "BalansCol1", "b31+b33+b35+b37"],
     ["b40", "1. Акции и дялове в предприятия от група", "BalansCol1", "0"],
@@ -239,7 +245,9 @@ export const STATEMENT_SEED: Readonly<Record<string, readonly SeedStatementCell[
     ["b64", "1. Провизии за пенсии и други подобни задължения", "BalansCol2", "0"],
     ["b65", "2. Провизии за данъци, в т.ч.:", "BalansCol2", "fcb(496)"],
     ["b66", "- отсрочени данъци", "BalansCol2", "0"],
-    ["b67", "3. Други провизии и сходни задължения", "BalansCol2", "0"],
+    // DEVIATION: Appendix A seeds "0", but b90 subtracts fcb(497) (провизии) from the other liabilities,
+    // so a provision was in no cell; the caption names the item.
+    ["b67", "3. Други провизии и сходни задължения", "BalansCol2", "fcb(497)"],
     ["b68", "Общо за раздел Б:", "BalansCol2", "b64+b65+b67"],
     ["b69", "1. Облигационни заеми", "BalansCol2", "fcb(153)"],
     ["b70", "- до 1 година", "BalansCol2", "0"],
@@ -265,7 +273,8 @@ export const STATEMENT_SEED: Readonly<Record<string, readonly SeedStatementCell[
     ["b87", "7. Задължения, свързани с асоциирани и смесени предприятия, в т.ч.:", "BalansCol2", "fcb(424)+fcb(425)"],
     ["b88", "- до 1 година", "BalansCol2", "0"],
     ["b89", "- над 1 година", "BalansCol2", "0"],
-    ["b90", "8. Други задължения, в т.ч.:", "BalansCol2", "fcb(421)+fcb(422)+fcb(45*)+fcb(46*)+fcb(47*)+fcb(49*)-fcb(497)+fcb(423)"],
+    // DEVIATION: Appendix A has no "+fcb(429)" (see b37).
+    ["b90", "8. Други задължения, в т.ч.:", "BalansCol2", "fcb(421)+fcb(422)+fcb(45*)+fcb(46*)+fcb(47*)+fcb(49*)-fcb(497)+fcb(423)+fcb(429)"],
     ["b91", "- до 1 година", "BalansCol2", "b94+b97+b100"],
     ["b92", "- над 1 година", "BalansCol2", "b95+b98+b101"],
     ["b93", "към персонала, в т.ч.:", "BalansCol2", "fcb(421)"],

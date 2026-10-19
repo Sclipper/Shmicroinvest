@@ -2,9 +2,16 @@ import { defineConfig } from '@playwright/test';
 import { readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { acquireTestSlot } from '../scripts/test-slots.ts';
 
 const PORT = Number(process.env.E2E_PORT ?? 4310);
 export const BASE_URL = `http://localhost:${PORT}`;
+
+// The runner process (not its workers, which load this file too) holds one
+// machine-wide test slot for the whole run: web build, server and Chrome (scripts/test-slots.ts).
+const g = globalThis as { shmiTestSlot?: Promise<unknown> };
+if (!process.env.TEST_WORKER_INDEX) g.shmiTestSlot ??= acquireTestSlot(`e2e (port ${PORT}, pid ${process.pid})`);
+await g.shmiTestSlot;
 
 /** Use the orb's Chrome for Testing when no Playwright browser is installed. */
 function chromePath() {

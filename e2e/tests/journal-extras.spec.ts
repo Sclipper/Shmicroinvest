@@ -259,7 +259,7 @@ test.describe('entry editor follow-ups', () => {
     const tab = activeTab(page);
     await tab.getByLabel('Документ №').fill(`FA-${uid()}`);
     await tab.getByLabel('Основание').fill(term);
-    await pickAccount(page, 0, '203');
+    await pickAccount(page, 0, '207');
     await pickAccount(page, 1, '503');
     await tab.locator('td input.num').nth(0).fill('1500');
     await tab.getByRole('button', { name: 'Изравняване' }).click();
@@ -274,8 +274,8 @@ test.describe('entry editor follow-ups', () => {
     await openApp(page);
     const plan = { depreciationAmount: '1200', nonDepreciableAmount: '0', acquisitionDate: '2026-01-15', startDate: '2026-01-15', calcType: 'period', activePeriodLength: 12, annualRate: null, conservation: null, note: '', serialNumber: '' };
     const asset = await api<{ id: number }>(page, 'POST', '/assets', {
-      inventoryNumber: `J${uid()}`, name: 'Е2Е амортизация', personInCharge: null, categoryId: 2, inventoryAccountId: await accountId(page, '203'),
-      debitAccountId: await accountId(page, '241/2'), creditAccountId: await accountId(page, '603'), locationId: null, synchronized: false,
+      inventoryNumber: `J${uid()}`, name: 'Е2Е амортизация', personInCharge: null, categoryId: 2, inventoryAccountId: await accountId(page, '206'),
+      debitAccountId: await accountId(page, '241/6'), creditAccountId: await accountId(page, '603'), locationId: null, synchronized: false,
       accounting: plan, tax: { ...plan, calcType: 'rate', annualRate: '30', activePeriodLength: null },
     });
     const pending = await api<{ rows: { id: number; assetId: number }[] }>(page, 'GET', '/accounting-requests?from=2026-02-01&to=2026-02-28');
