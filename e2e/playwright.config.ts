@@ -37,7 +37,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command: `rm -rf .e2e-data && pnpm --filter @shmi/web build >/dev/null && DATA_DIR=$PWD/.e2e-data PORT=${PORT} node ../apps/server/src/index.ts`,
+    command: `rm -rf .e2e-data && pnpm --filter @shmi/web build >/dev/null && DATA_DIR=$PWD/.e2e-data PORT=${PORT} MAIL_TRANSPORT=json node ../apps/server/src/index.ts`,
     url: `${BASE_URL}/api/health`,
     reuseExistingServer: false,
     timeout: 120_000,
