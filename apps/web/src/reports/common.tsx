@@ -14,6 +14,7 @@ import type { Account } from '../types.ts';
 import { useShortcuts } from '../screens/entry/shortcuts.ts';
 import { useQuickCommands } from '../shell/quickCommands.tsx';
 import { ReportEmailDialog } from './ReportEmail.tsx';
+import { AllRows } from '../components/VirtualRows.tsx';
 
 /* ------------------------------------------------------------------ */
 /* Period                                                              */
@@ -389,7 +390,7 @@ export function PrintPortal({ title, subtitle, children, signatures = true }: { 
         <h1 className="text-[16px] font-bold">{title}</h1>
         {subtitle && <div className="text-[12px]">{subtitle}</div>}
       </div>
-      {children}
+      <AllRows>{children}</AllRows>
       {signatures && (
         <div className="mt-6 flex justify-between text-[11px]">
           <span>Съставил: ....................</span>

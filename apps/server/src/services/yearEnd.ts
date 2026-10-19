@@ -26,6 +26,8 @@ import { findSequence } from './sequences.ts';
 export const DIFFERENCES_ACCOUNT_KEY = 'AccountForCollectingDifferences';
 const VAT = VAT_CATEGORIES as readonly number[];
 const inList = (ids: readonly number[]) => sql.join(ids.map((i) => sql`${i}`), sql`, `);
+/** Many ids as one array parameter (a statement takes at most 65 535 parameters). */
+const idArray = (ids: readonly number[]) => sql`${'{' + ids.join(',') + '}'}::int[]`;
 
 /** Opening row to write (one accounting with a debit leg and a credit leg on the same account). */
 interface Carry {
@@ -307,8 +309,8 @@ export async function concludeIntoYear(tx: DbOrTx, fy: YearRow, next: YearRow, u
   // Step 1: remove the previous conclusion, keeping the allocations that touch it.
   const old = await openingsOf(tx, next.id);
   const oldIds = [...new Set(old.map((o) => o.id))];
-  const savedLinks = oldIds.length ? await tx.select().from(s.accountingPaymentDetails).where(sql`${s.accountingPaymentDetails.paymentAccountingId} IN (${inList(oldIds)}) OR ${s.accountingPaymentDetails.refAccountingId} IN (${inList(oldIds)})`) : [];
-  if (oldIds.length) await tx.delete(s.accountings).where(inArray(s.accountings.id, oldIds));
+  const savedLinks = oldIds.length ? await tx.select().from(s.accountingPaymentDetails).where(sql`${s.accountingPaymentDetails.paymentAccountingId} = ANY(${idArray(oldIds)}) OR ${s.accountingPaymentDetails.refAccountingId} = ANY(${idArray(oldIds)})`) : [];
+  if (oldIds.length) await tx.delete(s.accountings).where(sql`${s.accountings.id} = ANY(${idArray(oldIds)})`);
 
   // Step 2: balances.
   let rows = [...await nonPartnerBalances(tx, fy.id), ...await partnerBalances(tx, fy)].filter((r) => !isEmpty(r));
@@ -385,15 +387,22 @@ export async function concludeIntoYear(tx: DbOrTx, fy: YearRow, next: YearRow, u
   }));
   const oldById = new Map<number, OldOpening>();
   for (const o of old) if (!oldById.has(o.id) || o.companyId) oldById.set(o.id, o);
+  // New openings by (document, account, partner), in creation order.
+  const freshByKey = new Map<string, (typeof fresh)[number][]>();
+  for (const f of fresh) {
+    const k = `${f.documentId}:${f.accountId}:${f.companyId}`;
+    const list = freshByKey.get(k);
+    if (list) list.push(f);
+    else freshByKey.set(k, [f]);
+  }
   const matchCache = new Map<number, number | null>();
   const matchOld = (oldId: number) => {
     if (matchCache.has(oldId)) return matchCache.get(oldId)!;
     const o = oldById.get(oldId);
     let hit: number | null = null;
     if (o) {
-      const same = (f: (typeof fresh)[number]) => f.documentId === o.documentId && f.accountId === (map.get(o.accountId) ?? o.accountId) && f.companyId === o.companyId;
-      const exact = fresh.filter((f) => same(f) && f.debit === o.debit && f.credit === o.credit && f.cur === o.cur);
-      const loose = fresh.filter(same);
+      const loose = freshByKey.get(`${o.documentId}:${map.get(o.accountId) ?? o.accountId}:${o.companyId}`) ?? [];
+      const exact = loose.filter((f) => f.debit === o.debit && f.credit === o.credit && f.cur === o.cur);
       hit = exact[0]?.id ?? (loose.length === 1 ? loose[0]!.id : null);
     }
     matchCache.set(oldId, hit);
@@ -408,7 +417,8 @@ export async function concludeIntoYear(tx: DbOrTx, fy: YearRow, next: YearRow, u
     const row = { paymentAccountingId: pay, refAccountingId: ref, documentId: l.documentId, accountId: map.get(l.accountId) ?? l.accountId, companyId: l.companyId, amount: l.amount, currencyAmount: l.currencyAmount };
     relinks.set(`${pay}:${ref}:${row.accountId}:${row.companyId}:${row.amount}:${row.currencyAmount}`, row);
   }
-  if (relinks.size) await tx.insert(s.accountingPaymentDetails).values([...relinks.values()]);
+  const relinkRows = [...relinks.values()];
+  for (let i = 0; i < relinkRows.length; i += 1000) await tx.insert(s.accountingPaymentDetails).values(relinkRows.slice(i, i + 1000));
 
   // ... and move allocations between a closing-year item and a next-year entry onto the item's opening.
   const bySource = new Map<string, { id: number; accountId: number }>();
@@ -423,16 +433,23 @@ export async function concludeIntoYear(tx: DbOrTx, fy: YearRow, next: YearRow, u
       JOIN accountings ra ON ra.id = p.ref_accounting_id
     WHERE (ra.financial_year_id = ${fy.id} AND pa.financial_year_id = ${next.id} AND NOT pa.is_initial_balance)
        OR (pa.financial_year_id = ${fy.id} AND ra.financial_year_id = ${next.id} AND NOT ra.is_initial_balance)`);
-  let moved = 0;
+  const moves: { id: number; ref: number; pay: number; accountId: number }[] = [];
   for (const c of cross) {
     const closingSide = c.ref_year === fy.id ? c.ref_accounting_id : c.payment_accounting_id;
     const opening = sourceKeyOf(closingSide, c.account_id, c.company_id);
     if (!opening) continue;
-    await tx.update(s.accountingPaymentDetails).set(c.ref_year === fy.id
-      ? { refAccountingId: opening.id, accountId: opening.accountId }
-      : { paymentAccountingId: opening.id, accountId: opening.accountId }).where(eq(s.accountingPaymentDetails.id, c.id));
-    moved++;
+    moves.push(c.ref_year === fy.id
+      ? { id: c.id, ref: opening.id, pay: c.payment_accounting_id, accountId: opening.accountId }
+      : { id: c.id, ref: c.ref_accounting_id, pay: opening.id, accountId: opening.accountId });
   }
+  // One UPDATE per 1000 allocations.
+  for (let i = 0; i < moves.length; i += 1000) {
+    const values = sql.join(moves.slice(i, i + 1000).map((m) => sql`(${m.id}::int, ${m.ref}::int, ${m.pay}::int, ${m.accountId}::int)`), sql`, `);
+    await exec(tx, sql`
+      UPDATE accounting_payment_details p SET ref_accounting_id = v.ref, payment_accounting_id = v.pay, account_id = v.acc
+      FROM (VALUES ${values}) AS v(id, ref, pay, acc) WHERE p.id = v.id`);
+  }
+  const moved = moves.length;
 
   await tx.update(s.financialYears).set({ isConcluded: true }).where(inArray(s.financialYears.id, [fy.id, next.id]));
   return { openings: createdRows.length, relinked: relinks.size + moved, difference };

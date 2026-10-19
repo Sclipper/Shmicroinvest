@@ -1,7 +1,8 @@
-import { Fragment } from 'react';
+import { useMemo } from 'react';
 import { api, qs } from '../api.ts';
 import { PartnerPicker } from '../components/pickers.tsx';
 import { Checkbox, Field, Select } from '../components/ui.tsx';
+import { VirtualRows } from '../components/VirtualRows.tsx';
 import { AccountNumberPicker, Amt, LevelSelect, PeriodFields, ReportFrame, amt, periodText, sum, useReport, useYearPeriod, type Cell, useReportFilters } from './common.tsx';
 
 interface Balances {
@@ -85,70 +86,86 @@ export function GeneralLedger() {
         </>
       }
     >
-      {(d) => (
-        <table className="grid-table max-w-[72rem]">
-          <thead>
-            <tr>
-              <th className="w-28">Сметка</th>
-              <th>Наименование</th>
-              <th className="w-36 text-right">Дебит</th>
-              <th className="w-36 text-right">Кредит</th>
-            </tr>
-          </thead>
-          <tbody>
-            {d.map((g) => (
-              <Fragment key={g.number}>
-                <tr className="grp">
-                  <td className="nowrap text-brand-700">{g.number}</td>
-                  <td colSpan={3} className="text-brand-700">
-                    {name(g)}
-                  </td>
-                </tr>
-                {g.counters.map((c) => (
-                  <tr key={c.number}>
-                    <td className="nowrap pl-6!">{c.number}</td>
-                    <td className="max-w-[32rem] truncate">{name(c)}</td>
-                    <Amt v={c.debit} />
-                    <Amt v={c.credit} />
-                  </tr>
-                ))}
-                <tr className="font-semibold">
-                  <td colSpan={2} className="text-right">
-                    Общо за {g.number}
-                  </td>
-                  <Amt v={g.totalDebit} className="border-t border-t-slate-400" />
-                  <Amt v={g.totalCredit} className="border-t border-t-slate-400" />
-                </tr>
-                {g.balances && (
-                  <>
-                    <tr className="text-slate-700">
-                      <td colSpan={2} className="text-right">
-                        Начално салдо
-                      </td>
-                      <Amt v={g.balances.openingDebit} />
-                      <Amt v={g.balances.openingCredit} />
-                    </tr>
-                    <tr className="text-slate-700">
-                      <td colSpan={2} className="text-right">
-                        Крайно салдо
-                      </td>
-                      <Amt v={g.balances.closingDebit} />
-                      <Amt v={g.balances.closingCredit} />
-                    </tr>
-                  </>
-                )}
-              </Fragment>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr>
-              <td colSpan={2}>Общо</td>
-              <Amt v={sum(d, (g) => g.totalDebit)} />
-              <Amt v={sum(d, (g) => g.totalCredit)} />
-            </tr>
-          </tfoot>
-        </table>
-      )}
+      {(d) => <LedgerTable d={d} name={name} />}
     </ReportFrame>
+  );
+}
+
+type LedgerRow = [kind: 'group' | 'counter' | 'total' | 'opening' | 'closing', g: Group, c?: Group['counters'][number]];
+
+/** The groups as one row list (heading, counter accounts, total, balances), windowed on screen. */
+function LedgerTable({ d, name }: { d: Group[]; name: (r: { description: string; englishDescription?: string }) => string }) {
+  const rows = useMemo(() => {
+    const out: LedgerRow[] = [];
+    for (const g of d) {
+      out.push(['group', g]);
+      for (const c of g.counters) out.push(['counter', g, c]);
+      out.push(['total', g]);
+      if (g.balances) out.push(['opening', g], ['closing', g]);
+    }
+    return out;
+  }, [d]);
+  const row = (i: number) => {
+    const [kind, g, c] = rows[i]!;
+    if (kind === 'group')
+      return (
+        <tr key={`g${g.number}`} className="grp">
+          <td className="nowrap text-brand-700">{g.number}</td>
+          <td colSpan={3} className="text-brand-700">
+            {name(g)}
+          </td>
+        </tr>
+      );
+    if (kind === 'counter')
+      return (
+        <tr key={`c${g.number}:${c!.number}`}>
+          <td className="nowrap pl-6!">{c!.number}</td>
+          <td className="max-w-[32rem] truncate">{name(c!)}</td>
+          <Amt v={c!.debit} />
+          <Amt v={c!.credit} />
+        </tr>
+      );
+    if (kind === 'total')
+      return (
+        <tr key={`t${g.number}`} className="font-semibold">
+          <td colSpan={2} className="text-right">
+            Общо за {g.number}
+          </td>
+          <Amt v={g.totalDebit} className="border-t border-t-slate-400" />
+          <Amt v={g.totalCredit} className="border-t border-t-slate-400" />
+        </tr>
+      );
+    const b = g.balances!;
+    return (
+      <tr key={`${kind}${g.number}`} className="text-slate-700">
+        <td colSpan={2} className="text-right">
+          {kind === 'opening' ? 'Начално салдо' : 'Крайно салдо'}
+        </td>
+        <Amt v={kind === 'opening' ? b.openingDebit : b.closingDebit} />
+        <Amt v={kind === 'opening' ? b.openingCredit : b.closingCredit} />
+      </tr>
+    );
+  };
+  return (
+    <table className="grid-table max-w-[72rem]">
+      <thead>
+        <tr>
+          <th className="w-28">Сметка</th>
+          <th>Наименование</th>
+          <th className="w-36 text-right">Дебит</th>
+          <th className="w-36 text-right">Кредит</th>
+        </tr>
+      </thead>
+      <tbody>
+        <VirtualRows count={rows.length} colSpan={4} row={row} />
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colSpan={2}>Общо</td>
+          <Amt v={sum(d, (g) => g.totalDebit)} />
+          <Amt v={sum(d, (g) => g.totalCredit)} />
+        </tr>
+      </tfoot>
+    </table>
   );
 }

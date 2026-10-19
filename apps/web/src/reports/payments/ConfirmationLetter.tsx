@@ -5,6 +5,7 @@ import { useSession } from '../../session.tsx';
 import { ReportFrame, amt, useReport, useYearPeriod, type Cell, useReportFilters } from '../common.tsx';
 import { baseCurrencyWord, type LettersResult, type PartnerLetter } from './letters.ts';
 import { ReportTypeSelect, Sheet, SheetPrintButton } from './shared.tsx';
+import { IncrementalList } from '../../components/VirtualRows.tsx';
 
 /**
  * Потвърдително писмо за задължения/вземания (spec 05 6.5): one letter per
@@ -56,7 +57,7 @@ export function ConfirmationLetter() {
       }
       options={report.q.data && report.applied ? <SheetPrintButton label="Печат на писмата" disabled={report.q.isFetching || !report.q.data.letters.length}>{() => report.q.data!.letters.map((l) => letter(report.q.data!, l))}</SheetPrintButton> : undefined}
     >
-      {(d) => <div className="bg-slate-100 py-1">{d.letters.map((l) => letter(d, l))}</div>}
+      {(d) => <div className="bg-slate-100 py-1"><IncrementalList items={d.letters} render={(l) => letter(d, l)} step={30} /></div>}
     </ReportFrame>
   );
 }

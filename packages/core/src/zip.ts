@@ -16,7 +16,8 @@ const CRC_TABLE = (() => {
 
 export function crc32(data: Uint8Array): number {
   let c = 0xffffffff;
-  for (const b of data) c = CRC_TABLE[(c ^ b) & 0xff]! ^ (c >>> 8);
+  // Indexed loop: the iterator protocol made this the slowest step of a large export.
+  for (let i = 0, n = data.length; i < n; i++) c = CRC_TABLE[(c ^ data[i]!) & 0xff]! ^ (c >>> 8);
   return (c ^ 0xffffffff) >>> 0;
 }
 

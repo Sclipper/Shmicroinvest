@@ -418,6 +418,31 @@ describe('protocols under art. 117 (02b 7, 19)', () => {
     const d = (await call('POST', '/vat/diaries', report('2026-07-01', '2026-07-31'))).body;
     expect(d.purchases.some((x: { documentNumber: string }) => x.documentNumber === 'DEL-P')).toBe(false);
   });
+
+  it('a protocol of another month than its invoice: the diaries of each month load it with its invoice', async () => {
+    // Own company: the other tests sum whole months and years.
+    const c = await createTestCompany({ companyName: 'ДДС Тест ООД' });
+    try {
+      await setMyCompany(c);
+      const eu = await c.partner('EU Supplier GmbH', ['401'], { isVat: true, vatNumber: 'DE999999999' });
+      const rows = async (from: string, to: string) => {
+        const d = (await c.call('POST', '/vat/diaries', report(from, to))).body;
+        const pick = (list: { documentNumber: string; documentType: string; cols: string[] }[]) => list
+          .map((x) => `${x.documentType} ${x.documentNumber} ${x.cols.filter((v) => v !== '0.00').join(' ')}`).sort();
+        return { sales: pick(d.sales), purchases: pick(d.purchases) };
+      };
+      // Invoice in November, protocol in December; invoice in December, protocol in November.
+      const late = (await c.post(purchase('2026-11-20', 400, 0, 1, { docNumber: 'MI-1', partner: eu }))).id;
+      expect((await c.call('PUT', `/vat/protocols/${late}`, { icaType: 1, purchaseTermId: 2, documentNumber: 'PM-1', documentDate: '2026-12-02', viesMonth: '2026-12-01', base: '400', vat: '80' })).status).toBe(200);
+      const early = (await c.post(purchase('2026-12-10', 300, 0, 1, { docNumber: 'MI-2', partner: eu }))).id;
+      expect((await c.call('PUT', `/vat/protocols/${early}`, { icaType: 1, purchaseTermId: 2, documentNumber: 'PM-2', documentDate: '2026-11-28', viesMonth: '2026-11-01', base: '300', vat: '60' })).status).toBe(200);
+      // The protocol's sale row goes to its invoice's month, its purchase row to its own month (as with a year-wide load).
+      expect(await rows('2026-11-01', '2026-11-30')).toEqual({ sales: ['ПЗДДС PM-1 400.00 80.00 400.00 80.00'], purchases: ['ПЗДДС PM-2 300.00 60.00', 'Ф-ра MI-1 '] });
+      expect(await rows('2026-12-01', '2026-12-31')).toEqual({ sales: ['ПЗДДС PM-2 300.00 60.00 300.00 60.00'], purchases: ['ПЗДДС PM-1 400.00 80.00', 'Ф-ра MI-2 '] });
+    } finally {
+      await c.close();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

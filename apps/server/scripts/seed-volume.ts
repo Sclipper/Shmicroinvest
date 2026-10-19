@@ -19,12 +19,13 @@
  *    one transaction, and their payment allocations through
  *    services/openItems.ts insertPaymentLinks (what "Обвързване" writes).
  *
- * Mix of the ~N entries (21 months, 2025-01 .. 2026-09): sales invoices with
- * VAT (20 %, 9 %, ВОД 0 %), a third of them with goods (quantities), purchase
- * invoices (services, goods with quantities, fixed assets), bank and cash
- * payments bound to the oldest open invoice of the partner (some partial,
- * some advance payments left unbound, some invoices never paid), USD bank
- * lines with currency amounts, payroll and bank fees. On top: one
+ * Mix of the ~N entries (21 months, 2025-01 .. 2026-09): 27 % sales invoices
+ * with VAT (20 %, 9 %, ВОД 0 %), a third of them with goods (quantities); 17 %
+ * purchase invoices (services, goods with quantities, fixed assets); 44 % bank
+ * and cash payments bound to the oldest open invoice of the partner (15 %
+ * partial, 3 % advances left unbound; 10 % of the sales and 7 % of the
+ * purchase invoices are never paid); 5 % USD bank lines with currency
+ * amounts; 7 % payroll, bank fees and cash transfers. On top: one
  * depreciation entry per asset and month, a write-off per product and month,
  * the monthly VAT closing.
  */
@@ -190,7 +191,9 @@ let ownInvoice = 0;
 const counters = { entries: 0, links: 0, failed: 0 };
 const failures = new Map<string, number>();
 
-interface Planned { input: EntryInput; userId: number; after?: (id: number, documentId: number | null) => Promise<void> }
+type After = (id: number, documentId: number | null) => Promise<void>;
+/** An entry of the month; payments are built when posted (built: they pay what is open at that moment). */
+interface Planned { userId: number; input?: EntryInput; after?: After; date?: string; build?: () => { input: EntryInput; after?: After } | null }
 
 const money = (v: number, euro: boolean) => (euro ? v / BGN_PER_EUR : v);
 const amt = (v: number | Dec) => round2(dec(v)).toFixed(2);
@@ -227,7 +230,7 @@ function planMonth(ym: string, count: number, euro: boolean, C: Awaited<ReturnTy
 
   while (out.length < count) {
     const r = R.next();
-    if (r < 0.32) {
+    if (r < 0.27) {
       // Sales invoice.
       const eu = euClients.length > 0 && R.chance(0.05);
       const cli = eu ? R.pick(euClients) : R.pick(bgClients);
@@ -265,7 +268,7 @@ function planMonth(ym: string, count: number, euro: boolean, C: Awaited<ReturnTy
         },
         after: async (id) => { if (R.chance(0.9)) pushOpen('c', cli.id, { accountingId: id, remaining: total, accountId: C.id('411') }); },
       });
-    } else if (r < 0.54) {
+    } else if (r < 0.44) {
       // Purchase invoice: goods with quantities or services.
       const sup = R.pick(suppliers);
       const debits: LineInput[] = [];
@@ -297,41 +300,43 @@ function planMonth(ym: string, count: number, euro: boolean, C: Awaited<ReturnTy
         },
         after: async (id) => { if (R.chance(0.93)) pushOpen('s', sup.id, { accountingId: id, remaining: total, accountId: C.id('401') }); },
       });
-    } else if (r < 0.86) {
-      // Payment by bank (75 %) or cash (25 %), client receipt or supplier payment, bound to the oldest open invoice.
-      const client = R.chance(0.55);
+    } else if (r < 0.88) {
+      // Payment by bank (75 %) or cash (25 %), client receipt or supplier payment, bound to the oldest open
+      // invoice of a partner that has one when it is posted (some partial, a few advances left unbound).
+      const client = R.chance(0.6);
       const cash = R.chance(0.25);
-      const pool = client ? clients : suppliers;
-      let partner = R.pick(pool);
-      for (let k = 0; k < 8 && !(openQueue.get(qKey(client ? 'c' : 's', partner.id))?.length); k++) partner = R.pick(pool);
-      const queue = openQueue.get(qKey(client ? 'c' : 's', partner.id)) ?? [];
-      const inv = queue[0];
-      const advance = !inv || R.chance(0.04);
-      const full = !advance && R.chance(0.82);
-      const value = advance ? round2(dec(money(R.int(10_000, 200_000) / 100, euro))) : full ? inv!.remaining : round2(inv!.remaining.div(2));
-      if (value.lessThanOrEqualTo(0)) continue;
-      const partnerAcc = C.id(client ? '411' : '401');
-      const payAcc = C.id(cash ? '501' : '503');
-      const partnerLine: LineInput = { accountId: partnerAcc, amount: value.toFixed(2), companyId: partner.id };
-      const payLine: LineInput = { accountId: payAcc, amount: value.toFixed(2) };
-      const docType = cash ? (client ? 8 : 9) : 11;
       const date = day();
       add({
-        userId: user(),
-        input: {
-          accountingDate: date, documentDate: date, documentTypeId: docType, documentNumber: cash ? '' : `БИ${ym.replace('-', '')}${R.int(1, 31)}`, companyId: partner.id,
-          term: client ? 'Плащане от клиент' : 'Плащане на доставчик', source: 'payment',
-          debits: [client ? payLine : partnerLine], credits: [client ? partnerLine : payLine],
-        },
-        after: async (id, documentId) => {
-          if (advance || !inv) return;
-          await insertPaymentLinks(current!, [{ paymentAccountingId: id, refAccountingId: inv.accountingId, documentId, accountId: inv.accountId, companyId: partner.id, amount: value.toFixed(2) }]);
-          counters.links++;
-          inv.remaining = inv.remaining.minus(value);
-          if (inv.remaining.lessThanOrEqualTo(0)) queue.shift();
+        userId: user(), date,
+        build: () => {
+          const pool = client ? clients : suppliers;
+          let partner = R.pick(pool);
+          for (let k = 0; k < 12 && !(openQueue.get(qKey(client ? 'c' : 's', partner.id))?.length); k++) partner = R.pick(pool);
+          const queue = openQueue.get(qKey(client ? 'c' : 's', partner.id)) ?? [];
+          const inv = queue[0];
+          const advance = !inv || R.chance(0.03);
+          const full = !advance && R.chance(0.85);
+          const value = advance ? round2(dec(money(R.int(10_000, 200_000) / 100, euro))) : full ? inv!.remaining : round2(inv!.remaining.div(2));
+          if (value.lessThanOrEqualTo(0)) return null;
+          const partnerLine: LineInput = { accountId: C.id(client ? '411' : '401'), amount: value.toFixed(2), companyId: partner.id };
+          const payLine: LineInput = { accountId: C.id(cash ? '501' : '503'), amount: value.toFixed(2) };
+          return {
+            input: {
+              accountingDate: date, documentDate: date, documentTypeId: cash ? (client ? 8 : 9) : 11, documentNumber: cash ? '' : `БИ${ym.replace('-', '')}${R.int(1, 31)}`, companyId: partner.id,
+              term: client ? 'Плащане от клиент' : 'Плащане на доставчик', source: 'payment',
+              debits: [client ? payLine : partnerLine], credits: [client ? partnerLine : payLine],
+            },
+            after: async (id, documentId) => {
+              if (advance || !inv) return;
+              await insertPaymentLinks(current!, [{ paymentAccountingId: id, refAccountingId: inv.accountingId, documentId, accountId: inv.accountId, companyId: partner.id, amount: value.toFixed(2) }]);
+              counters.links++;
+              inv.remaining = inv.remaining.minus(value);
+              if (inv.remaining.lessThanOrEqualTo(0)) queue.shift();
+            },
+          };
         },
       });
-    } else if (r < 0.92) {
+    } else if (r < 0.93) {
       // USD bank: buying dollars, paying foreign services, fees.
       const usd = R.int(500, 20_000);
       const rate = euro ? 0.86 + R.next() * 0.04 : 1.68 + R.next() * 0.08;
@@ -353,7 +358,8 @@ function planMonth(ym: string, count: number, euro: boolean, C: Awaited<ReturnTy
       add({ userId: user(), input: { accountingDate: date, documentTypeId: pair[3], documentNumber: pair[3] === 11 ? `БИ${ym.replace('-', '')}` : '', term: pair[2], debits: [{ accountId: C.id(pair[0]), amount: v }], credits: [{ accountId: C.id(pair[1]), amount: v }] } });
     }
   }
-  return out.sort((a, b) => (a.input.accountingDate < b.input.accountingDate ? -1 : a.input.accountingDate > b.input.accountingDate ? 1 : 0));
+  const dateOf = (p: Planned) => p.date ?? p.input!.accountingDate;
+  return out.sort((a, b) => (dateOf(a) < dateOf(b) ? -1 : dateOf(a) > dateOf(b) ? 1 : 0));
 }
 
 let current: Parameters<Parameters<CompanyDb['transaction']>[0]>[0] | null = null;
@@ -363,13 +369,15 @@ async function postAll(year: ActiveYear, planned: Planned[]) {
     await db.transaction(async (tx) => {
       current = tx;
       for (const p of planned.slice(i, i + BATCH)) {
+        const e = p.build ? p.build() : { input: p.input!, after: p.after };
+        if (!e) continue;
         try {
           // A savepoint per entry: a refused entry does not spoil the batch.
           await tx.transaction(async (sp) => {
             current = sp;
-            const r = await saveEntry(sp, p.input, { year, userId: p.userId, force: true });
+            const r = await saveEntry(sp, e.input, { year, userId: p.userId, force: true });
             const [{ document_id }] = await queryRows<{ document_id: number | null }>(sp, sql`SELECT document_id FROM accountings WHERE id = ${r.id}`) as [{ document_id: number | null }];
-            await p.after?.(r.id, document_id);
+            await e.after?.(r.id, document_id);
           });
           counters.entries++;
         } catch (e) {
@@ -489,8 +497,11 @@ for (const ym of MONTHS) {
   const tm = performance.now();
   const before = counters.entries;
   await postAll(year, planMonth(ym, perMonth, ym >= '2026', C, assetPlans.filter((a) => a.date.startsWith(ym))));
+  const tp = performance.now();
   const dep = await monthEnd(ym);
-  log(`${ym}: ${counters.entries - before} entries, ${dep} depreciation months in ${fmtMs(performance.now() - tm)} (total ${counters.entries}, links ${counters.links}, refused ${counters.failed})`);
+  // The planner statistics of a growing database (PGlite has no autovacuum; the server runs the same maintenance).
+  if ('maintain' in driver) await (driver as unknown as { maintain(name: string): Promise<void> }).maintain(dbName);
+  log(`${ym}: ${counters.entries - before} entries (${fmtMs(tp - tm)}), ${dep} depreciation months, month end ${fmtMs(performance.now() - tp)} (total ${counters.entries}, links ${counters.links}, refused ${counters.failed})`);
   if (o.verbose && failures.size) console.log(Object.fromEntries(failures));
 }
 

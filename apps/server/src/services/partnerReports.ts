@@ -4,7 +4,7 @@ import {
   movementLineDirection, overdueDaysText, ZERO, type Dec,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
-import { queryRows, type DbOrTx } from '../db/provider.ts';
+import { queryRows, queryRowsBulk, type DbOrTx } from '../db/provider.ts';
 import { ApiError } from '../lib/errors.ts';
 import { accountBalances, accountRuleSql } from './reports.ts';
 import { openItems, type OpenItem } from './openItems.ts';
@@ -20,6 +20,10 @@ const iso = (v: unknown) => (v ? String(v instanceof Date ? v.toISOString() : v)
 const str = (v: unknown) => (v === null || v === undefined ? '' : String(v));
 const yearStart = (date: string) => `${date.slice(0, 4)}-01-01`;
 const f2 = (d: Dec) => d.toFixed(2);
+// Collators made once (String#localeCompare with a locale builds one per call, slow on big reports).
+const bgText = new Intl.Collator('bg').compare;
+const bgNumeric = new Intl.Collator('bg', { numeric: true }).compare;
+const plainText = new Intl.Collator().compare;
 
 /** Leva rows of a mixed period are divided by 1.95583 (EUR report). */
 function factorSql(endDate: string, dateCol: SQL) {
@@ -122,16 +126,16 @@ export interface AccountingLevelRow extends DocumentLevelRow {
 }
 
 const DOC_SORTS: Record<string, (a: DocumentLevelRow, b: DocumentLevelRow) => number> = {
-  DocumentDate: (a, b) => a.documentDate.localeCompare(b.documentDate),
-  DocumentNumber: (a, b) => a.documentNumber.localeCompare(b.documentNumber, 'bg', { numeric: true }),
+  DocumentDate: (a, b) => plainText(a.documentDate, b.documentDate),
+  DocumentNumber: (a, b) => bgNumeric(a.documentNumber, b.documentNumber),
   DocumentType: (a, b) => a.documentTypePosition - b.documentTypePosition,
   Amount: (a, b) => dec(a.amount).comparedTo(dec(b.amount)),
-  AccountingNumber: (a, b) => a.accountingNumber.localeCompare(b.accountingNumber),
-  AccountingDate: (a, b) => a.accountingDate.localeCompare(b.accountingDate),
+  AccountingNumber: (a, b) => plainText(a.accountingNumber, b.accountingNumber),
+  AccountingDate: (a, b) => plainText(a.accountingDate, b.accountingDate),
 };
 
 function byPartnerThen<T extends { companyName: string; companyBulstat: string }>(cmp?: (a: T, b: T) => number) {
-  return (a: T, b: T) => a.companyName.localeCompare(b.companyName, 'bg') || a.companyBulstat.localeCompare(b.companyBulstat) || (cmp ? cmp(a, b) : 0);
+  return (a: T, b: T) => bgText(a.companyName, b.companyName) || plainText(a.companyBulstat, b.companyBulstat) || (cmp ? cmp(a, b) : 0);
 }
 
 function documentRow(i: OpenItem, iban: string): DocumentLevelRow {
@@ -171,7 +175,7 @@ export async function partnerDebts(db: DbOrTx, o: PartnerDebtsOptions) {
     let out: PartnerLevelRow[] = rows.map((r) => ({ companyId: r.id, companyName: r.name, companyBulstat: r.bulstat ?? '', amount: f2(dec(r.amount)), currencyAmount: f2(dec(r.cur)) }));
     if (!o.showClosed) out = out.filter((r) => !dec(r.amount).isZero() || (o.currency && !dec(r.currencyAmount).isZero()));
     out = filter(out);
-    out.sort(o.sort === 'Amount' ? (a, b) => dec(a.amount).comparedTo(dec(b.amount)) || a.companyName.localeCompare(b.companyName, 'bg') : byPartnerThen());
+    out.sort(o.sort === 'Amount' ? (a, b) => dec(a.amount).comparedTo(dec(b.amount)) || bgText(a.companyName, b.companyName) : byPartnerThen());
     return { level: o.level, startDate, endDate: o.endDate, rows: out, total: f2(out.reduce((acc, r) => acc.plus(r.amount), ZERO)), totalCurrency: f2(out.reduce((acc, r) => acc.plus(r.currencyAmount), ZERO)) };
   }
 
@@ -193,6 +197,8 @@ export async function partnerDebts(db: DbOrTx, o: PartnerDebtsOptions) {
 
   // 6.4: per original document the accountings linked through payment allocations.
   const ids = [...new Set(kept.map((i) => i.accountingId))];
+  // One array parameter: a big report has more entries than a statement may have parameters.
+  const idArr = sql`${'{' + ids.join(',') + '}'}::int[]`;
   const links = ids.length ? await queryRows<Record<string, unknown>>(db, sql`
     SELECT p.ref_accounting_id, p.payment_accounting_id, p.account_id, p.company_id, p.amount, p.currency_amount,
       o.id AS other_id, o.number AS other_number, o.accounting_date AS other_date,
@@ -201,14 +207,20 @@ export async function partnerDebts(db: DbOrTx, o: PartnerDebtsOptions) {
         WHERE x.accounting_id = o.id AND x.sign = 1 AND (x.account_id = p.account_id OR x.ref_account_id = p.account_id) ORDER BY x.position LIMIT 1) AS debit_number,
       (SELECT ca.number FROM accounting_details x JOIN accounts ca ON ca.id = x.ref_account_id
         WHERE x.accounting_id = o.id AND x.sign = 1 AND (x.account_id = p.account_id OR x.ref_account_id = p.account_id) ORDER BY x.position LIMIT 1) AS credit_number,
-      CASE WHEN p.ref_accounting_id IN (${inList(ids)}) THEN p.ref_accounting_id ELSE p.payment_accounting_id END AS original_id
+      CASE WHEN p.ref_accounting_id = ANY(${idArr}) THEN p.ref_accounting_id ELSE p.payment_accounting_id END AS original_id
     FROM accounting_payment_details p
-      JOIN accountings o ON o.id = CASE WHEN p.ref_accounting_id IN (${inList(ids)}) THEN p.payment_accounting_id ELSE p.ref_accounting_id END
+      JOIN accountings o ON o.id = CASE WHEN p.ref_accounting_id = ANY(${idArr}) THEN p.payment_accounting_id ELSE p.ref_accounting_id END
       LEFT JOIN documents doc ON doc.id = o.document_id
       LEFT JOIN document_types dt ON dt.id = doc.document_type_id
-    WHERE (p.ref_accounting_id IN (${inList(ids)}) OR p.payment_accounting_id IN (${inList(ids)}))
+    WHERE (p.ref_accounting_id = ANY(${idArr}) OR p.payment_accounting_id = ANY(${idArr}))
       AND o.accounting_date BETWEEN ${startDate} AND ${o.endDate}
     ORDER BY o.accounting_date, o.number`) : [];
+  const linksOf = new Map<number, Record<string, unknown>[]>();
+  for (const l of links) {
+    const list = linksOf.get(l.original_id as number);
+    if (list) list.push(l);
+    else linksOf.set(l.original_id as number, [l]);
+  }
   const companyNet = new Map<number, { amt: Dec; cur: Dec }>();
   for (const i of kept) {
     const c = companyNet.get(i.companyId) ?? { amt: ZERO, cur: ZERO };
@@ -224,7 +236,7 @@ export async function partnerDebts(db: DbOrTx, o: PartnerDebtsOptions) {
       remainingAmount: f2(dec(i.open).times(c)),
       companyAmount: f2(net.amt),
       companyCurrencyAmount: f2(net.cur),
-      lines: links.filter((l) => l.original_id === i.accountingId && l.account_id === i.accountId && (l.company_id == null || l.company_id === i.companyId)).map((l) => ({
+      lines: (linksOf.get(i.accountingId) ?? []).filter((l) => l.account_id === i.accountId && (l.company_id == null || l.company_id === i.companyId)).map((l) => ({
         accountingId: l.other_id as number, accountingNumber: str(l.other_number), accountingDate: iso(l.other_date),
         debitAccountNumber: str(l.debit_number), creditAccountNumber: str(l.credit_number),
         documentNumber: str(l.doc_number), documentDate: iso(l.doc_date), documentTypeShortName: str(l.doc_type),
@@ -264,14 +276,14 @@ export interface MovementRow {
 }
 
 const MOVEMENT_SORTS: Record<string, (a: MovementRow, b: MovementRow) => number> = {
-  DocumentDate: (a, b) => a.documentDate.localeCompare(b.documentDate) || a.accountingDate.localeCompare(b.accountingDate),
-  AccountingNumber: (a, b) => a.accountingNumbers.localeCompare(b.accountingNumbers),
-  AccountingDate: (a, b) => a.accountingDate.localeCompare(b.accountingDate),
+  DocumentDate: (a, b) => plainText(a.documentDate, b.documentDate) || plainText(a.accountingDate, b.accountingDate),
+  AccountingNumber: (a, b) => plainText(a.accountingNumbers, b.accountingNumbers),
+  AccountingDate: (a, b) => plainText(a.accountingDate, b.accountingDate),
   DebitAmount: (a, b) => dec(a.debitAmount).comparedTo(dec(b.debitAmount)),
   CreditAmount: (a, b) => dec(a.creditAmount).comparedTo(dec(b.creditAmount)),
-  Term: (a, b) => a.term.localeCompare(b.term, 'bg'),
-  DocumentType: (a, b) => a.documentType.localeCompare(b.documentType, 'bg'),
-  DocumentNumber: (a, b) => a.documentNumber.localeCompare(b.documentNumber, 'bg', { numeric: true }),
+  Term: (a, b) => bgText(a.term, b.term),
+  DocumentType: (a, b) => bgText(a.documentType, b.documentType),
+  DocumentNumber: (a, b) => bgNumeric(a.documentNumber, b.documentNumber),
 };
 
 export async function partnerMovement(db: DbOrTx, o: MovementOptions) {
@@ -481,7 +493,7 @@ async function groupLetters(db: DbOrTx, items: OpenItem[], endDate: string, abs:
     l.totalCurrency = f2(dec(l.totalCurrency).plus(it.currencyAmount));
     map.set(i.companyId, l);
   }
-  return [...map.values()].sort((a, b) => a.company.name.localeCompare(b.company.name, 'bg'));
+  return [...map.values()].sort((a, b) => bgText(a.company.name, b.company.name));
 }
 
 export interface LetterOptions {
@@ -551,7 +563,12 @@ export async function receivedIssued(db: DbOrTx, o: ReceivedIssuedOptions) {
   if (o.documentNumber) conds.push(sql`doc.number ILIKE ${o.documentNumber + '%'}`);
   if (o.transactionTypeId) conds.push(sql`a.transaction_type_id = ${o.transactionTypeId}`);
   if (!o.byExportMonth) conds.push(sql`da.is_euro = (a.accounting_date >= ${EURO_CHANGEOVER_DATE})`);
-  const legs = await queryRows<Record<string, unknown>>(db, sql`
+  // Only entries that are a purchase or a sale (a leg crediting a payable or debiting a receivable
+  // account): the others are dropped below anyway, and are most of the journal.
+  conds.push(sql`EXISTS (SELECT 1 FROM accounting_details x JOIN accounts xd ON xd.id = x.account_id JOIN accounts xc ON xc.id = x.ref_account_id
+    WHERE x.accounting_id = a.id AND x.sign = 1 ${o.byExportMonth ? sql`` : sql`AND xd.is_euro = (a.accounting_date >= ${EURO_CHANGEOVER_DATE})`}
+      AND (xc.account_category_id IN (${inList(PAYABLE)}) OR xd.account_category_id IN (${inList(RECEIVABLE)})))`);
+  const legs = await queryRowsBulk<Record<string, unknown>>(db, sql`
     SELECT a.id AS accounting_id, a.number, a.accounting_date, a.vies_month, a.transaction_type_id,
       d.amount / ${factor} AS amount, d.vat_term_id, vt.description AS vat_term,
       da.number AS debit_number, ca.number AS credit_number, da.account_category_id AS dcat, ca.account_category_id AS ccat,
@@ -575,7 +592,9 @@ export async function receivedIssued(db: DbOrTx, o: ReceivedIssuedOptions) {
   const byAcc = new Map<number, Record<string, unknown>[]>();
   for (const l of legs) {
     const id = l.accounting_id as number;
-    byAcc.set(id, [...(byAcc.get(id) ?? []), l]);
+    const list = byAcc.get(id);
+    if (list) list.push(l);
+    else byAcc.set(id, [l]);
   }
   interface Row {
     accountingId: number; accountingNumber: string; accountingDate: string; debitNumber: string; creditNumber: string;
@@ -620,11 +639,11 @@ export async function receivedIssued(db: DbOrTx, o: ReceivedIssuedOptions) {
   const cards = await partnerCards(db, [...companyIds]);
   for (const r of out) r.company = r.companyId ? cards.get(r.companyId)?.name ?? '' : '';
   const sorts: Record<string, (a: Row, b: Row) => number> = {
-    DocumentNumber: (a, b) => a.docNumber.localeCompare(b.docNumber, 'bg', { numeric: true }) || a.docDate.localeCompare(b.docDate),
-    DocumentDate: (a, b) => a.docDate.localeCompare(b.docDate) || a.docNumber.localeCompare(b.docNumber, 'bg', { numeric: true }),
-    AccountingDate: (a, b) => a.accountingDate.localeCompare(b.accountingDate) || a.accountingNumber.localeCompare(b.accountingNumber),
-    AccountingNumber: (a, b) => a.accountingNumber.localeCompare(b.accountingNumber),
-    ViesMonth: (a, b) => a.viesMonth.localeCompare(b.viesMonth) || a.docDate.localeCompare(b.docDate),
+    DocumentNumber: (a, b) => bgNumeric(a.docNumber, b.docNumber) || plainText(a.docDate, b.docDate),
+    DocumentDate: (a, b) => plainText(a.docDate, b.docDate) || bgNumeric(a.docNumber, b.docNumber),
+    AccountingDate: (a, b) => plainText(a.accountingDate, b.accountingDate) || plainText(a.accountingNumber, b.accountingNumber),
+    AccountingNumber: (a, b) => plainText(a.accountingNumber, b.accountingNumber),
+    ViesMonth: (a, b) => plainText(a.viesMonth, b.viesMonth) || plainText(a.docDate, b.docDate),
   };
   out.sort(sorts[o.sort ?? 'DocumentNumber'] ?? sorts.DocumentNumber);
   return out;

@@ -5,6 +5,7 @@ import type { DepreciationMonthStatus } from '@shmi/core';
 import { Printer } from 'lucide-react';
 import { ApiError, api, type Message } from '../api.ts';
 import { Button, Field, Select, cx } from '../components/ui.tsx';
+import { AllRows } from '../components/VirtualRows.tsx';
 import { useSession } from '../session.tsx';
 
 /* ------------------------------------------------------------------ */
@@ -242,7 +243,7 @@ export function PrintableDoc({ children, toolbar }: { children: ReactNode; toolb
         {toolbar}
       </div>
       <div className="rounded-sm border border-slate-300 bg-white p-6">{children}</div>
-      {printing && createPortal(<div className="asset-print-portal">{children}</div>, document.body)}
+      {printing && createPortal(<div className="asset-print-portal"><AllRows>{children}</AllRows></div>, document.body)}
     </>
   );
 }

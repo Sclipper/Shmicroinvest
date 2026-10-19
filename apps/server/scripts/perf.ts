@@ -2,7 +2,7 @@
  * Response times of the heavy endpoints on a big company (see seed-volume.ts).
  *
  *   node apps/server/scripts/perf.ts [--db=<database>] [--data-dir=apps/server/.data-perf]
- *     [--runs=3] [--only=<regex>] [--skip=<regex>] [--json=<file>] [--in-place]
+ *     [--runs=3] [--only=<regex>] [--skip=<regex>] [--json=<file>] [--in-place] [--verbose] [--case-timeout=<ms>] [--reset-stats]
  *
  * Every case goes through the app (app.request with a session, as the browser
  * does) and runs --runs times; the table shows p50 and max with the budget of
@@ -17,7 +17,7 @@ import { cpSync, mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { sql } from 'drizzle-orm';
-import { queryRows } from '../src/db/provider.ts';
+import { exec, queryRows } from '../src/db/provider.ts';
 import { acquireTestSlot } from '../../../scripts/test-slots.ts';
 import { DEFAULT_DATA_DIR, apiClient, fmtMs, openDriver, parseArgs } from './lib.ts';
 
@@ -25,6 +25,8 @@ const o = parseArgs();
 const RUNS = Number(o.runs ?? 3);
 const only = o.only ? new RegExp(o.only, 'i') : null;
 const skip = o.skip ? new RegExp(o.skip, 'i') : null;
+/** Stop the run when one request takes longer (the engine stays busy with it, so later cases would wait). */
+const CASE_TIMEOUT = Number(o['case-timeout'] ?? 0);
 
 const release = await acquireTestSlot(`perf (pid ${process.pid})`);
 let dataDir = o['data-dir'] ?? process.env.DATA_DIR ?? DEFAULT_DATA_DIR;
@@ -34,6 +36,11 @@ if (!process.env.DATABASE_URL && !o['in-place']) {
   scratch = mkdtempSync(path.join(tmpdir(), 'shmi-perf-'));
   cpSync(dataDir, scratch, { recursive: true });
   dataDir = scratch;
+  const dir = scratch;
+  for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => {
+    rmSync(dir, { recursive: true, force: true });
+    process.exit(130);
+  });
 }
 const driver = openDriver(dataDir);
 const api = apiClient(driver);
@@ -43,6 +50,16 @@ const dbName = o.db ?? companies.map((c) => c.name).sort().pop();
 if (!dbName) throw new Error('No company.');
 await api.must('POST', '/login', { companyDb: dbName, userId: 1, password: 'secret1' });
 const db = await driver.company(dbName);
+if (o['reset-stats']) {
+  // A database that was never analyzed (as PGlite left it before the server ran ANALYZE): for before/after runs.
+  await exec(db, sql`DELETE FROM pg_statistic WHERE starelid IN (SELECT oid FROM pg_class WHERE relnamespace = 'public'::regnamespace)`);
+  await exec(db, sql`UPDATE pg_class SET reltuples = -1, relpages = 0, relallvisible = 0 WHERE relnamespace = 'public'::regnamespace`);
+  console.log('Planner statistics removed.');
+}
+if ('maintain' in driver) {
+  // Up-to-date planner statistics first, as the server analyzes a company when it opens it.
+  await (driver as { maintain: (n: string) => Promise<number> }).maintain(dbName);
+}
 
 const one = async <T>(q: ReturnType<typeof sql>) => (await queryRows<T>(db, q))[0]!;
 const counts = await one<Record<string, number>>(sql`SELECT (SELECT count(*)::int FROM accountings) AS entries, (SELECT count(*)::int FROM accounting_details) AS legs,
@@ -154,6 +171,7 @@ const cases: Case[] = [
   { name: 'general ledger, all levels', group: 'report', run: get('/reports/general-ledger?from=2026-01-01&to=2026-09-30&level=5') },
   { name: 'partner debts by partner', group: 'report', run: get('/reports/partner-debts?to=2026-09-30&level=partner') },
   { name: 'partner debts by document', group: 'report', run: get('/reports/partner-debts?to=2026-09-30&level=document') },
+  { name: 'partner debts by entry (with allocations)', group: 'report', run: get('/reports/partner-debts?to=2026-09-30&level=accounting') },
   { name: 'overdue documents', group: 'report', run: get('/reports/overdues?to=2026-09-30') },
   { name: 'partner movement 411', group: 'report', run: get(`/reports/partner-movement?from=2026-01-01&to=2026-09-30&account=411&companyId=${bigClient.id}`) },
   { name: 'received/issued documents', group: 'report', run: get('/reports/received-issued?from=2026-01-01&to=2026-09-30') },
@@ -206,12 +224,27 @@ const results: { name: string; group: Group; p50: number; max: number; status: n
 for (const c of cases) {
   if (only && !only.test(c.name)) continue;
   if (skip && skip.test(c.name)) continue;
+  if (o.verbose) process.stderr.write(`[perf] ${c.name}\n`);
   const times: number[] = [];
   let last: Awaited<ReturnType<Case['run']>> = { status: 0 };
-  for (let i = 0; i < RUNS; i++) {
+  let timedOut = false;
+  for (let i = 0; i < RUNS && !timedOut; i++) {
     const t = performance.now();
-    last = await c.run();
+    if (CASE_TIMEOUT) {
+      let timer: NodeJS.Timeout | undefined;
+      const r = await Promise.race([c.run(), new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), CASE_TIMEOUT); })]);
+      clearTimeout(timer);
+      if (r) last = r;
+      else timedOut = true;
+    } else last = await c.run();
     times.push(performance.now() - t);
+  }
+  if (timedOut) {
+    console.log(`${c.group.padEnd(11)} ${c.name.padEnd(46)} over ${fmtMs(CASE_TIMEOUT)}: TIMEOUT, stopping (rerun with --skip)`);
+    results.push({ name: c.name, group: c.group, p50: CASE_TIMEOUT, max: CASE_TIMEOUT, status: 0, ok: false });
+    if (o.json) writeFileSync(o.json, JSON.stringify({ counts, runs: RUNS, results, timedOut: c.name }, null, 2));
+    if (scratch) rmSync(scratch, { recursive: true, force: true });
+    process.exit(2);
   }
   const p50 = pct(times, 0.5), max = Math.max(...times);
   const ok = last.status >= 200 && last.status < 300;

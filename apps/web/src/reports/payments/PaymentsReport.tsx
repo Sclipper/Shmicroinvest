@@ -4,6 +4,7 @@ import { Field, Select, TextInput } from '../../components/ui.tsx';
 import { bgDate } from '../../format.ts';
 import { AccountNumberPicker, Amt, PeriodFields, ReportFrame, amt, periodText, useReport, useYearPeriod, type Cell, useReportFilters } from '../common.tsx';
 import { DocumentTypeSelect, usePartnerAccountFilter } from './shared.tsx';
+import { VirtualRows } from '../../components/VirtualRows.tsx';
 
 interface Row {
   id: number; accountNumber: string; partnerName: string; partnerBulstat: string;
@@ -97,7 +98,9 @@ export function PaymentsReport() {
             </tr>
           </thead>
           <tbody>
-            {d.map((r) => (
+            <VirtualRows count={d.length} colSpan={16} row={(i) => {
+              const r = d[i]!;
+              return (
               <tr key={r.id}>
                 <td className="nowrap">{r.refAccountingNumber}</td>
                 <td>{r.refAccountingDocumentType}</td>
@@ -116,7 +119,8 @@ export function PaymentsReport() {
                 <td className="max-w-[8rem] truncate">{r.paymentAccountingReference}</td>
                 <td className="max-w-[10rem] truncate" title={r.paymentAccountingTerm}>{r.paymentAccountingTerm}</td>
               </tr>
-            ))}
+              );
+            }} />
           </tbody>
         </table>
       )}

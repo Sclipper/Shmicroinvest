@@ -8,6 +8,7 @@ import { bgDate, money, monthLabel } from '../../format.ts';
 import { Amt, PeriodFields, ReportFrame, amt, periodText, useReport, type Cell } from '../../reports/common.tsx';
 import { useSession } from '../../session.tsx';
 import { DECLARATION_SECTIONS, PURCHASE_COLUMNS, SALE_COLUMNS, downloadUrl, prevMonth, type DiaryRow, type VatReportResult } from './common.tsx';
+import { VirtualRows } from '../../components/VirtualRows.tsx';
 
 /**
  * "ДДС дневници, декларация и VIES" (Alt+D, UI_Reporting_VATDiary; spec 05 7.1-7.5,
@@ -213,7 +214,9 @@ function Diary({ rows, totals, columns, extended }: { rows: DiaryRow[]; totals: 
         </tr>
       </thead>
       <tbody>
-        {rows.map((r, i) => (
+        <VirtualRows count={rows.length} colSpan={9 + columns.length + (extended ? 3 : 0)} row={(i) => {
+          const r = rows[i]!;
+          return (
           <tr key={`${r.accountingId}-${i}`}>
             {extended && <td className="nowrap">{r.accountingNumber}</td>}
             <td className="num">{i + 1}</td>
@@ -235,7 +238,8 @@ function Diary({ rows, totals, columns, extended }: { rows: DiaryRow[]; totals: 
               </>
             )}
           </tr>
-        ))}
+          );
+        }} />
       </tbody>
       <tfoot>
         <tr>

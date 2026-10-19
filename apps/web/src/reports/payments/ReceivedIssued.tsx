@@ -5,6 +5,7 @@ import { bgDate, monthLabel } from '../../format.ts';
 import { useLookups } from '../../session.tsx';
 import { Amt, PeriodFields, ReportFrame, amt, periodText, sum, useReport, useYearPeriod, type Cell, useReportFilters } from '../common.tsx';
 import { DocumentTypeSelect } from './shared.tsx';
+import { VirtualRows } from '../../components/VirtualRows.tsx';
 
 interface Row {
   accountingId: number; accountingNumber: string; accountingDate: string; debitNumber: string; creditNumber: string;
@@ -81,7 +82,9 @@ export function ReceivedIssued() {
             </tr>
           </thead>
           <tbody>
-            {d.map((r) => (
+            <VirtualRows count={d.length} colSpan={headers.length} row={(i) => {
+              const r = d[i]!;
+              return (
               <tr key={r.accountingId}>
                 <td className="nowrap">{bgDate(r.docDate)}</td>
                 <td>{r.docType}</td>
@@ -97,7 +100,8 @@ export function ReceivedIssued() {
                 <td className="max-w-[10rem] truncate">{r.reference}</td>
                 <td className="max-w-[10rem] truncate">{r.optionalReference}</td>
               </tr>
-            ))}
+              );
+            }} />
           </tbody>
           <tfoot>
             <tr>

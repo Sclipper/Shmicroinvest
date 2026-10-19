@@ -5,6 +5,7 @@ import { bgDate, money } from '../../format.ts';
 import { Checkbox, Field, Select, TextInput } from '../../components/ui.tsx';
 import { useLookups, useSession } from '../../session.tsx';
 import { AccountNumberPicker, Amt, PeriodFields, ReportFrame, amt, periodText, sum, useReport, useYearPeriod, type Cell } from '../../reports/common.tsx';
+import { VirtualRows } from '../../components/VirtualRows.tsx';
 
 /* ------------------------------------------------------------------ */
 /* Shared filters (spec 05 7.9 "Layout to rebuild")                    */
@@ -150,7 +151,9 @@ function DeliverySale({ isPurchase }: { isPurchase: boolean }) {
             <tr>{head.map((h) => <th key={h} className={['Количество', 'Цена', 'Стойност'].includes(h) ? 'text-right' : undefined}>{h}</th>)}</tr>
           </thead>
           <tbody>
-            {d.map((r, i) => (
+            <VirtualRows count={d.length} colSpan={head.length} row={(i) => {
+              const r = d[i]!;
+              return (
               <tr key={i}>
                 <td>{r.accounting_number}</td>
                 <td className="nowrap">{bgDate(r.accounting_date)}</td>
@@ -167,7 +170,8 @@ function DeliverySale({ isPurchase }: { isPurchase: boolean }) {
                 <td>{r.document_number}</td>
                 <td className="nowrap">{bgDate(r.document_date)}</td>
               </tr>
-            ))}
+              );
+            }} />
           </tbody>
           <tfoot>
             <tr>
@@ -230,7 +234,9 @@ export function GoodsMovementReport() {
             <tr>{head.map((h) => <th key={h} className={['Ед. цена', 'Количество', 'Сума'].includes(h) ? 'text-right' : undefined}>{h}</th>)}</tr>
           </thead>
           <tbody>
-            {d.map((r, i) => (
+            <VirtualRows count={d.length} colSpan={head.length} row={(i) => {
+              const r = d[i]!;
+              return (
               <tr key={i}>
                 <td>{r.product_name}</td>
                 <td>{r.product_code}</td>
@@ -246,7 +252,8 @@ export function GoodsMovementReport() {
                 <td>{r.company_name}</td>
                 <td className="max-w-64 truncate">{r.term}</td>
               </tr>
-            ))}
+              );
+            }} />
           </tbody>
         </table>
       )}
@@ -294,7 +301,9 @@ export function AveragePriceReport() {
             <tr>{head.map((h, i) => <th key={h} className={i >= textCols ? 'text-right' : undefined}>{h}</th>)}</tr>
           </thead>
           <tbody>
-            {d.map((r) => (
+            <VirtualRows count={d.length} colSpan={head.length} row={(i) => {
+              const r = d[i]!;
+              return (
               <tr key={`${r.accountId}:${r.productName}`}>
                 <td className="nowrap">{r.accountNumber}</td>
                 {a.english && <td>{r.englishDescription}</td>}
@@ -311,7 +320,8 @@ export function AveragePriceReport() {
                 <td className="num">{qty(r.materialFinalBalance)}</td>
                 <Amt v={r.finalBalance} />
               </tr>
-            ))}
+              );
+            }} />
           </tbody>
           <tfoot>
             <tr>
@@ -366,7 +376,9 @@ export function WriteOutReport() {
             <tr>{head.map((h, i) => <th key={h} className={i >= textCols ? 'text-right' : undefined}>{h}</th>)}</tr>
           </thead>
           <tbody>
-            {d.map((r, i) => (
+            <VirtualRows count={d.length} colSpan={head.length} row={(i) => {
+              const r = d[i]!;
+              return (
               <tr key={i}>
                 <td className="nowrap">{r.accountNumber}</td>
                 {a.english && <td>{r.englishDescription}</td>}
@@ -381,7 +393,8 @@ export function WriteOutReport() {
                 <td className="num">{qty(r.chargedQtty)}</td>
                 <Amt v={r.writeOff} />
               </tr>
-            ))}
+              );
+            }} />
           </tbody>
           <tfoot>
             <tr>
@@ -489,7 +502,9 @@ export function InventoryListReport() {
               <tr>{head.map((h, i) => <th key={h} className={i >= 4 && i <= 6 ? 'text-right' : undefined}>{h}</th>)}</tr>
             </thead>
             <tbody>
-              {d.map((r) => (
+              <VirtualRows count={d.length} colSpan={head.length} row={(i) => {
+                const r = d[i]!;
+                return (
                 <tr key={`${r.accountId}:${r.no}`}>
                   <td className="num">{r.no}</td>
                   <td className="nowrap">{r.accountNumber}</td>
@@ -503,7 +518,8 @@ export function InventoryListReport() {
                   <td className="w-20" />
                   <td className="w-40" />
                 </tr>
-              ))}
+                );
+              }} />
             </tbody>
             <tfoot>
               <tr>

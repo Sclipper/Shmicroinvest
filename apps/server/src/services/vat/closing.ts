@@ -2,7 +2,7 @@ import { dec, DOCUMENT_TYPE, fmtMessage, hasCritical, isMonthLocked, TRANSACTION
 import type { DbOrTx } from '../../db/provider.ts';
 import type { ActiveYear } from '../../context.ts';
 import { ApiError } from '../../lib/errors.ts';
-import { accountBalances } from '../reports.ts';
+import { accountBalancesMany } from '../reports.ts';
 import { saveEntry } from '../journal.ts';
 import { vatAccountsForYear, type VatAccountRef } from './load.ts';
 
@@ -39,11 +39,12 @@ export async function calculateVatClosing(db: DbOrTx, year: ActiveYear, o: Closi
     return { purchases: '0.00', sales: '0.00', refund: '0.00', rows: [], messages: [{ key: 'strVATAccountMissing', text, severity: 'critical' } as ValidationMessage], balances: [], accounts: {} };
   }
   const period = { startDate: o.from, endDate: o.to, byExportMonth: o.byExportMonth };
+  const many = await accountBalancesMany(db, [a.purchases!.number, a.sales!.number, a.refund!.number, a.payable!.number], period);
   const bal = {
-    purchases: await accountBalances(db, a.purchases!.number, period),
-    sales: await accountBalances(db, a.sales!.number, period),
-    refund: await accountBalances(db, a.refund!.number, period),
-    payable: await accountBalances(db, a.payable!.number, period),
+    purchases: many.get(a.purchases!.number)!,
+    sales: many.get(a.sales!.number)!,
+    refund: many.get(a.refund!.number)!,
+    payable: many.get(a.payable!.number)!,
   };
   const P = dec(bal.purchases.debitTurnover).minus(bal.purchases.creditTurnover);
   const S = dec(bal.sales.creditTurnover).minus(bal.sales.debitTurnover);

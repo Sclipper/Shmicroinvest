@@ -4,6 +4,7 @@ import { Field, Select } from '../../components/ui.tsx';
 import { bgDate } from '../../format.ts';
 import { AccountNumberPicker, Amt, PeriodFields, ReportFrame, amt, periodText, useReport, useYearPeriod, type Cell, useReportFilters } from '../common.tsx';
 import { ColumnFilter, ReportTypeSelect, usePartnerAccountFilter } from './shared.tsx';
+import { VirtualRows } from '../../components/VirtualRows.tsx';
 
 interface Row {
   accountingId: number; accountingNumbers: string; accountingDate: string; documentDate: string; documentType: string; documentNumber: string;
@@ -104,7 +105,9 @@ export function PartnerMovement() {
           </thead>
           <tbody>
             {balanceLine('Начално салдо', d.opening)}
-            {d.rows.map((r, i) => (
+            <VirtualRows count={d.rows.length} colSpan={10} row={(i) => {
+              const r = d.rows[i]!;
+              return (
               <tr key={i}>
                 <td className="nowrap">{bgDate(r.documentDate)}</td>
                 <td>{r.documentType}</td>
@@ -119,7 +122,8 @@ export function PartnerMovement() {
                 <td className="nowrap">{bgDate(r.accountingDate)}</td>
                 <td className="max-w-[10rem] truncate" title={r.accountingNumbers}>{r.accountingNumbers}</td>
               </tr>
-            ))}
+              );
+            }} />
             {balanceLine('Оборот', d.turnover)}
             {balanceLine('Крайно салдо', d.closing)}
           </tbody>

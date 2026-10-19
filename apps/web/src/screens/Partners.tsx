@@ -4,7 +4,8 @@ import { Plus, Printer, Save, Search, Trash2, UserPlus } from 'lucide-react';
 import { isCompanyCategory, isValidIban } from '@shmi/core';
 import { api, qs } from '../api.ts';
 import { useDialogs } from '../components/dialogs.tsx';
-import { AccountPicker } from '../components/pickers.tsx';
+import { AccountPicker, useDebounced } from '../components/pickers.tsx';
+import { VirtualRows } from '../components/VirtualRows.tsx';
 import { Button, Checkbox, CommandBar, Empty, Field, Select, Spinner, TextInput, cx } from '../components/ui.tsx';
 import { useAccounts, useCan, useInvalidate, useLookups } from '../session.tsx';
 import { useWorkspace } from '../shell/workspace.tsx';
@@ -20,6 +21,9 @@ interface Partner {
 const empty = (): Partner => ({ name: '', contactName: '', bulstat: '', vatNumber: '', isVat: false, priority: false, groupId: 1, dueDays: 0, email: '', isNotUsing: false, nameInOtherLanguage: '', code: '', accountIds: [], addresses: [], bankAccounts: [] });
 
 type TabId = 'main' | 'other' | 'addresses' | 'banks' | 'accounts';
+
+/** Upper bound of the partner list request (the API's default page is 500). */
+const LIST_LIMIT = 100_000;
 
 /** Партньори (Ctrl+P): list + edit pane (spec 03a 2). */
 export function Partners() {
@@ -37,11 +41,14 @@ export function Partners() {
   const editable = can('UI_Edit_Companies');
   const [groupId, setGroupId] = useState(1);
   const [accountFilter, setAccountFilter] = useState<number | null>(null);
+  const search = useDebounced(q.trim());
+  // The whole list (the API defaults to 500 rows); the table is windowed.
   const list = useQuery({
-    queryKey: ['partners', 'list', q, showUnused, groupId, accountFilter],
-    queryFn: () => api.get<PartnerRow[]>(`/partners${qs({ q, all: showUnused, groupId: groupId === 1 ? undefined : groupId, accountId: accountFilter })}`),
+    queryKey: ['partners', 'list', search, showUnused, groupId, accountFilter],
+    queryFn: () => api.get<PartnerRow[]>(`/partners${qs({ q: search, all: showUnused, groupId: groupId === 1 ? undefined : groupId, accountId: accountFilter, limit: LIST_LIMIT })}`),
     placeholderData: keepPreviousData,
   });
+  const rows = list.data ?? [];
   const detail = useQuery({ queryKey: ['partners', 'one', selId], queryFn: () => api.get<Record<string, unknown>>(`/partners/${selId}`), enabled: !!selId });
 
   useEffect(() => {
@@ -135,6 +142,7 @@ export function Partners() {
         <TextInput className="ml-3 w-72" placeholder="Търсене по име, ЕИК, ДДС номер, код" value={q} onChange={(e) => setQ(e.target.value)} />
         <AccountPicker className="w-56" value={accountFilter} leafOnly={false} filter={(a) => isCompanyCategory(a.categoryId)} onChange={(a) => setAccountFilter(a?.id ?? null)} />
         <Checkbox label="Показване и на неизползваните" checked={showUnused} onChange={setShowUnused} />
+        {list.data && <span className="text-[12px] text-slate-500" data-testid="partners-count">{rows.length >= LIST_LIMIT ? `първите ${LIST_LIMIT} партньора` : `${rows.length} партньора`}</span>}
         {/* The list's print: Справка партньори for the selected group and account (05 7.7). */}
         <Button
           className="ml-auto"
@@ -165,7 +173,9 @@ export function Partners() {
                 </tr>
               </thead>
               <tbody>
-                {list.data.map((p) => (
+                <VirtualRows count={rows.length} colSpan={6} row={(i) => {
+                  const p = rows[i]!;
+                  return (
                   <tr key={p.id} aria-selected={p.id === selId} onClick={() => setSelId(p.id)} className={cx('cursor-default', p.isNotUsing && 'text-slate-400')}>
                     <td className={cx(p.priority === 1 && 'font-semibold')}>{p.name}</td>
                     <td>{p.bulstat}</td>
@@ -174,7 +184,8 @@ export function Partners() {
                     <td className="max-w-64 truncate">{p.address}</td>
                     <td>{p.contactName}</td>
                   </tr>
-                ))}
+                  );
+                }} />
               </tbody>
             </table>
           )}

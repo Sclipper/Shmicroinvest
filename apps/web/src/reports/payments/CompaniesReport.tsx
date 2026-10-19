@@ -6,6 +6,7 @@ import { useLookups, useSession } from '../../session.tsx';
 import type { ScreenProps } from '../../shell/workspace.tsx';
 import { AccountNumberPicker, ReportFrame, rowsToSheet, useReport, useReportFilters, type Cell } from '../common.tsx';
 import { ColumnFilter, usePartnerAccountFilter } from './shared.tsx';
+import { VirtualRows } from '../../components/VirtualRows.tsx';
 
 interface Row {
   companyId: number;
@@ -100,7 +101,9 @@ export function CompaniesReport({ tab }: ScreenProps) {
             </tr>
           </thead>
           <tbody>
-            {d.map((r) => (
+            <VirtualRows count={d.length} colSpan={HEAD.length} row={(i) => {
+              const r = d[i]!;
+              return (
               <tr key={r.companyId}>
                 <td className="max-w-[18rem] truncate font-medium" title={r.companyName}>{r.companyName}</td>
                 <td className="nowrap">{r.bulstat}</td>
@@ -116,7 +119,8 @@ export function CompaniesReport({ tab }: ScreenProps) {
                 <td className="max-w-[10rem] truncate" title={r.accountNumbers}>{r.accountNumbers}</td>
                 <td className="nowrap">{bgDate(r.lastModifiedDate)}</td>
               </tr>
-            ))}
+              );
+            }} />
           </tbody>
         </table>
       )}

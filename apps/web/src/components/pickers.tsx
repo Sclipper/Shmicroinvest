@@ -21,10 +21,14 @@ interface ComboProps<T> {
   invalid?: boolean;
   listWidth?: number;
   ariaLabel?: string;
+  /** Line under the list, e.g. that the server returned only the first page of matches. */
+  footer?: React.ReactNode;
+  /** The items are being fetched for the typed text. */
+  loading?: boolean;
 }
 
 /** Type-ahead combo with F4 / Alt+Down to open the list (Delta pickers are F4). */
-export function Combo<T>({ value, items, display, render, filter, isSelectable = () => true, onChange, onQuery, placeholder, className, disabled, autoFocus, invalid, listWidth, ariaLabel }: ComboProps<T>) {
+export function Combo<T>({ value, items, display, render, filter, isSelectable = () => true, onChange, onQuery, placeholder, className, disabled, autoFocus, invalid, listWidth, ariaLabel, footer, loading }: ComboProps<T>) {
   const [text, setText] = useState(value ? display(value) : '');
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(0);
@@ -107,7 +111,7 @@ export function Combo<T>({ value, items, display, render, filter, isSelectable =
       />
       {open && (
         <div ref={listRef} style={{ width: listWidth }} className="absolute top-full left-0 z-50 mt-0.5 max-h-72 min-w-full overflow-auto border border-slate-300 bg-white shadow-lg">
-          {matches.length === 0 && <div className="px-2 py-1.5 text-slate-500">Няма съвпадения</div>}
+          {matches.length === 0 && <div className="px-2 py-1.5 text-slate-500">{loading ? 'Търсене…' : 'Няма съвпадения'}</div>}
           {matches.map((m, i) => (
             <div
               key={i}
@@ -122,6 +126,7 @@ export function Combo<T>({ value, items, display, render, filter, isSelectable =
               {render(m)}
             </div>
           ))}
+          {footer && matches.length > 0 && <div className="border-t border-slate-200 bg-slate-50 px-2 py-1 text-[11px] whitespace-nowrap text-slate-500">{footer}</div>}
         </div>
       )}
     </div>
@@ -163,15 +168,35 @@ export function AccountPicker({ value, onChange, leafOnly = true, autoFocus, inv
   );
 }
 
-/** Partner picker (search by name, EIK, VAT number). Optional accountId narrows to partners linked to that account. */
+/** `value` once it has not changed for `ms` (search fields: one request per pause, not per keystroke). */
+export function useDebounced<T>(value: T, ms = 250): T {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}
+
+/** Matches the partner picker lists; the server searches all partners, typing narrows the list. */
+const PARTNER_PICKER_LIMIT = 100;
+const NO_PARTNERS: PartnerRow[] = [];
+
+/** Partner picker (search by name, EIK, VAT number, code on the server, over all partners). */
 export function PartnerPicker({ value, valueName, onChange, autoFocus, invalid, className }: { value: number | null; valueName?: string | null; onChange: (p: PartnerRow | null) => void; autoFocus?: boolean; invalid?: boolean; className?: string }) {
-  const [q, setQ] = useState('');
-  const { data = [] } = useQuery({ queryKey: ['partners', 'picker', q], queryFn: () => api.get<PartnerRow[]>(`/partners${qs({ q, limit: 100 })}`), staleTime: 30_000 });
-  const selected = useMemo<PartnerRow | null>(() => data.find((p) => p.id === value) ?? (value ? ({ id: value, name: valueName ?? `#${value}` } as PartnerRow) : null), [data, value, valueName]);
+  const [typed, setQ] = useState('');
+  const q = useDebounced(typed.trim());
+  const list = useQuery({ queryKey: ['partners', 'picker', q], queryFn: () => api.get<PartnerRow[]>(`/partners${qs({ q, limit: PARTNER_PICKER_LIMIT + 1 })}`), staleTime: 30_000 });
+  // While the typed text waits for its search, the previous result is not offered (Enter must not pick from it).
+  const pending = q !== typed.trim() || list.isPending;
+  const data = pending ? NO_PARTNERS : (list.data ?? NO_PARTNERS);
+  const more = data.length > PARTNER_PICKER_LIMIT;
+  const items = useMemo(() => (more ? data.slice(0, PARTNER_PICKER_LIMIT) : data), [data, more]);
+  const selected = useMemo<PartnerRow | null>(() => list.data?.find((p) => p.id === value) ?? (value ? ({ id: value, name: valueName ?? `#${value}` } as PartnerRow) : null), [list.data, value, valueName]);
   return (
     <Combo
       value={selected}
-      items={data}
+      items={items}
       display={(p) => p.name}
       filter={() => true}
       onChange={onChange}
@@ -181,6 +206,8 @@ export function PartnerPicker({ value, valueName, onChange, autoFocus, invalid, 
       className={className}
       listWidth={420}
       placeholder="Партньор (F4)"
+      loading={pending}
+      footer={more ? `Показани са първите ${PARTNER_PICKER_LIMIT} — въведете част от името, ЕИК или ДДС номера` : undefined}
       render={(p) => (
         <span>
           {p.name} {p.bulstat && <span className="text-[11px] opacity-70">ЕИК {p.bulstat}</span>}

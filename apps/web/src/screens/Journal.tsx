@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Copy, FileDown, FilePlus2, FileText, Paperclip, Pencil, Printer, RefreshCw, SplitSquareHorizontal, Trash2, Undo2 } from 'lucide-react';
 import { ENTRY_FOLLOW_UP_MESSAGES as FM, formatMessage, JOURNAL_EXTRA_MESSAGES as XM } from '@shmi/core';
@@ -14,6 +14,7 @@ import { printEntryCards, type EntryCard } from './entry/print.ts';
 import { exportProtocol, printProtocol, type PrintData } from './vat/ProtocolDialog.tsx';
 import { confirmVoid } from './entry/saveFlow.ts';
 import { useShortcuts } from './entry/shortcuts.ts';
+import { sum } from '../reports/common.tsx';
 import { EntryFilterForm, emptyFilter, filterParams, type EntryFilterValues } from './journal/EntryFilter.tsx';
 
 interface Row {
@@ -49,7 +50,18 @@ export function Journal({ initial = false }: { initial?: boolean; tab?: unknown 
   const showAttachments = s.settings.IsAllowAccountingAttachments === 'True' && s.settings.IsShowAccountingAttachmentsInList === 'True';
 
   const edit = (id: number) => ws.open('entry', { key: `entry:${id}`, title: `Контиране ${rows.find((r) => r.id === id)?.number ?? ''}`.trim(), params: { id } });
-  const total = rows.reduce((a, r) => a + Number(r.amount ?? 0), 0);
+  const total = sum(rows, (r) => r.amount);
+  const pages = q.data ? Math.max(1, Math.ceil(q.data.total / PAGE)) : 1;
+  const listRef = useRef<HTMLDivElement>(null);
+  /** Another page: the selection was of the rows of this one. */
+  const goto = (p: number) => {
+    setPage(p);
+    setSel([]);
+  };
+  // Another page starts at its top row.
+  useEffect(() => {
+    listRef.current?.scrollTo({ top: 0 });
+  }, [page, applied]);
   const toggle = (id: number, multi: boolean) => setSel((cur) => (multi ? (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]) : [id]));
 
   const voidSelected = async () => {
@@ -188,7 +200,7 @@ export function Journal({ initial = false }: { initial?: boolean; tab?: unknown 
           setApplied(f);
         }}
       />
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div ref={listRef} className="min-h-0 flex-1 overflow-auto">
         {listError ? (
           <Empty>{listError.message}</Empty>
         ) : q.isLoading ? (
@@ -252,15 +264,37 @@ export function Journal({ initial = false }: { initial?: boolean; tab?: unknown 
         )}
       </div>
       {q.data && q.data.total > PAGE && (
-        <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-3 py-1">
-          <Button disabled={page === 0} onClick={() => setPage(page - 1)}>
+        <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-3 py-1" data-testid="journal-pager">
+          {q.isFetching && <Spinner className="size-3.5" />}
+          <span className="text-[12px] text-slate-500">
+            {page * PAGE + 1}–{Math.min((page + 1) * PAGE, q.data.total)} от {q.data.total}
+          </span>
+          <Button disabled={page === 0} onClick={() => goto(0)} title="Първа страница" aria-label="Първа страница">
+            «
+          </Button>
+          <Button disabled={page === 0} onClick={() => goto(page - 1)}>
             ‹ Предишна
           </Button>
-          <span>
-            {page + 1} / {Math.ceil(q.data.total / PAGE)}
+          <span className="flex items-center gap-1">
+            <input
+              key={page}
+              className="field-input num w-14"
+              aria-label="Страница"
+              defaultValue={page + 1}
+              inputMode="numeric"
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return;
+                const n = Number(e.currentTarget.value);
+                if (Number.isInteger(n)) goto(Math.min(pages, Math.max(1, n)) - 1);
+              }}
+            />
+            / {pages}
           </span>
-          <Button disabled={(page + 1) * PAGE >= q.data.total} onClick={() => setPage(page + 1)}>
+          <Button disabled={page + 1 >= pages} onClick={() => goto(page + 1)}>
             Следваща ›
+          </Button>
+          <Button disabled={page + 1 >= pages} onClick={() => goto(pages - 1)} title="Последна страница" aria-label="Последна страница">
+            »
           </Button>
         </div>
       )}

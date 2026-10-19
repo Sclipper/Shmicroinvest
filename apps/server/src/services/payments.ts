@@ -9,7 +9,7 @@ import type { ActiveYear } from '../context.ts';
 import { ApiError, notFound } from '../lib/errors.ts';
 import { postSystemEntry } from './autoEntries.ts';
 import { baseCurrencyId, type SaveContext } from './journal.ts';
-import { insertPaymentLinks, openItems, sideOfCategory, type OpenItem, type PartnerSide } from './openItems.ts';
+import { insertPaymentLinks, openItemPartnerTotals, openItems, sideOfCategory, type OpenItem, type PartnerSide } from './openItems.ts';
 import { getBoolConfig, getConfig, setConfig } from './config.ts';
 import { logActivity } from './audit.ts';
 
@@ -50,6 +50,8 @@ export async function assertEntriesEditable(db: DbOrTx, accountingIds: number[])
   }
 }
 
+const bgText = new Intl.Collator('bg').compare;
+
 const yearWindow = (year: ActiveYear) => ({ startDate: `${year.year}-01-01`, endDate: `${year.year}-12-31`, financialYearId: year.id, isEuro: year.year >= 2026 });
 
 export const docLabel = (i: OpenItem) => [i.documentTypeShortName, i.documentNumber].filter(Boolean).join(' ') || (i.isInitialBalance ? 'Начално салдо' : `Контиране ${i.accountingNumber}`);
@@ -73,22 +75,12 @@ export interface PartnerBalance {
 /** Left pane of F3: partners with open items, by tab Фирми / Доставчици / Клиенти. */
 export async function partnersWithBalances(db: DbOrTx, year: ActiveYear, o: { tab?: PartnerTab; accountNumber?: string; inCurrency?: boolean; q?: string }) {
   const base = await baseCurrencyId(db, year.year);
-  const items = await openItems(db, { ...yearWindow(year), accountNumber: o.accountNumber || undefined, companyName: o.q || undefined });
-  const map = new Map<number, PartnerBalance & { b: Dec; c: Dec }>();
-  for (const i of items) {
-    if (o.tab === 'suppliers' && i.side !== 'supplier') continue;
-    if (o.tab === 'clients' && i.side !== 'client') continue;
-    if (o.inCurrency && i.currencyId === base) continue;
-    const cur = map.get(i.companyId) ?? { companyId: i.companyId, companyName: i.companyName, companyBulstat: i.companyBulstat, balance: '', currencyBalance: '', liabilities: 0, payments: 0, b: ZERO, c: ZERO };
-    cur.b = cur.b.plus(dec(i.open));
-    cur.c = cur.c.plus(dec(i.openCurrency));
-    if (i.kind === 'liability') cur.liabilities++;
-    if (i.kind === 'payment') cur.payments++;
-    map.set(i.companyId, cur);
-  }
-  return [...map.values()]
-    .map(({ b, c, ...r }) => ({ ...r, balance: b.toFixed(2), currencyBalance: c.toFixed(2) }))
-    .sort((a, b) => a.companyName.localeCompare(b.companyName, 'bg'));
+  const rows = await openItemPartnerTotals(db, {
+    ...yearWindow(year), accountNumber: o.accountNumber || undefined, companyName: o.q || undefined,
+    side: o.tab === 'suppliers' ? 'supplier' : o.tab === 'clients' ? 'client' : undefined,
+    excludeCurrencyId: o.inCurrency ? base : undefined,
+  });
+  return rows.sort((a, b) => bgText(a.companyName, b.companyName));
 }
 
 export interface LinkRow {

@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  approxMeasure, layoutColumns, needsLandscape, reportAttachmentName, reportCellText, reportDocument, unzipStore, withAttachmentExtension, wrapText,
+  approxMeasure, buildXlsx, layoutColumns, needsLandscape, reportAttachmentName, reportCellText, reportDocument, unzipStore, withAttachmentExtension, wrapText,
   type MeasureText, type XlsxSheet,
 } from '../src/index.ts';
 import { buildReportDocx } from '../src/docx.ts';
@@ -182,5 +182,53 @@ describe('Word export', () => {
     // Widths come from the same column layout as the PDF.
     const { widths } = layoutColumns(doc.sections[0]!, approxMeasure, (16838 - 2 * 567) / 20);
     expect(xml).toContain(`<w:gridCol w:w="${Math.round(widths[0]! * 20)}"/>`);
+  });
+});
+
+describe('export of a large report (20 000 rows)', () => {
+  const N = 20_000;
+  const big: XlsxSheet = {
+    name: 'Хронологичен регистър',
+    rows: [
+      ['Хронологичен регистър на Панели ООД'], ['от 01.01.2026 до 31.12.2026'], [],
+      ['Контиране', 'Дата', 'Дебит', 'Кредит', 'Сума', 'Документ №', 'Партньор', 'Основание'],
+      ...Array.from({ length: N }, (_, i) => [String(100000 + i), '12.03.2026', '411', '702', 1234.56 + i, String(2000000 + i), `Партньор ${i % 2000} ЕООД`, i % 3 ? 'Продажба на стоки по фактура' : '']),
+      ['Общо:', '', '', '', 123456789.12],
+    ],
+    boldRows: [0, 3],
+  };
+  const timed = async <T,>(f: () => T | Promise<T>) => {
+    const t = performance.now();
+    const v = await f();
+    return { v, ms: performance.now() - t };
+  };
+
+  // Generous budgets (a busy machine): the writers are linear, about 0.5 s (Excel) to 3 s (PDF) here; a quadratic step would take minutes.
+  it('Excel, PDF and Word finish within seconds, with every row', async () => {
+    const xlsx = await timed(() => buildXlsx([big]));
+    expect(xlsx.ms).toBeLessThan(10_000);
+    const sheetXml = new TextDecoder().decode(unzipStore(xlsx.v).get('xl/worksheets/sheet1.xml'));
+    expect(sheetXml).toContain(`<row r="${N + 5}">`);
+
+    const doc = await timed(() => reportDocument({ ...meta, title: 'Хронологичен регистър' }, [big]));
+    expect(doc.ms).toBeLessThan(5_000);
+    expect(doc.v.sections[0]!.rows).toHaveLength(N + 1);
+
+    const pdf = await timed(() => buildReportPdf(doc.v, fonts));
+    expect(pdf.ms).toBeLessThan(30_000);
+    expect(pdfPageCount(pdf.v)).toBeGreaterThan(N / 60);
+
+    const docx = await timed(() => buildReportDocx(doc.v));
+    expect(docx.ms).toBeLessThan(20_000);
+    const body = new TextDecoder().decode(unzipStore(docx.v).get('word/document.xml'));
+    expect(body).toContain(`Партньор ${(N - 1) % 2000} ЕООД`);
+  }, 120_000);
+
+  it('the approximate Word measure is the per-character rule (cached by character)', () => {
+    const rule = (t: string) => [...t].reduce((w, ch) => w + (/[ .,:;!|il'1]/.test(ch) ? 0.3 : /[MWШЩЖЮмшщжю@%]/.test(ch) ? 0.85 : /[A-ZА-Я0-9]/.test(ch) ? 0.62 : 0.52), 0);
+    for (const t of ['', 'Оборотна ведомост', 'MW il 1.,', 'ШЩЖЮ мшщжю @%', 'Abc 123 €№', 'emoji 😀 x']) {
+      expect(approxMeasure(t, false)).toBeCloseTo(rule(t), 10);
+      expect(approxMeasure(t, true)).toBeCloseTo(rule(t) * 1.06, 10);
+    }
   });
 });

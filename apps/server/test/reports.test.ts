@@ -189,6 +189,10 @@ describe('chronological register in a mixed 2025/2026 period', () => {
     expect(r.body.map((l: any) => [l.documentNumber, l.debitAccount, l.amount])).toEqual([['BGN-1', '504', '100.00'], ['EUR-1', '503', '100.00']]);
     const filtered = await m.call('GET', '/journal-lines?from=2025-12-01&to=2026-01-31&debit=504');
     expect(filtered.body.map((l: any) => l.documentNumber)).toEqual(['BGN-1']);
+    // The account filters also narrow the legs read (own numbers from 2026, mapped ones before).
+    expect((await m.call('GET', '/journal-lines?from=2025-12-01&to=2026-01-31&debit=503')).body.map((l: any) => l.documentNumber)).toEqual(['EUR-1']);
+    expect((await m.call('GET', '/journal-lines?from=2025-12-01&to=2026-01-31&account=101')).body.map((l: any) => l.documentNumber)).toEqual(['BGN-1', 'EUR-1']);
+    expect((await m.call('GET', '/journal-lines?from=2025-12-01&to=2026-01-31&account=504&credit=101')).body.map((l: any) => l.documentNumber)).toEqual(['BGN-1']);
     // A pure BGN period keeps the BGN accounts and amounts.
     const old = await m.call('GET', '/journal-lines?from=2025-12-01&to=2025-12-31');
     expect(old.body.map((l: any) => [l.debitAccount, l.amount])).toEqual([['503', '195.58']]);

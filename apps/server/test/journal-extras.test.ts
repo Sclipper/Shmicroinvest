@@ -294,6 +294,22 @@ describe('02a 7 list filter', () => {
     expect(await q('term=Филтър')).toEqual([e.id]);
     expect((await call('GET', '/entries?to=2027-01-01')).body.error).toBe('"До дата" е различна от текущата счетоводна година.');
   });
+
+  it('pages of the list follow the order of the whole list; the free text finds the partner name', async () => {
+    const p = await t.partner('Страниран Пример ООД', ['401']);
+    const ids: number[] = [];
+    for (const [i, date] of ['2026-07-03', '2026-07-02', '2026-07-03', '2026-07-04', '2026-07-02'].entries()) {
+      ids.push((await t.post({ date, docNumber: `PG-${i}`, partner: p, dr: [['602', 10 + i]], cr: [['401', 10 + i]] })).id);
+    }
+    const page = async (s: string) => (await call('GET', `/entries?text=${encodeURIComponent('Страниран')}&${s}`)).body as { rows: { id: number; company: string; amount: string }[]; total: number };
+    const all = await page('limit=100');
+    expect(all.total).toBe(5);
+    expect(all.rows.map((r) => r.id).sort()).toEqual([...ids].sort());
+    expect(all.rows.every((r) => r.company === 'Страниран Пример ООД')).toBe(true);
+    const pages = [...(await page('limit=2')).rows, ...(await page('limit=2&offset=2')).rows, ...(await page('limit=2&offset=4')).rows];
+    expect(pages).toEqual(all.rows);
+    expect((await page('limit=2&offset=4')).total).toBe(5);
+  });
 });
 
 describe('02a 8.1 fast entry', () => {

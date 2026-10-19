@@ -1,7 +1,7 @@
 import { and, eq, sql, type SQL } from 'drizzle-orm';
 import { BGN_PER_EUR, COMPANY_CATEGORIES, dec, ZERO, type Dec, EURO_CHANGEOVER_DATE } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
-import { exec } from '../db/provider.ts';
+import { exec, queryRows, queryRowsBulk } from '../db/provider.ts';
 import type { DbOrTx } from '../db/provider.ts';
 
 /**
@@ -182,8 +182,26 @@ export async function trialBalance(db: DbOrTx, o: TrialBalanceOptions) {
   };
 }
 
+export interface AccountBalances {
+  openingDebit: string; openingCredit: string;
+  debitTurnover: string; creditTurnover: string;
+  closingDebit: string; closingCredit: string;
+}
+
 /** Balances (spBalancesReport): opening, turnover and closing of an account and its sub-accounts. */
-export async function accountBalances(db: DbOrTx, accountNumber: string, o: PeriodFilter, withSub = true) {
+export async function accountBalances(db: DbOrTx, accountNumber: string, o: PeriodFilter, withSub = true): Promise<AccountBalances> {
+  return (await accountBalancesMany(db, [accountNumber], o, withSub)).get(accountNumber)!;
+}
+
+/**
+ * accountBalances of several account numbers in one pass over the postings:
+ * the sums per posted account number, then per requested number over the
+ * numbers its rule matches (accountRuleSql), all in SQL (numeric, exact).
+ */
+export async function accountBalancesMany(db: DbOrTx, accountNumbers: string[], o: PeriodFilter, withSub = true): Promise<Map<string, AccountBalances>> {
+  const out = new Map<string, AccountBalances>();
+  const numbers = [...new Set(accountNumbers)];
+  if (!numbers.length) return out;
   const fy = await yearOf(db, o.startDate);
   const dateCol = o.byExportMonth ? sql`a.vies_month` : sql`a.accounting_date`;
   const factor = conversionSql(o.endDate, sql`a.accounting_date`);
@@ -193,22 +211,34 @@ export async function accountBalances(db: DbOrTx, accountNumber: string, o: Peri
   // Initial correspondences count only when specific partners are selected (fnGetBalances).
   const corrFilter = partnerSelected ? sql`` : sql`AND NOT (a.is_initial_balance AND a.is_initial_correspondence)`;
   const yearFilter = fyWindowSql(fy, dateCol, o.startDate);
-  const accFilter = accountRuleSql(sql`ac.number`, accountNumber, withSub);
+  // One number: only its accounts are read. Several: the sums of every posted account, matched to the rules afterwards.
+  const accFilter = numbers.length === 1 ? sql`AND ${accountRuleSql(sql`ac.number`, numbers[0]!, withSub)}` : sql``;
   const res = await exec(db, sql`
-    SELECT
-      coalesce(SUM(CASE WHEN ${opening} THEN d.amount / ${factor} ELSE 0 END), 0) AS od,
-      coalesce(SUM(CASE WHEN ${opening} THEN d.ref_amount / ${factor} ELSE 0 END), 0) AS oc,
-      coalesce(SUM(CASE WHEN NOT ${opening} THEN d.amount / ${factor} ELSE 0 END), 0) AS dt,
-      coalesce(SUM(CASE WHEN NOT ${opening} THEN d.ref_amount / ${factor} ELSE 0 END), 0) AS ct
-    FROM accounting_details d JOIN accountings a ON a.id = d.accounting_id JOIN accounts ac ON ac.id = d.account_id
-    WHERE ${yearFilter} AND ${dateCol} <= ${o.endDate} AND ${accFilter} ${corrFilter} ${companyFilter}`);
-  const r = res.rows[0] as { od: string; oc: string; dt: string; ct: string };
-  const od = dec(r.od), oc = dec(r.oc), dt = dec(r.dt), ct = dec(r.ct);
-  return {
-    openingDebit: netDebit(od, oc).toFixed(2), openingCredit: netDebit(oc, od).toFixed(2),
-    debitTurnover: dt.toFixed(2), creditTurnover: ct.toFixed(2),
-    closingDebit: netDebit(od.plus(dt), oc.plus(ct)).toFixed(2), closingCredit: netDebit(oc.plus(ct), od.plus(dt)).toFixed(2),
-  };
+    WITH sums AS (
+      SELECT d.account_id,
+        SUM(CASE WHEN ${opening} THEN d.amount / ${factor} ELSE 0 END) AS od,
+        SUM(CASE WHEN ${opening} THEN d.ref_amount / ${factor} ELSE 0 END) AS oc,
+        SUM(CASE WHEN NOT ${opening} THEN d.amount / ${factor} ELSE 0 END) AS dt,
+        SUM(CASE WHEN NOT ${opening} THEN d.ref_amount / ${factor} ELSE 0 END) AS ct
+      FROM accounting_details d JOIN accountings a ON a.id = d.accounting_id JOIN accounts ac ON ac.id = d.account_id
+      WHERE ${yearFilter} AND ${dateCol} <= ${o.endDate} ${accFilter} ${corrFilter} ${companyFilter}
+      GROUP BY d.account_id
+    ), wanted(p) AS (VALUES ${sql.join(numbers.map((p) => sql`(${p}::text)`), sql`, `)})
+    SELECT w.p,
+      coalesce(SUM(x.od), 0) AS od, coalesce(SUM(x.oc), 0) AS oc, coalesce(SUM(x.dt), 0) AS dt, coalesce(SUM(x.ct), 0) AS ct
+    FROM wanted w LEFT JOIN (sums x JOIN accounts xa ON xa.id = x.account_id) ON ${withSub
+      ? sql`(w.p = '' OR xa.number = w.p OR (length(w.p) < 3 AND xa.number LIKE w.p || '%') OR (length(w.p) >= 3 AND xa.number LIKE w.p || '/%'))`
+      : sql`(w.p = '' OR xa.number = w.p)`}
+    GROUP BY w.p`);
+  for (const r of res.rows as { p: string; od: string; oc: string; dt: string; ct: string }[]) {
+    const od = dec(r.od), oc = dec(r.oc), dt = dec(r.dt), ct = dec(r.ct);
+    out.set(r.p, {
+      openingDebit: netDebit(od, oc).toFixed(2), openingCredit: netDebit(oc, od).toFixed(2),
+      debitTurnover: dt.toFixed(2), creditTurnover: ct.toFixed(2),
+      closingDebit: netDebit(od.plus(dt), oc.plus(ct)).toFixed(2), closingCredit: netDebit(oc.plus(ct), od.plus(dt)).toFixed(2),
+    });
+  }
+  return out;
 }
 
 export function accountRuleSql(col: SQL, p: string, withSub = true): SQL {
@@ -252,7 +282,9 @@ export async function generalLedger(db: DbOrTx, o: LedgerOptions) {
     groups.set(acc.number, g);
   }
   const out = [];
-  for (const g of [...groups.values()].sort((a, b) => compareAccountNumbers(a.account.number, b.account.number))) {
+  const sorted = [...groups.values()].sort((a, b) => compareAccountNumbers(a.account.number, b.account.number));
+  const balances = o.withBalances ? await accountBalancesMany(db, sorted.map((g) => g.account.number), o) : null;
+  for (const g of sorted) {
     const counters = [...g.counters.values()].sort((a, b) => compareAccountNumbers(a.account.number, b.account.number));
     const totalDebit = counters.reduce((acc, c) => acc.plus(c.dt), ZERO);
     const totalCredit = counters.reduce((acc, c) => acc.plus(c.ct), ZERO);
@@ -263,7 +295,7 @@ export async function generalLedger(db: DbOrTx, o: LedgerOptions) {
       counters: counters.map((c) => ({ number: c.account.number, description: c.account.description, englishDescription: c.account.englishDescription ?? '', debit: c.dt.toFixed(2), credit: c.ct.toFixed(2) })),
       totalDebit: totalDebit.toFixed(2),
       totalCredit: totalCredit.toFixed(2),
-      balances: o.withBalances ? await accountBalances(db, g.account.number, o) : undefined,
+      balances: balances?.get(g.account.number),
     });
   }
   return out;
@@ -317,6 +349,8 @@ const ANY_FILTER: JournalFilterColumn[] = [
   'DocumentDate', 'DocumentNumber', 'CompanyName', 'Term', 'Reference', 'OptionalReference', 'Paragraph',
 ];
 const NUMERIC_FILTER = /Amount|Rate|Quantity|Price/;
+/** Filter columns on the credit leg of the pair (looked up per line). */
+const PAIR_FILTER_COLUMNS = new Set<string>(['VatTerm', 'CreditCurrencyAmount', 'CreditExchangeRate', 'CreditQuantity', 'CreditPrice']);
 
 const SORT_SQL: Record<JournalSortColumn, SQL> = {
   AccountingNumber: sql`x.number`,
@@ -374,9 +408,10 @@ export async function journalLines(db: DbOrTx, o: JournalLineFilter) {
   const factor = conversionSql(o.endDate, sql`a.accounting_date`);
   const remap = (o.mapToReportChart ?? false) && o.endDate >= EURO_CHANGEOVER_DATE;
   // The mapped EUR account of a pre-2026 BGN-chart posting: Accounts.MappedAccountID, else the EUR account with the same number.
+  // (A CASE, so that the lookup runs only for those legs, not as the hash key of every line.)
   const mapped = (alias: string, own: string) => remap
-    ? sql.raw(`a.accounting_date < '${EURO_CHANGEOVER_DATE}' AND NOT ${own}.is_euro AND ${alias}.id = coalesce(${own}.mapped_account_id,
-        (SELECT e.id FROM accounts e WHERE e.is_euro AND e.number = ${own}.number ORDER BY e.id LIMIT 1))`)
+    ? sql.raw(`${alias}.id = CASE WHEN a.accounting_date < '${EURO_CHANGEOVER_DATE}' AND NOT ${own}.is_euro THEN coalesce(${own}.mapped_account_id,
+        (SELECT e.id FROM accounts e WHERE e.is_euro AND e.number = ${own}.number ORDER BY e.id LIMIT 1)) END`)
     : sql`false`;
   const inner: SQL[] = [sql`d.sign = 1`, sql`NOT a.is_initial_balance`, sql`${dateCol} >= ${o.startDate}`, sql`${dateCol} <= ${o.endDate}`];
   if (o.companyIds?.length) inner.push(sql`co.id IN (${idList(o.companyIds)})`);
@@ -390,9 +425,25 @@ export async function journalLines(db: DbOrTx, o: JournalLineFilter) {
   if (o.family === 'quantity') inner.push(sql`(d.quantity IS NOT NULL OR m.quantity IS NOT NULL)`);
 
   const outer: SQL[] = [sql`true`];
-  if (o.debitAccount) outer.push(accountRuleSql(sql`x.debit_account`, o.debitAccount, o.debitWithSub ?? true));
-  if (o.creditAccount) outer.push(accountRuleSql(sql`x.credit_account`, o.creditAccount, o.creditWithSub ?? true));
-  if (o.account) outer.push(sql`(${accountRuleSql(sql`x.debit_account`, o.account, o.accountWithSub ?? true)} OR ${accountRuleSql(sql`x.credit_account`, o.account, o.accountWithSub ?? true)})`);
+  // The account filters compare the shown numbers, which differ from the legs' own only for remapped
+  // pre-2026 postings: without remapping the filters on the legs' own accounts below are the whole rule.
+  if (remap && o.debitAccount) outer.push(accountRuleSql(sql`x.debit_account`, o.debitAccount, o.debitWithSub ?? true));
+  if (remap && o.creditAccount) outer.push(accountRuleSql(sql`x.credit_account`, o.creditAccount, o.creditWithSub ?? true));
+  if (remap && o.account) outer.push(sql`(${accountRuleSql(sql`x.debit_account`, o.account, o.accountWithSub ?? true)} OR ${accountRuleSql(sql`x.credit_account`, o.account, o.accountWithSub ?? true)})`);
+  // The account filters on the legs' own accounts, so that only the account's legs are read and joined
+  // (remapped pre-2026 postings stay unfiltered here). The accounts are resolved first: a list of ids
+  // is estimated well by the planner, a rule on the joined account numbers is not (a misestimate of
+  // a few rows made the lookups of the line nested loops over the whole period).
+  const own = (rule: SQL) => (remap ? sql`(a.accounting_date < ${EURO_CHANGEOVER_DATE} OR ${rule})` : rule);
+  const ruleIds = async (n: string, withSub: boolean) =>
+    (await queryRows<{ id: number }>(db, sql`SELECT id FROM accounts WHERE ${accountRuleSql(sql`number`, n, withSub)} ORDER BY id`)).map((r) => r.id);
+  const inIds = (col: SQL, ids: number[]) => (ids.length ? sql`${col} IN (${idList(ids)})` : sql`false`);
+  if (o.debitAccount) inner.push(own(inIds(sql`d.account_id`, await ruleIds(o.debitAccount, o.debitWithSub ?? true))));
+  if (o.creditAccount) inner.push(own(inIds(sql`d.ref_account_id`, await ruleIds(o.creditAccount, o.creditWithSub ?? true))));
+  if (o.account) {
+    const ids = await ruleIds(o.account, o.accountWithSub ?? true);
+    inner.push(own(sql`(${inIds(sql`d.account_id`, ids)} OR ${inIds(sql`d.ref_account_id`, ids)})`));
+  }
   const excludedDebit = (o.excludedDebitAccounts ?? []).map((v) => v.trim()).filter(Boolean);
   const excludedCredit = (o.excludedCreditAccounts ?? []).map((v) => v.trim()).filter(Boolean);
   if (excludedDebit.length) outer.push(sql`x.debit_account NOT IN (${textList(excludedDebit)})`);
@@ -407,8 +458,22 @@ export async function journalLines(db: DbOrTx, o: JournalLineFilter) {
   const order = o.sortColumn
     ? sql`x.fy_year, ${SORT_SQL[o.sortColumn]}, x.number, x.position, x.detail_id`
     : sql`x.accounting_date, x.number, x.position, x.detail_id`;
-  const res = await exec(db, sql`
-    WITH x AS (
+  // The credit leg of the pair (its currency, quantity and VAT term), looked up per line.
+  const pairLeg = (accountingId: SQL, accountId: SQL, refAccountId: SQL, position: SQL) => sql`
+    LEFT JOIN LATERAL (SELECT mm.vat_term_id, mm.currency_id, mm.currency_amount, mm.exchange_rate, mm.quantity, mm.price FROM accounting_details mm
+      WHERE mm.accounting_id = ${accountingId} AND mm.sign = -1 AND mm.account_id = ${refAccountId} AND mm.ref_account_id = ${accountId}
+      ORDER BY abs(mm.position - ${position} - 1), mm.id LIMIT 1) m ON true`;
+  // The pair's VAT operation: the debit leg's, or the credit leg's when the debit leg has the default term 1.
+  const vatTermJoin = (own: SQL) => sql`LEFT JOIN vat_terms vt ON vt.id = CASE WHEN ${own} = 1 AND m.vat_term_id IS NOT NULL THEN m.vat_term_id ELSE ${own} END`;
+  const pairColumns = sql`m.currency_amount AS credit_currency_amount, m.exchange_rate AS credit_exchange_rate, m.quantity AS credit_quantity, m.price AS credit_price,
+        ccur.iso_code AS credit_currency, vt.id AS vat_term_id, vt.description AS vat_term`;
+  // Without a filter on the credit leg's values the lookup runs only for the lines of the result
+  // (after the filters, the sort and the limit), not for every line of the period.
+  const filterColumns = text ? (o.filterColumn ? [o.filterColumn] : ANY_FILTER) : [];
+  const late = !o.family || o.family === 'standard'
+    ? !o.vatTermId && !filterColumns.some((c) => PAIR_FILTER_COLUMNS.has(c))
+    : false;
+  const base = sql`
       SELECT d.id AS detail_id, a.id AS accounting_id, fy.year AS fy_year, a.number, a.accounting_date, a.vies_month, d.position,
         coalesce(dm.number, da.number) AS debit_account, coalesce(dm.description, da.description) AS debit_description,
         coalesce(dm.english_description, da.english_description) AS debit_english,
@@ -416,24 +481,22 @@ export async function journalLines(db: DbOrTx, o: JournalLineFilter) {
         coalesce(cm.english_description, ca.english_description) AS credit_english,
         d.amount / ${factor} AS amount,
         d.currency_amount AS debit_currency_amount, d.exchange_rate AS debit_exchange_rate, d.quantity AS debit_quantity, d.price AS debit_price,
-        m.currency_amount AS credit_currency_amount, m.exchange_rate AS credit_exchange_rate, m.quantity AS credit_quantity, m.price AS credit_price,
-        dcur.iso_code AS debit_currency, ccur.iso_code AS credit_currency,
+        ${late ? sql`d.account_id AS leg_account_id, d.ref_account_id AS leg_ref_account_id, d.vat_term_id AS leg_vat_term_id` : pairColumns},
+        dcur.iso_code AS debit_currency,
         co.name AS company_name, coalesce(nullif(co.vat_number, ''), co.bulstat) AS company_vat,
         dt.short_name AS document_type, doc.date AS document_date, doc.number AS document_number,
         t.description AS term, r.description AS reference, orf.description AS optional_reference, pg.description AS paragraph,
-        vt.id AS vat_term_id, vt.description AS vat_term, a.transaction_type_id, u.name AS user_name
+        a.transaction_type_id, u.name AS user_name
       FROM accounting_details d
         JOIN accountings a ON a.id = d.accounting_id
         JOIN financial_years fy ON fy.id = a.financial_year_id
         JOIN accounts da ON da.id = d.account_id
         JOIN accounts ca ON ca.id = d.ref_account_id
-        LEFT JOIN LATERAL (SELECT mm.vat_term_id, mm.currency_id, mm.currency_amount, mm.exchange_rate, mm.quantity, mm.price FROM accounting_details mm
-          WHERE mm.accounting_id = d.accounting_id AND mm.sign = -1 AND mm.account_id = d.ref_account_id AND mm.ref_account_id = d.account_id
-          ORDER BY abs(mm.position - d.position - 1), mm.id LIMIT 1) m ON true
+        ${late ? sql`` : pairLeg(sql`d.accounting_id`, sql`d.account_id`, sql`d.ref_account_id`, sql`d.position`)}
         LEFT JOIN accounts dm ON ${mapped('dm', 'da')}
         LEFT JOIN accounts cm ON ${mapped('cm', 'ca')}
         LEFT JOIN currencies dcur ON dcur.id = d.currency_id
-        LEFT JOIN currencies ccur ON ccur.id = m.currency_id
+        ${late ? sql`` : sql`LEFT JOIN currencies ccur ON ccur.id = m.currency_id`}
         LEFT JOIN companies co ON co.id = coalesce(d.company_id, (SELECT mc.company_id FROM accounting_details mc WHERE mc.accounting_id = d.accounting_id AND mc.sign = -1
           AND mc.account_id = d.ref_account_id AND mc.ref_account_id = d.account_id AND mc.company_id IS NOT NULL LIMIT 1))
         LEFT JOIN documents doc ON doc.id = a.document_id
@@ -442,17 +505,27 @@ export async function journalLines(db: DbOrTx, o: JournalLineFilter) {
         LEFT JOIN reference_texts r ON r.id = a.reference_id
         LEFT JOIN reference_texts orf ON orf.id = a.optional_reference_id
         LEFT JOIN paragraphs pg ON pg.id = a.paragraph_id
-        -- The pair's VAT operation: the debit leg's, or the credit leg's when the debit leg has the default term 1.
-        LEFT JOIN vat_terms vt ON vt.id = CASE WHEN d.vat_term_id = 1 AND m.vat_term_id IS NOT NULL THEN m.vat_term_id ELSE d.vat_term_id END
+        ${late ? sql`` : vatTermJoin(sql`d.vat_term_id`)}
         LEFT JOIN users u ON u.id = a.user_id
-      WHERE ${sql.join(inner, sql` AND `)}
-    )
+      WHERE ${sql.join(inner, sql` AND `)}`;
+  const rows = await queryRowsBulk<Record<string, unknown>>(db, late
+    ? sql`
+    WITH x AS (${base}),
+    page AS (SELECT * FROM x WHERE ${sql.join(outer, sql` AND `)} ORDER BY ${order} LIMIT ${o.limit ?? 20000})
+    SELECT x.*, ${pairColumns}
+    FROM page x
+      ${pairLeg(sql`x.accounting_id`, sql`x.leg_account_id`, sql`x.leg_ref_account_id`, sql`x.position`)}
+      LEFT JOIN currencies ccur ON ccur.id = m.currency_id
+      ${vatTermJoin(sql`x.leg_vat_term_id`)}
+    ORDER BY ${order}`
+    : sql`
+    WITH x AS (${base})
     SELECT * FROM x WHERE ${sql.join(outer, sql` AND `)}
     ORDER BY ${order}
     LIMIT ${o.limit ?? 20000}`);
   const str = (v: unknown) => (v as string | null) ?? '';
   const num = (v: unknown, places?: number) => (v === null || v === undefined ? null : places === undefined ? String(v) : dec(v as string).toFixed(places));
-  return (res.rows as Record<string, unknown>[]).map((r) => ({
+  return rows.map((r) => ({
     detailId: r.detail_id as number,
     accountingId: r.accounting_id as number,
     financialYear: r.fy_year as number,

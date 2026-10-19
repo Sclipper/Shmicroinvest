@@ -5,6 +5,7 @@ import { bgDate, money } from '../format.ts';
 import { useSession } from '../session.tsx';
 import { AccountNumberPicker, Amt, ReportFrame, amt, useReport, type Cell } from '../reports/common.tsx';
 import { LocationSelect, MONTH_SHORT, subtreeIds, useLocations } from './common.tsx';
+import { VirtualRows } from '../components/VirtualRows.tsx';
 
 const endOfMonth = (iso: string) => {
   const [y, m] = iso.split('-').map(Number) as [number, number];
@@ -23,6 +24,14 @@ function useLocationIds(id: number | null) {
 
 interface QuotaYear { year: number; months: string[]; total: string; before: string; cost: string; bookValue: string }
 interface Quotas { assets: { id: number; inventoryNumber: string; name: string; startDate: string; cost: string; total: string; years: QuotaYear[] }[]; monthTotals: string[]; total: string; currency: string }
+
+/** One table row per asset and year (asset, year index), cached per result for the windowed table. */
+const yearRowCache = new WeakMap<Quotas, [Quotas['assets'][number], number][]>();
+function yearRows(d: Quotas) {
+  let rows = yearRowCache.get(d);
+  if (!rows) yearRowCache.set(d, (rows = d.assets.flatMap((r) => r.years.map((_, i): [Quotas['assets'][number], number] => [r, i]))));
+  return rows;
+}
 
 export function DepreciationQuotasReport() {
   const s = useSession();
@@ -73,7 +82,10 @@ export function DepreciationQuotasReport() {
             </tr>
           </thead>
           <tbody>
-            {d.assets.flatMap((r) => r.years.map((y, i) => (
+            <VirtualRows count={yearRows(d).length} colSpan={20} row={(n) => {
+              const [r, i] = yearRows(d)[n]!;
+              const y = r.years[i]!;
+              return (
               <tr key={`${r.id}-${y.year}`}>
                 <td>{i === 0 ? r.inventoryNumber : ''}</td>
                 <td className="max-w-60 truncate" title={r.name}>{i === 0 ? r.name : ''}</td>
@@ -85,7 +97,8 @@ export function DepreciationQuotasReport() {
                 <Amt v={y.total} className="font-semibold" />
                 <Amt v={y.bookValue} />
               </tr>
-            )))}
+              );
+            }} />
           </tbody>
           <tfoot>
             <tr>
@@ -150,13 +163,16 @@ export function InventoryBookReport() {
             </tr>
           </thead>
           <tbody>
-            {d.rows.map((r) => (
+            <VirtualRows count={d.rows.length} colSpan={14} row={(i) => {
+              const r = d.rows[i]!;
+              return (
               <tr key={r.id}>
                 <td>{r.inventoryNumber}</td><td className="max-w-60 truncate" title={r.name}>{r.name}</td><td>{r.serialNumber}</td><td className="max-w-40 truncate">{r.location}</td>
                 <td>{bgDate(r.acquisitionDate)}</td><td>{bgDate(r.startDate)}</td><td>{bgDate(r.finalDate)}</td><td>{bgDate(r.endDate)}</td><td className="num">{r.activeYears}</td>
                 <Amt v={r.cost} /><Amt v={r.revaluationReserve} /><td>{r.personInCharge}</td><Amt v={r.accrued} /><Amt v={r.bookValue} />
               </tr>
-            ))}
+              );
+            }} />
           </tbody>
           <tfoot>
             <tr><td colSpan={9}>Общо:</td><Amt v={d.totals.cost} /><Amt v={d.totals.revaluationReserve} /><td /><Amt v={d.totals.accrued} /><Amt v={d.totals.bookValue} /></tr>
@@ -233,11 +249,14 @@ export function DepreciationPlanReport() {
             <tr>{cols.map(([k, l, t]) => <th key={k} className={t === 'amt' || t === 'pct' ? 'text-right' : ''}>{l}</th>)}</tr>
           </thead>
           <tbody>
-            {d.rows.map((r) => (
+            <VirtualRows count={d.rows.length} colSpan={cols.length} row={(i) => {
+              const r = d.rows[i]!;
+              return (
               <tr key={r.id as number}>
                 {cols.map(([k, , t]) => (t === 'amt' ? <Amt key={k} v={r[k] as string} /> : <td key={k} className={t === 'pct' ? 'num' : k === 'name' ? 'max-w-60 truncate' : ''}>{cell(r, k, t)}</td>))}
               </tr>
-            ))}
+              );
+            }} />
           </tbody>
           <tfoot>
             <tr>{cols.map(([k, , t], i) => (i === 0 ? <td key={k}>Общо:</td> : t === 'amt' && d.totals[k] !== undefined ? <Amt key={k} v={d.totals[k]} /> : <td key={k} />))}</tr>

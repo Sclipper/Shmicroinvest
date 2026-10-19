@@ -3,6 +3,7 @@ import { Checkbox, Field, TextInput } from '../../components/ui.tsx';
 import { bgDate, money } from '../../format.ts';
 import { Amt, PeriodFields, ReportFrame, amt, periodText, useReport, useYearPeriod, type Cell, useReportFilters } from '../common.tsx';
 import { CashAccountSelect, ReportTypeSelect } from './shared.tsx';
+import { VirtualRows } from '../../components/VirtualRows.tsx';
 
 interface Row {
   accountingId: number; accountingNumber: string; documentDate: string; documentType: string; documentNumber: string; term: string; companyName: string;
@@ -88,7 +89,9 @@ export function CashBook() {
                   {fc && <Amt v={net(b.openingDebitCurrency, b.openingCreditCurrency)} />}
                   <Amt v={net(b.openingDebit, b.openingCredit)} />
                 </tr>
-                {d.rows.map((r, i) => (
+                <VirtualRows count={d.rows.length} colSpan={headers.length} row={(i) => {
+                  const r = d.rows[i]!;
+                  return (
                   <tr key={i}>
                     <td className="nowrap">{bgDate(r.documentDate)}</td>
                     <td>{r.documentType}</td>
@@ -106,7 +109,8 @@ export function CashBook() {
                     {fc && <td className="num">{money(r.currencyBalance)}</td>}
                     <td className="num">{money(r.balance)}</td>
                   </tr>
-                ))}
+                  );
+                }} />
               </tbody>
               <tfoot>
                 <tr className="ft1">

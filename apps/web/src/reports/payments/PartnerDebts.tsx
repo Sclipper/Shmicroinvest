@@ -1,10 +1,11 @@
-import { Fragment } from 'react';
+import { useMemo } from 'react';
 import { api, qs } from '../../api.ts';
 import { PartnerPicker } from '../../components/pickers.tsx';
 import { Checkbox, Field, Select, TextInput } from '../../components/ui.tsx';
 import { bgDate, money } from '../../format.ts';
-import { AccountNumberPicker, Amt, ReportFrame, amt, useReport, useYearPeriod, type Cell, useReportFilters } from '../common.tsx';
+import { AccountNumberPicker, Amt, ReportFrame, amt, sum, useReport, useYearPeriod, type Cell, useReportFilters } from '../common.tsx';
 import { ColumnFilter, DocumentTypeSelect, ReportTypeSelect, usePartnerAccountFilter } from './shared.tsx';
+import { VirtualRows } from '../../components/VirtualRows.tsx';
 
 type Level = 'partner' | 'document' | 'accounting';
 
@@ -36,7 +37,6 @@ function groupByPartner<R extends { companyId: number }>(rows: R[]) {
   }
   return out;
 }
-const total = <R,>(rows: R[], pick: (r: R) => string) => Math.round(rows.reduce((a, r) => a + Number(pick(r)), 0) * 100) / 100;
 
 /** Задължения/вземания по партньори (spec 05 6.2-6.4): three levels, standard and currency. */
 export function PartnerDebts() {
@@ -146,14 +146,17 @@ function PartnerTable({ d, fc }: { d: Result<PartnerRow>; fc: boolean }) {
         </tr>
       </thead>
       <tbody>
-        {d.rows.map((r) => (
+        <VirtualRows count={d.rows.length} colSpan={3} row={(i) => {
+          const r = d.rows[i]!;
+          return (
           <tr key={r.companyId}>
             <td className="max-w-[30rem] truncate" title={r.companyName}>{r.companyName}</td>
             <td className="nowrap">{r.companyBulstat}</td>
             <Amt v={r.amount} />
             {fc && <Amt v={r.currencyAmount} />}
           </tr>
-        ))}
+          );
+        }} />
       </tbody>
       <tfoot>
         <tr>
@@ -168,6 +171,8 @@ function PartnerTable({ d, fc }: { d: Result<PartnerRow>; fc: boolean }) {
 
 function DocumentTable({ d, fc }: { d: Result<DocRow>; fc: boolean }) {
   const cols = fc ? 12 : 10;
+  // One row list for the window: partner heading, its documents, its total.
+  const flat = useMemo(() => groupByPartner(d.rows).flatMap((g) => [['group', g] as const, ...g.rows.map((r) => ['doc', g, r] as const), ['total', g] as const]), [d.rows]);
   return (
     <table className="grid-table">
       <thead>
@@ -187,35 +192,40 @@ function DocumentTable({ d, fc }: { d: Result<DocRow>; fc: boolean }) {
         </tr>
       </thead>
       <tbody>
-        {groupByPartner(d.rows).map((g) => (
-          <Fragment key={g.id}>
-            <tr className="grp">
-              <td colSpan={cols}>{g.rows[0]!.companyName}{g.rows[0]!.companyBulstat ? `, ЕИК ${g.rows[0]!.companyBulstat}` : ''}</td>
-            </tr>
-            {g.rows.map((r) => (
-              <tr key={`${r.accountingId}-${r.accountNumber}`}>
-                <td>{r.documentTypeShortName}</td>
-                <td className="nowrap">{r.documentNumber}</td>
-                <td className="nowrap">{bgDate(r.documentDate)}</td>
-                <Amt v={r.amount} />
-                {fc && <Amt v={r.currencyAmount} />}
-                {fc && <td>{r.currencyIso}</td>}
-                <td className="nowrap">{r.accountingNumber}</td>
-                <td className="max-w-[16rem] truncate" title={r.term}>{r.term}</td>
-                <td className="max-w-[12rem] truncate" title={r.reference}>{r.reference}</td>
-                <Amt v={r.sumAmount} />
-                <td className="nowrap">{bgDate(r.dueDate)}</td>
-                <td className="nowrap">{r.companyBankAccount}</td>
+        <VirtualRows count={flat.length} colSpan={cols} row={(i) => {
+          const [kind, g, r] = flat[i]!;
+          if (kind === 'group')
+            return (
+              <tr key={`g${g.id}`} className="grp">
+                <td colSpan={cols}>{g.rows[0]!.companyName}{g.rows[0]!.companyBulstat ? `, ЕИК ${g.rows[0]!.companyBulstat}` : ''}</td>
               </tr>
-            ))}
-            <tr>
-              <td colSpan={3} className="text-right font-semibold">Общо за партньора:</td>
-              <Amt v={total(g.rows, (r) => r.amount)} className="font-semibold" />
-              {fc && <Amt v={total(g.rows, (r) => r.currencyAmount)} className="font-semibold" />}
-              <td colSpan={fc ? 7 : 6} />
+            );
+          if (kind === 'total')
+            return (
+              <tr key={`t${g.id}`}>
+                <td colSpan={3} className="text-right font-semibold">Общо за партньора:</td>
+                <Amt v={sum(g.rows, (x) => x.amount)} className="font-semibold" />
+                {fc && <Amt v={sum(g.rows, (x) => x.currencyAmount)} className="font-semibold" />}
+                <td colSpan={fc ? 7 : 6} />
+              </tr>
+            );
+          return (
+            <tr key={`${r!.accountingId}-${r!.accountNumber}`}>
+              <td>{r!.documentTypeShortName}</td>
+              <td className="nowrap">{r!.documentNumber}</td>
+              <td className="nowrap">{bgDate(r!.documentDate)}</td>
+              <Amt v={r!.amount} />
+              {fc && <Amt v={r!.currencyAmount} />}
+              {fc && <td>{r!.currencyIso}</td>}
+              <td className="nowrap">{r!.accountingNumber}</td>
+              <td className="max-w-[16rem] truncate" title={r!.term}>{r!.term}</td>
+              <td className="max-w-[12rem] truncate" title={r!.reference}>{r!.reference}</td>
+              <Amt v={r!.sumAmount} />
+              <td className="nowrap">{bgDate(r!.dueDate)}</td>
+              <td className="nowrap">{r!.companyBankAccount}</td>
             </tr>
-          </Fragment>
-        ))}
+          );
+        }} />
       </tbody>
       <tfoot>
         <tr>
@@ -230,6 +240,11 @@ function DocumentTable({ d, fc }: { d: Result<DocRow>; fc: boolean }) {
 }
 
 function AccountingTable({ d, fc }: { d: Result<AccRow>; fc: boolean }) {
+  // One row list for the window: partner heading, each document and its covering entries.
+  const flat = useMemo(
+    () => groupByPartner(d.rows).flatMap((g) => [['group', g] as const, ...g.rows.flatMap((r) => [['doc', g, r] as const, ...r.lines.map((l) => ['line', g, r, l] as const)])]),
+    [d.rows],
+  );
   return (
     <table className="grid-table">
       <thead>
@@ -248,45 +263,46 @@ function AccountingTable({ d, fc }: { d: Result<AccRow>; fc: boolean }) {
         </tr>
       </thead>
       <tbody>
-        {groupByPartner(d.rows).map((g) => (
-          <Fragment key={g.id}>
-            <tr className="grp">
-              <td colSpan={fc ? 8 : 7}>{g.rows[0]!.companyName}{g.rows[0]!.companyBulstat ? `, ЕИК ${g.rows[0]!.companyBulstat}` : ''}</td>
-              <td colSpan={3} className="num">Салдо: {money(g.rows[0]!.companyAmount)}</td>
+        <VirtualRows count={flat.length} colSpan={fc ? 11 : 10} row={(i) => {
+          const [kind, g, r, l] = flat[i]!;
+          if (kind === 'group')
+            return (
+              <tr key={`g${g.id}`} className="grp">
+                <td colSpan={fc ? 8 : 7}>{g.rows[0]!.companyName}{g.rows[0]!.companyBulstat ? `, ЕИК ${g.rows[0]!.companyBulstat}` : ''}</td>
+                <td colSpan={3} className="num">Салдо: {money(g.rows[0]!.companyAmount)}</td>
+              </tr>
+            );
+          if (kind === 'doc')
+            return (
+              <tr key={`${r!.accountingId}-${r!.accountNumber}`} className="font-semibold">
+                <td className="nowrap">{r!.accountingNumber}</td>
+                <td className="nowrap">{bgDate(r!.accountingDate)}</td>
+                <td colSpan={2}>{r!.accountNumber}</td>
+                <td>{r!.documentTypeShortName}</td>
+                <td className="nowrap">{r!.documentNumber}</td>
+                <td className="nowrap">{bgDate(r!.documentDate)}</td>
+                <Amt v={r!.originalAmount} />
+                {fc && <Amt v={r!.originalCurrencyAmount} />}
+                <td />
+                <Amt v={r!.remainingAmount} />
+              </tr>
+            );
+          return (
+            <tr key={`${r!.accountingId}-${r!.accountNumber}-${l!.accountingId}`} className="text-slate-700">
+              <td className="nowrap pl-4">{l!.accountingNumber}</td>
+              <td className="nowrap">{bgDate(l!.accountingDate)}</td>
+              <td>{l!.debitAccountNumber}</td>
+              <td>{l!.creditAccountNumber}</td>
+              <td>{l!.documentTypeShortName}</td>
+              <td className="nowrap">{l!.documentNumber}</td>
+              <td className="nowrap">{bgDate(l!.documentDate)}</td>
+              <td />
+              {fc && <Amt v={l!.coveredCurrencyAmount} />}
+              <Amt v={l!.coveredAmount} />
+              <td />
             </tr>
-            {g.rows.map((r) => (
-              <Fragment key={`${r.accountingId}-${r.accountNumber}`}>
-                <tr className="font-semibold">
-                  <td className="nowrap">{r.accountingNumber}</td>
-                  <td className="nowrap">{bgDate(r.accountingDate)}</td>
-                  <td colSpan={2}>{r.accountNumber}</td>
-                  <td>{r.documentTypeShortName}</td>
-                  <td className="nowrap">{r.documentNumber}</td>
-                  <td className="nowrap">{bgDate(r.documentDate)}</td>
-                  <Amt v={r.originalAmount} />
-                  {fc && <Amt v={r.originalCurrencyAmount} />}
-                  <td />
-                  <Amt v={r.remainingAmount} />
-                </tr>
-                {r.lines.map((l) => (
-                  <tr key={l.accountingId} className="text-slate-700">
-                    <td className="nowrap pl-4">{l.accountingNumber}</td>
-                    <td className="nowrap">{bgDate(l.accountingDate)}</td>
-                    <td>{l.debitAccountNumber}</td>
-                    <td>{l.creditAccountNumber}</td>
-                    <td>{l.documentTypeShortName}</td>
-                    <td className="nowrap">{l.documentNumber}</td>
-                    <td className="nowrap">{bgDate(l.documentDate)}</td>
-                    <td />
-                    {fc && <Amt v={l.coveredCurrencyAmount} />}
-                    <Amt v={l.coveredAmount} />
-                    <td />
-                  </tr>
-                ))}
-              </Fragment>
-            ))}
-          </Fragment>
-        ))}
+          );
+        }} />
       </tbody>
       <tfoot>
         <tr>

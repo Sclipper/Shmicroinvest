@@ -1,8 +1,9 @@
-import { Fragment, type ReactNode } from 'react';
+import { Fragment, useMemo, type ReactNode } from 'react';
 import { formatMoney } from '@shmi/core';
 import { api, qs } from '../api.ts';
 import { PartnerMultiPicker, type PickedPartner } from '../components/pickers.tsx';
 import { Checkbox, Field, Select, TextInput, cx } from '../components/ui.tsx';
+import { VirtualRows } from '../components/VirtualRows.tsx';
 import { AccountNumberPicker, Amt, LevelSelect, PeriodFields, ReportFrame, amt, periodText, sum, useReport, useReportFilters, useYearPeriod, type Cell } from './common.tsx';
 
 interface Row {
@@ -236,8 +237,15 @@ function Pair() {
   );
 }
 
+/** Top level of the rows (no spread: a long list overflows the argument stack). */
+function lowestLevel(rows: { level: number }[]) {
+  let min = Infinity;
+  for (const r of rows) if (r.level < min) min = r.level;
+  return min;
+}
+
 function StandardTable({ rows, totals, name, summation }: { rows: Row[]; totals: Amounts; name: (r: Row) => string; summation: boolean }) {
-  const minLevel = Math.min(...rows.map((r) => r.level));
+  const minLevel = lowestLevel(rows);
   const refs = rows.some((r) => r.optionalReference !== undefined);
   return (
     <table className="grid-table">
@@ -250,7 +258,8 @@ function StandardTable({ rows, totals, name, summation }: { rows: Row[]; totals:
         </tr>
       </thead>
       <tbody>
-        {rows.map((r) => {
+        <VirtualRows count={rows.length} colSpan={refs ? 9 : 8} row={(i) => {
+          const r = rows[i]!;
           const indent = (r.level - minLevel) * 14;
           return (
             <tr key={`${r.accountId}:${r.optionalReference ?? ''}`} className={cx(r.hasChildren && 'font-semibold', r.level === minLevel && r.hasChildren && 'bg-slate-100!')}>
@@ -260,7 +269,7 @@ function StandardTable({ rows, totals, name, summation }: { rows: Row[]; totals:
               {AMOUNTS.map((k) => <Amt key={k} v={r[k]} className="w-32" />)}
             </tr>
           );
-        })}
+        }} />
       </tbody>
       {summation && (
         <tfoot>
@@ -278,7 +287,7 @@ const qty = (v: string | undefined) => (!v || Number(v) === 0 ? '' : formatMoney
 const unitPrice = (value: string, quantity: string | undefined) => (quantity && Number(quantity) !== 0 ? formatMoney(Number(value) / Number(quantity), 2) : '');
 
 function ExtendedTable({ rows, totals, name, currency, summation }: { rows: ExtRow[]; totals: Amounts; name: (r: Row) => string; currency: boolean; summation: boolean }) {
-  const minLevel = Math.min(...rows.map((r) => r.level));
+  const minLevel = lowestLevel(rows);
   if (currency) {
     return (
       <table className="grid-table">
@@ -296,7 +305,9 @@ function ExtendedTable({ rows, totals, name, currency, summation }: { rows: ExtR
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
+          <VirtualRows count={rows.length} colSpan={15} row={(i) => {
+            const r = rows[i]!;
+            return (
             <tr key={r.accountId} className={cx(r.hasChildren && 'font-semibold')}>
               <td className="nowrap" style={{ paddingLeft: 8 + (r.level - minLevel) * 14 }}>{r.number}</td>
               <td className="max-w-[20rem] truncate" title={name(r)}>{name(r)}</td>
@@ -304,7 +315,8 @@ function ExtendedTable({ rows, totals, name, currency, summation }: { rows: ExtR
               {AMOUNTS.map((k) => <Amt key={`x${k}`} v={r.extra?.[k]} />)}
               {AMOUNTS.map((k) => <Amt key={k} v={r[k]} />)}
             </tr>
-          ))}
+            );
+          }} />
         </tbody>
         {summation && (
           <tfoot>
@@ -335,7 +347,9 @@ function ExtendedTable({ rows, totals, name, currency, summation }: { rows: ExtR
         </tr>
       </thead>
       <tbody>
-        {rows.map((r) => (
+        <VirtualRows count={rows.length} colSpan={20} row={(i) => {
+          const r = rows[i]!;
+          return (
           <tr key={r.accountId} className={cx(r.hasChildren && 'font-semibold')}>
             <td className="nowrap" style={{ paddingLeft: 8 + (r.level - minLevel) * 14 }}>{r.number}</td>
             <td className="max-w-[18rem] truncate" title={name(r)}>{name(r)}</td>
@@ -347,7 +361,8 @@ function ExtendedTable({ rows, totals, name, currency, summation }: { rows: ExtR
               </Fragment>
             ))}
           </tr>
-        ))}
+          );
+        }} />
       </tbody>
       {summation && (
         <tfoot>
@@ -375,13 +390,16 @@ function PartnersTable({ rows, summation }: { rows: PartnerRow[]; summation: boo
         <tr className="hdr2">{[0, 1, 2].map((i) => <Pair key={i} />)}</tr>
       </thead>
       <tbody>
-        {rows.map((r) => (
-          <tr key={r.companyId}>
-            <td>{r.companyName}</td>
-            <td>{r.vat}</td>
-            {AMOUNTS.map((k) => <Amt key={k} v={r[k]} className="w-32" />)}
-          </tr>
-        ))}
+        <VirtualRows count={rows.length} colSpan={8} row={(i) => {
+          const r = rows[i]!;
+          return (
+            <tr key={r.companyId}>
+              <td>{r.companyName}</td>
+              <td>{r.vat}</td>
+              {AMOUNTS.map((k) => <Amt key={k} v={r[k]} className="w-32" />)}
+            </tr>
+          );
+        }} />
       </tbody>
       {summation && (
         <tfoot>
@@ -396,6 +414,7 @@ function PartnersTable({ rows, summation }: { rows: PartnerRow[]; summation: boo
 }
 
 function MonthsTable({ groups, name }: { groups: MonthGroup[]; name: (r: Row) => string }) {
+  const flat = useMemo(() => groups.flatMap((g) => g.months.map((_, i): [MonthGroup, number] => [g, i])), [groups]);
   return (
     <table className="grid-table">
       <thead>
@@ -403,18 +422,18 @@ function MonthsTable({ groups, name }: { groups: MonthGroup[]; name: (r: Row) =>
         <tr className="hdr2">{[0, 1, 2].map((i) => <Pair key={i} />)}</tr>
       </thead>
       <tbody>
-        {groups.map((g) => (
-          <Fragment key={g.accountId}>
-            {g.months.map((m, i) => (
-              <tr key={m.month} className={cx(i === 0 && 'border-t-2 border-t-slate-300')}>
-                <td className="nowrap w-24 font-semibold">{i === 0 ? g.number : ''}</td>
-                <td className="max-w-[24rem] truncate">{i === 0 ? name(g as unknown as Row) : ''}</td>
-                <td>{m.month}</td>
-                {AMOUNTS.map((k) => <Amt key={k} v={m[k]} className="w-32" />)}
-              </tr>
-            ))}
-          </Fragment>
-        ))}
+        <VirtualRows count={flat.length} colSpan={9} row={(n) => {
+          const [g, i] = flat[n]!;
+          const m = g.months[i]!;
+          return (
+            <tr key={`${g.accountId}:${m.month}`} className={cx(i === 0 && 'border-t-2 border-t-slate-300')}>
+              <td className="nowrap w-24 font-semibold">{i === 0 ? g.number : ''}</td>
+              <td className="max-w-[24rem] truncate">{i === 0 ? name(g as unknown as Row) : ''}</td>
+              <td>{m.month}</td>
+              {AMOUNTS.map((k) => <Amt key={k} v={m[k]} className="w-32" />)}
+            </tr>
+          );
+        }} />
       </tbody>
     </table>
   );

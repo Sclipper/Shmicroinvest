@@ -102,7 +102,18 @@ export const journalRoutes = new Hono<AppEnv>()
     const offset = Number(q.offset ?? 0);
     const conds = entryFilterConditions(q, year);
     const where = sql.join(conds, sql` AND `);
+    // The page's ids first, then the per-entry columns (partner, amount, accounts) only for those rows:
+    // a deep page used to compute them for every row it skipped.
     const rows = await exec(db, sql`
+      WITH page AS (
+        SELECT a.id FROM accountings a
+        LEFT JOIN documents doc ON doc.id = a.document_id
+        LEFT JOIN terms t ON t.id = a.term_id
+        LEFT JOIN reference_texts r ON r.id = a.reference_id
+        WHERE ${where}
+        ORDER BY a.accounting_date DESC, a.number DESC, a.id DESC
+        LIMIT ${limit} OFFSET ${offset}
+      )
       SELECT a.id, a.number, a.accounting_date, a.vies_month, a.is_initial_balance, a.source,
         doc.number AS document_number, doc.date AS document_date, dt.name AS document_type,
         t.description AS term, r.description AS reference,
@@ -118,9 +129,8 @@ export const journalRoutes = new Hono<AppEnv>()
       LEFT JOIN terms t ON t.id = a.term_id
       LEFT JOIN reference_texts r ON r.id = a.reference_id
       LEFT JOIN users u ON u.id = a.user_id
-      WHERE ${where}
-      ORDER BY a.accounting_date DESC, a.number DESC, a.id DESC
-      LIMIT ${limit} OFFSET ${offset}`);
+      WHERE a.id IN (SELECT id FROM page)
+      ORDER BY a.accounting_date DESC, a.number DESC, a.id DESC`);
     const [{ total }] = (await exec(db, sql`
       SELECT count(*)::int AS total FROM accountings a
       LEFT JOIN documents doc ON doc.id = a.document_id

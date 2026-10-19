@@ -36,7 +36,8 @@ export const chartRoutes = new Hono<AppEnv>()
     const isEuro = year.year >= 2026;
     const base = await baseCurrencyId(db, year.year);
     const rows = await db.select().from(s.accounts).where(eq(s.accounts.isEuro, isEuro)).orderBy(asc(s.accounts.leftIndex));
-    const used = await exec(db, sql`SELECT DISTINCT account_id FROM accounting_details`);
+    // One index probe per account of the chart instead of reading every posting.
+    const used = await exec(db, sql`SELECT a.id AS account_id FROM accounts a WHERE a.is_euro = ${isEuro} AND EXISTS (SELECT 1 FROM accounting_details d WHERE d.account_id = a.id)`);
     const usedSet = new Set((used.rows as { account_id: number }[]).map((r) => r.account_id));
     const productRows = await db.select({ id: s.products.id, measure: s.products.measure, code: s.products.code }).from(s.products);
     const productById = new Map(productRows.map((p) => [p.id, p]));

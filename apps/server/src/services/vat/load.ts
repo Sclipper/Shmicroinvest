@@ -1,6 +1,6 @@
 import { sql, type SQL } from 'drizzle-orm';
 import { CATEGORY, type VatAccounting, type VatDetail, type VatPartner } from '@shmi/core';
-import { queryRows, type DbOrTx } from '../../db/provider.ts';
+import { queryRows, queryRowsBulk, type DbOrTx } from '../../db/provider.ts';
 
 /**
  * Loads accountings into the core VAT model (packages/core/src/vat/model.ts):
@@ -70,13 +70,14 @@ export async function loadVatAccountings(db: DbOrTx, w: LoadWindow): Promise<Vat
     ORDER BY a.id`);
   if (!headers.length) return [];
   const ids = headers.map((h) => h.id);
-  const idList = sql.join(ids.map((i) => sql`${i}`), sql`, `);
+  // One array parameter (a statement takes at most 65 535 parameters).
+  const idList = sql`SELECT unnest(${'{' + ids.join(',') + '}'}::int[])`;
 
   const vatAccs = await vatCategoryAccounts(db);
   const isVatPurchase = prefixMatcher(vatAccs.filter((a) => a.categoryId === CATEGORY.VatPurchases).map((a) => a.number));
   const isVatSale = prefixMatcher(vatAccs.filter((a) => a.categoryId === CATEGORY.VatSales).map((a) => a.number));
 
-  const details = await queryRows<{
+  const details = await queryRowsBulk<{
     accounting_id: number; sign: number; amount: string; ref_amount: string; vat_term_id: number; account_id: number | null;
     number: string | null; cat: number | null; ref_cat: number | null; company_id: number | null; base: boolean;
   }>(db, sql`

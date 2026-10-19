@@ -100,7 +100,9 @@ export function reportDocument(meta: ReportDocMeta, sheets: XlsxSheet[]): Report
       return { cells: r.cells, bold: r.bold || (n > 0 && r.cells.every((c) => c.bold || c.text === '')), span: n === 1 && r.cells[0]!.text !== '' && !r.cells[0]!.numeric, blank: n === 0 };
     });
     while (body.length && body[body.length - 1]!.blank) body.pop();
-    const columns = Math.max(header?.length ?? 0, ...body.filter((r) => !r.span).map((r) => r.cells.length), 1);
+    // A loop, not Math.max(...rows): a long report would overflow the argument stack.
+    let columns = Math.max(header?.length ?? 0, 1);
+    for (const r of body) if (!r.span && r.cells.length > columns) columns = r.cells.length;
     // An amount column: mostly numbers (a text column may hold a stray amount, e.g. an opening balance row).
     const numeric = Array.from({ length: columns }, (_, c) => {
       let numbers = 0;
@@ -228,9 +230,27 @@ export function wrapText(text: string, width: number, measure: (t: string) => nu
   return out;
 }
 
+const charWidth = (ch: string) => (/[ .,:;!|il'1]/.test(ch) ? 0.3 : /[MWШЩЖЮмшщжю@%]/.test(ch) ? 0.85 : /[A-ZА-Я0-9]/.test(ch) ? 0.62 : 0.52);
+/** Widths of the BMP characters seen so far, 0 = not yet (the regular expressions per character dominated long exports). */
+const charWidths = new Float64Array(0x10000);
+
 /** Approximate text width (em) for formats measured by their viewer (Word). */
 export const approxMeasure: MeasureText = (text, bold) => {
   let w = 0;
-  for (const ch of text) w += /[ .,:;!|il'1]/.test(ch) ? 0.3 : /[MWШЩЖЮмшщжю@%]/.test(ch) ? 0.85 : /[A-ZА-Я0-9]/.test(ch) ? 0.62 : 0.52;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdfff) {
+      // A surrogate pair is one character (as for..of counted it).
+      if (code <= 0xdbff && i + 1 < text.length) {
+        const next = text.charCodeAt(i + 1);
+        if (next >= 0xdc00 && next <= 0xdfff) i++;
+      }
+      w += 0.52;
+      continue;
+    }
+    let cw = charWidths[code]!;
+    if (cw === 0) charWidths[code] = cw = charWidth(text[i]!);
+    w += cw;
+  }
   return bold ? w * 1.06 : w;
 };

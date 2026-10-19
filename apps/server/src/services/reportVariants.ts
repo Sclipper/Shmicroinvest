@@ -3,7 +3,7 @@ import { EURO_CHANGEOVER_DATE, ZERO, dec, type Dec } from '@shmi/core';
 import { exec, type DbOrTx } from '../db/provider.ts';
 import { badRequest } from '../lib/errors.ts';
 import {
-  accountBalances, accountRuleSql, ancestorsOf, fyWindowSql, chartMapper, compareAccountNumbers, conversionSql, loadTree, matchesAccount, netDebit, trialBalance, yearOf,
+  accountBalancesMany, accountRuleSql, ancestorsOf, fyWindowSql, chartMapper, compareAccountNumbers, conversionSql, loadTree, matchesAccount, netDebit, trialBalance, yearOf,
   type LedgerOptions, type TreeAccount, type TrialBalanceOptions, type TrialBalanceRow,
 } from './reports.ts';
 
@@ -349,8 +349,10 @@ export async function ledgerZeroTurnoverAccounts(db: DbOrTx, o: LedgerOptions, p
     if (a && !present.has(a.number)) found.set(a.number, a);
   }
   const out = [];
-  for (const a of [...found.values()].sort((p, q) => compareAccountNumbers(p.number, q.number))) {
-    const balances = await accountBalances(db, a.number, o);
+  const sorted = [...found.values()].sort((p, q) => compareAccountNumbers(p.number, q.number));
+  const many = await accountBalancesMany(db, sorted.map((a) => a.number), o);
+  for (const a of sorted) {
+    const balances = many.get(a.number)!;
     if ([balances.openingDebit, balances.openingCredit].every((v) => v === '0.00')) continue;
     out.push({ number: a.number, description: a.description, englishDescription: a.englishDescription ?? '', counters: [] as { number: string; description: string; englishDescription: string; debit: string; credit: string }[], totalDebit: '0.00', totalCredit: '0.00', balances });
   }

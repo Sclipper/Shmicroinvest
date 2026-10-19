@@ -39,9 +39,10 @@ export interface VatReportParams {
 const diaryOptions = (p: VatReportParams) => ({ start: p.from, end: `${p.to} 23:59:59`, sortByEntry: p.sortByEntry });
 
 async function load(db: DbOrTx, p: { from: string; to: string }) {
-  // Protocols may take their period from an accounting of an earlier export month; widen the window by a year.
-  const from = `${Number(p.from.slice(0, 4)) - 1}${p.from.slice(4)}`;
-  return loadVatAccountings(db, { from, to: p.to });
+  // A protocol takes its period from the other accounting with its number (its invoice), maybe of an
+  // earlier or later month: loadVatAccountings brings every accounting sharing a number with one of
+  // the window, so the window itself is enough (a year more only read and dropped ~12 months).
+  return loadVatAccountings(db, { from: p.from, to: p.to });
 }
 
 function serializeRow(r: DiaryRow) {

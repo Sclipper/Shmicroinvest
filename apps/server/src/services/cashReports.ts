@@ -6,7 +6,7 @@ import {
 import * as s from '../db/company/schema/index.ts';
 import { queryRows, type DbOrTx } from '../db/provider.ts';
 import { getConfig, setConfig } from './config.ts';
-import { accountRuleSql, trialBalance } from './reports.ts';
+import { accountRuleSql, matchesAccount, trialBalance } from './reports.ts';
 import { statementCalculator } from './statements.ts';
 import { myCompanyCard } from './partnerReports.ts';
 
@@ -273,14 +273,15 @@ export interface CashAndReceivablesRow {
 export async function cashAndReceivables(db: DbOrTx, o: CashAndReceivablesOptions) {
   const amounts = await cashAndReceivablesAmounts(db, o.startDate, o.endDate);
 
+  // Trial-balance levels count the class groups ("5", "50"): synthetic accounts sit at its level 2.
+  // One trial balance for every section (its account filter only picks rows of the same result).
+  const tb = await trialBalance(db, { startDate: o.startDate, endDate: o.endDate, subAccountLevel: (o.subAccountLevel ?? 0) + 2 });
   const sections = [];
   for (const sec of CASH_AND_RECEIVABLES_SECTIONS) {
     const rows: CashAndReceivablesRow[] = [];
     for (const n of sec.accounts) {
-      // Trial-balance levels count the class groups ("5", "50"): synthetic accounts sit at its level 2.
-      const tb = await trialBalance(db, { startDate: o.startDate, endDate: o.endDate, accountNumber: n, subAccountLevel: (o.subAccountLevel ?? 0) + 2 });
       // The rows at the chosen level (or leaves above it).
-      for (const r of tb.rows.filter((x) => !x.hasChildren)) {
+      for (const r of tb.rows.filter((x) => matchesAccount(x.number, n) && !x.hasChildren)) {
         rows.push({
           accountNumber: r.number, accountName: r.description,
           initialDebitBalance: r.openingDebit, initialCreditBalance: r.openingCredit, debitBalance: r.debitTurnover, creditBalance: r.creditTurnover,

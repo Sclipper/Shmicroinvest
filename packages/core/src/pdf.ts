@@ -83,7 +83,17 @@ export async function buildReportPdf(doc: ReportDoc, fonts: PdfFonts, opts: { co
   const compress = opts.compress ?? true;
   const regular = fontUse(fonts.regular, 'F1');
   const bold = fontUse(fonts.bold, 'F2');
-  const measure: MeasureText = (t, b) => textWidthEm(b ? bold.font : regular.font, t);
+  // Cell texts repeat (dates, accounts, partners) and the layout measures each several times.
+  const widths = [new Map<string, number>(), new Map<string, number>()];
+  const measure: MeasureText = (t, b) => {
+    const cache = widths[b ? 1 : 0]!;
+    let w = cache.get(t);
+    if (w === undefined) {
+      w = textWidthEm(b ? bold.font : regular.font, t);
+      if (cache.size < 200_000) cache.set(t, w);
+    }
+    return w;
+  };
   const portraitWidth = A4[0] - 2 * MARGIN;
   const landscape = doc.sections.some((s) => needsLandscape(s, measure, portraitWidth));
   const [pageW, pageH] = landscape ? [A4[1], A4[0]] : A4;

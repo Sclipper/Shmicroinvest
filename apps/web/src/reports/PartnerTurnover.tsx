@@ -6,6 +6,7 @@ import { Checkbox, Field } from '../components/ui.tsx';
 import { useAccounts } from '../session.tsx';
 import type { Account } from '../types.ts';
 import { AccountNumberPicker, Amt, PeriodFields, ReportFrame, amt, periodText, sum, useAccountName, useReport, useYearPeriod, type Cell, useReportFilters } from './common.tsx';
+import { VirtualRows } from '../components/VirtualRows.tsx';
 
 interface Row {
   companyId: number;
@@ -115,7 +116,9 @@ export function PartnerTurnover() {
             </tr>
           </thead>
           <tbody>
-            {d.map((r) => (
+            <VirtualRows count={d.length} colSpan={8} row={(i) => {
+              const r = d[i]!;
+              return (
               <tr key={r.companyId}>
                 <td className="max-w-[26rem] truncate" title={r.companyName}>
                   {r.companyName}
@@ -125,7 +128,8 @@ export function PartnerTurnover() {
                   <Amt key={k} v={r[k]} />
                 ))}
               </tr>
-            ))}
+              );
+            }} />
           </tbody>
           <tfoot>
             <tr>

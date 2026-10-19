@@ -6,6 +6,7 @@ import { PartnerMultiPicker, type PickedPartner } from '../components/pickers.ts
 import { Checkbox, Field, Select, TextInput } from '../components/ui.tsx';
 import { useLookups } from '../session.tsx';
 import { useWorkspace } from '../shell/workspace.tsx';
+import { VirtualRows } from '../components/VirtualRows.tsx';
 import { ColumnFilter } from './payments/shared.tsx';
 import { AccountNumberPicker, PeriodFields, ReportFrame, amt, periodText, sum, useReport, useReportFilters, useYearPeriod, type Cell } from './common.tsx';
 
@@ -269,7 +270,9 @@ export function Chronological() {
             </tr>
           </thead>
           <tbody>
-            {d.map((l) => (
+            <VirtualRows count={d.length} colSpan={13 + (cur || mat ? 4 : 0)} row={(i) => {
+              const l = d[i]!;
+              return (
               <tr key={l.detailId} aria-selected={sel === l.detailId} onClick={() => setSel(l.detailId)} onDoubleClick={() => open(l)} className="cursor-default" title="Двоен клик — отваря контировката">
                 <td className="font-medium">{l.number}</td>
                 <td className="nowrap">{bgDate(l.accountingDate)}</td>
@@ -301,7 +304,8 @@ export function Chronological() {
                 <td className="max-w-48 truncate" title={l.vatTerm}>{l.vatTerm}</td>
                 <td className="nowrap">{l.viesMonth.slice(5, 7)}.{l.viesMonth.slice(0, 4)}</td>
               </tr>
-            ))}
+              );
+            }} />
           </tbody>
           <tfoot>
             <tr>

@@ -4,6 +4,7 @@ import { Field, Select, TextInput } from '../../components/ui.tsx';
 import { bgDate } from '../../format.ts';
 import { Amt, PeriodFields, ReportFrame, amt, periodText, useReport, useYearPeriod, type Cell, useReportFilters } from '../../reports/common.tsx';
 import { useLookups } from '../../session.tsx';
+import { VirtualRows } from '../../components/VirtualRows.tsx';
 
 /** "Протоколи по чл. 117 от ЗДДС" (UI_Reporting_ICAReport, spICAReport; spec 05 7.6). */
 
@@ -89,7 +90,9 @@ export function IcaReport() {
             </tr>
           </thead>
           <tbody>
-            {d.rows.map((r) => (
+            <VirtualRows count={d.rows.length} colSpan={HEADERS.length} row={(i) => {
+              const r = d.rows[i]!;
+              return (
               <tr key={`${r.accountingId}-${r.icaNumber}`}>
                 <td>{r.accountingNumber}</td>
                 <td className="nowrap">{bgDate(r.documentDate)}</td>
@@ -108,7 +111,8 @@ export function IcaReport() {
                 <td className="max-w-[12rem] truncate" title={r.purchaseVat}>{r.purchaseVat}</td>
                 <td className="max-w-[12rem] truncate" title={r.saleVat}>{r.saleVat}</td>
               </tr>
-            ))}
+              );
+            }} />
           </tbody>
         </table>
       )}

@@ -5,6 +5,7 @@ import { PartnerMultiPicker, type PickedPartner } from '../components/pickers.ts
 import { Checkbox, Field, Select } from '../components/ui.tsx';
 import { useWorkspace } from '../shell/workspace.tsx';
 import { ANALYTICAL_SORT, JOURNAL_REPORT_TYPES, analyticalFilterColumns, qtyText, rateText, type JournalLine, type JournalReportType } from './Chronological.tsx';
+import { VirtualRows } from '../components/VirtualRows.tsx';
 import { ColumnFilter } from './payments/shared.tsx';
 import { AccountNumberPicker, Amt, PeriodFields, ReportFrame, amt, periodText, useReport, useReportFilters, useYearPeriod, type Cell } from './common.tsx';
 
@@ -144,7 +145,9 @@ export function Analytical() {
                 {pair(d.opening.openingDebit, d.opening.openingCredit)}
                 <td colSpan={tail} />
               </tr>
-              {d.lines.map((l) => (
+              <VirtualRows count={d.lines.length} colSpan={5 + extraHead.length + tail} row={(i) => {
+                const l = d.lines[i]!;
+                return (
                 <tr key={l.detailId} aria-selected={sel === l.detailId} onClick={() => setSel(l.detailId)} onDoubleClick={() => open(l)} className="cursor-default">
                   <td className="font-medium">{l.number}</td>
                   <td className="nowrap">{bgDate(l.accountingDate)}</td>
@@ -180,7 +183,8 @@ export function Analytical() {
                   <td className="max-w-72 truncate" title={l.term}>{l.term}</td>
                   <td className="max-w-48 truncate" title={[l.reference, l.optionalReference].filter(Boolean).join(' / ')}>{l.reference}</td>
                 </tr>
-              ))}
+                );
+              }} />
             </tbody>
             <tfoot>
               {(cur || mat) && (

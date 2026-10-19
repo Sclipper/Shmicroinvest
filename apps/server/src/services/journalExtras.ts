@@ -75,7 +75,7 @@ export function entryFilterConditions(q: EntryFilter, year: ActiveYear): SQL[] {
   if (q.text) {
     const like = `%${q.text}%`;
     conds.push(sql`(a.number ILIKE ${like} OR t.description ILIKE ${like} OR r.description ILIKE ${like} OR doc.number ILIKE ${like}
-      OR EXISTS (SELECT 1 FROM accounting_details x LEFT JOIN companies xc ON xc.id = x.company_id WHERE x.accounting_id = a.id AND xc.name ILIKE ${like}))`);
+      OR a.id IN (SELECT x.accounting_id FROM accounting_details x JOIN companies xc ON xc.id = x.company_id WHERE xc.name ILIKE ${like}))`);
   }
   return conds;
 }

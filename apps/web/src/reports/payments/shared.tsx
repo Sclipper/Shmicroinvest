@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Printer } from 'lucide-react';
 import { isCompanyCategory } from '@shmi/core';
 import { Button, Field, Select, TextInput } from '../../components/ui.tsx';
+import { AllRows } from '../../components/VirtualRows.tsx';
 import { useAccounts, useLookups } from '../../session.tsx';
 import type { Account } from '../../types.ts';
 
@@ -138,7 +139,7 @@ export function SheetPrintButton({ label = 'Печат на бланките', d
       <Button icon={<Printer className="size-3.5" />} disabled={disabled} onClick={() => setPrinting(true)}>
         {label}
       </Button>
-      {printing && createPortal(<div className="report-print-portal">{children()}</div>, document.body)}
+      {printing && createPortal(<div className="report-print-portal"><AllRows>{children()}</AllRows></div>, document.body)}
     </>
   );
 }
