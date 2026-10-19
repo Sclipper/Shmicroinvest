@@ -53,15 +53,15 @@ describe('exchange rate per date and currency differences (04b 1.8, 1.10)', () =
 
   it('bank fees: lines and the strBankTax* checks', () => {
     let r = bankPostingLines({ debitAccountId: 401, creditAccountId: 503, postAmount: '100', feeAmount: '2.50' }, { ...pctx, bankAccountId: 503 });
-    expect(r.debits).toEqual([{ accountId: 401, amount: '100.00' }, { accountId: 629, amount: '2.50' }]);
-    expect(r.credits).toEqual([{ accountId: 503, amount: '100.00' }, { accountId: 503, amount: '2.50' }]);
+    expect([r.debits, r.credits]).toEqual([[{ accountId: 401, amount: '100.00' }], [{ accountId: 503, amount: '100.00' }]]);
+    expect(r.fee).toEqual({ debits: [{ accountId: 629, amount: '2.50' }], credits: [{ accountId: 503, amount: '2.50' }] });
     r = bankPostingLines({ debitAccountId: 401, creditAccountId: 503, postAmount: '100', feeAmount: '2.50' }, { ...pctx, bankAccountId: 503, feeAccountId: null });
     expect(r.messages.map((m) => m.key)).toEqual(['strBankTaxAccountsMissing']);
     r = bankPostingLines({ debitAccountId: 401, creditAccountId: 504, postAmount: '93', currencyAmount: '100', exchangeRate: '0', feeCurrencyAmount: '3' }, pctx);
     expect(r.messages.map((m) => m.key)).toEqual(['strBankTaxZeroSum', 'strBankTaxZeroExchangeRate']);
     r = bankPostingLines({ debitAccountId: 401, creditAccountId: 504, postAmount: '93', currencyAmount: '100', exchangeRate: '0.93', feeCurrencyAmount: '3' }, pctx);
-    expect(r.debits.at(-1)).toEqual({ accountId: 629, amount: '2.79' });
-    expect(r.credits.at(-1)).toEqual({ accountId: 504, amount: '2.79', currencyAmount: '3.00', exchangeRate: '0.93' });
+    expect(r.fee).toEqual({ debits: [{ accountId: 629, amount: '2.79' }], credits: [{ accountId: 504, amount: '2.79', currencyAmount: '3.00', exchangeRate: '0.93' }] });
+    expect(r.fee && bankPostingLines({ debitAccountId: 401, creditAccountId: 504, postAmount: '93', currencyAmount: '100', exchangeRate: '0.93' }, pctx).fee).toBeNull();
     // A fee row itself (Dt 629 / Ct currency bank) with no currency amount.
     r = bankPostingLines({ debitAccountId: 629, creditAccountId: 504, postAmount: '5', currencyAmount: '0', exchangeRate: '0.93' }, pctx);
     expect(r.messages.map((m) => m.key)).toEqual(['strBankTaxZeroCurrencySum']);

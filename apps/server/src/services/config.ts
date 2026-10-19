@@ -33,6 +33,7 @@ export const BASIC_SETTINGS: Record<string, { default: string; label: string }> 
   AutomaticFillExchangeRate: { default: 'False', label: 'Автоматично попълване на банков курс на база фиксинг' },
   IsBindingDocumentsEnabled: { default: 'True', label: 'Обвързване на документи в контиране' },
   IsAutomaticOpenBindingDocumentsEnabled: { default: 'False', label: 'Автоматично отваряне на обвързване на документи' },
+  IsBindingDocumentsInBankImportEnabled: { default: 'True', label: 'Обвързване на документи при импорт на банкови извлечения' },
   IsBindingBySumEnabled: { default: 'True', label: 'Обвързване по сума' },
   IsAllowAccountingAutomaticEnd: { default: 'False', label: 'Приключване на гр. 60 при контиране' },
   IsShowSeperateAccountingsForeachAccountGroup60: { default: 'False', label: 'Отделно контиране за всяка сметка от гр. 60' },

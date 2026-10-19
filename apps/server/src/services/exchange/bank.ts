@@ -1,21 +1,23 @@
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, lte, sql, desc } from 'drizzle-orm';
 import {
-  DEFAULT_BANK_TEMPLATES, DOCUMENT_TYPE, KEYWORDS, POS_SERVICE_PARTNER, DataImportError, autoBindDocuments, bankModelProperties, critical, dec,
-  decodeText, defaultTemplateTokens, isClientCategory, isCompanyCategory, isLeaf, mapStatementRows, mapperForBank, mergeBankRows, msg,
-  normalizeIban, parseBankStatement, parseIbanList, round2, tokenizeCondition, validateBankRow, validateCondition, warning,
-  type BankTemplateDef, type ExchangeMessage, type ConditionToken, type MappedBankRow, type MergeCriteria, type OpenDocument,
+  BGN_PER_EUR, CATEGORY, DOCUMENT_TYPE, KEYWORDS, POS_SERVICE_PARTNER, DataImportError, autoBindDocuments, bankModelProperties, bankPostingLines, bankRowKey, critical,
+  dec, decodeText, defaultBankTemplates, defaultTemplateTokens, hasDefaultBankTemplates, isClientCategory, isCompanyCategory, isLeaf, isValidIban, mapStatementRow,
+  mapStatementRows, mapperForBank, mergeBankRows, msg, normalizeIban, parseBankStatement, parseIbanList, round, round2, tokenizeCondition, validateBankRow,
+  validateCondition, warning,
+  type BankStatementRow, type BankTemplateDef, type ExchangeMessage, type ConditionToken, type MappedBankRow, type MergeCriteria, type OpenDocument,
 } from '@shmi/core';
 import * as s from '../../db/company/schema/index.ts';
 import type { DbOrTx } from '../../db/provider.ts';
 import { ApiError } from '../../lib/errors.ts';
-import { getBoolConfig, getConfig } from '../config.ts';
+import { getBoolConfig, getConfig, setConfig } from '../config.ts';
 import { saveEntry } from '../journal.ts';
-import { addPartnerIbans, checkDates, loadChart, throwIf } from './common.ts';
+import { addPartnerIbans, checkDates, loadChart, throwIf, type Chart } from './common.ts';
 import { readWorkbook, sheetTable } from './xlsx.ts';
 import type { ImportCtx } from './transfer.ts';
 
 export const EXCLUDED_IBANS_KEY = 'BankImportExcludedIbans';
-
+/** 06 3.4: binding of open documents in the bank-statement import (default on). */
+export const BANK_BINDING_KEY = 'IsBindingDocumentsInBankImportEnabled';
 // ---------------------------------------------------------------------------
 // Keywords
 
@@ -138,14 +140,23 @@ export async function listTemplates(db: DbOrTx, bankId: number | null, isEuro: b
   });
 }
 
-/** Seeded defaults (03a 9.1, 9.2): one template per rule with a BGN and an EUR detail. */
-export async function addDefaultTemplates(db: DbOrTx, bankId: number, userId: number) {
+/**
+ * Seeded defaults (03a 9.1, 9.2): the bank's own rule list, one template per
+ * rule with a BGN and an EUR detail. Nothing is added when the bank already
+ * has templates. `onlyListed`: only banks with a list in Delta (the automatic
+ * call from the own-company bank accounts, 7.2).
+ */
+export async function addDefaultTemplates(db: DbOrTx, bankId: number, userId: number, opts: { onlyListed?: boolean } = {}) {
+  const [bank] = await db.select().from(s.banks).where(eq(s.banks.id, bankId));
+  if (!bank) return 0;
+  if (opts.onlyListed && !hasDefaultBankTemplates(bank.code)) return 0;
   const have = await db.select({ id: s.bankTemplates.id }).from(s.bankTemplates).where(eq(s.bankTemplates.bankId, bankId));
   if (have.length) return 0;
+  const list = defaultBankTemplates(bank.code);
   const accs = await db.select({ id: s.accounts.id, number: s.accounts.number, isEuro: s.accounts.isEuro }).from(s.accounts);
   const find = (n: string | undefined, isEuro: boolean) => (n ? accs.find((a) => a.number === n && a.isEuro === isEuro)?.id ?? null : null);
   let pos: number | null = null;
-  for (const d of DEFAULT_BANK_TEMPLATES) {
+  for (const d of list) {
     let companyId: number | null = null;
     if (d.posPartner) {
       if (pos === null) {
@@ -168,7 +179,28 @@ export async function addDefaultTemplates(db: DbOrTx, bankId: number, userId: nu
       });
     }
   }
-  return DEFAULT_BANK_TEMPLATES.length;
+  return list.length;
+}
+
+/** 03a 7.2: saving the own company's bank accounts creates the default rules of their banks (when the bank has none). */
+export async function ensureDefaultTemplatesForBanks(db: DbOrTx, bankIds: (number | null | undefined)[], userId: number) {
+  let added = 0;
+  for (const id of new Set(bankIds.filter((x): x is number => !!x))) added += await addDefaultTemplates(db, id, userId, { onlyListed: true });
+  return added;
+}
+
+// ---------------------------------------------------------------------------
+// Excluded IBANs (1.7)
+
+export async function excludedIbans(db: DbOrTx) {
+  return [...parseIbanList(await getConfig(db, EXCLUDED_IBANS_KEY))];
+}
+
+/** Saves the list; returns strInvalidIBAN warnings for entries failing the mod-97 check. */
+export async function saveExcludedIbans(db: DbOrTx, ibans: string[]) {
+  const list = [...new Set(ibans.map((x) => normalizeIban(x)).filter(Boolean))];
+  await setConfig(db, EXCLUDED_IBANS_KEY, list.join(','));
+  return list.filter((x) => !isValidIban(x)).map((x) => ({ key: 'strInvalidIBAN', text: `Въведен е невалиден IBAN: ${x}`, severity: 'warning' as const }));
 }
 
 // ---------------------------------------------------------------------------
@@ -206,7 +238,12 @@ async function partnerIndex(db: DbOrTx) {
     if (excluded.has(i)) return false;
     return byIban.has(i) || byName.has(t.toLowerCase());
   };
-  return { findCompany, isPartnerValue };
+  /** Partner the IBAN is bound to (null for excluded IBANs). */
+  const ibanCompany = (iban: string) => {
+    const i = normalizeIban(iban);
+    return i && !excluded.has(i) ? byIban.get(i)?.id ?? null : null;
+  };
+  return { findCompany, isPartnerValue, ibanCompany, isExcluded: (iban: string) => excluded.has(normalizeIban(iban)) };
 }
 
 export async function loadTemplateDefs(db: DbOrTx, bankId: number, isEuro: boolean): Promise<BankTemplateDef[]> {
@@ -220,52 +257,121 @@ export async function loadTemplateDefs(db: DbOrTx, bankId: number, isEuro: boole
 
 const bgDay = (d?: string) => (d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d.slice(8, 10)}.${d.slice(5, 7)}.${d.slice(0, 4)}` : d ?? '');
 
-export async function parseStatementFile(db: DbOrTx, file: { fileName: string; bytes: Uint8Array }, o: ParseOptions, ctx: ImportCtx) {
+/**
+ * Rate of a currency for a date (GetCurrencyFixedRateByDate, 1.8): the stored
+ * rate of that date, else the latest one before it; a fixed currency (EUR in a
+ * BGN year, BGN in a EUR year) has its legal rate; otherwise the currency's
+ * current rate.
+ */
+async function rateLookup(db: DbOrTx, currency: typeof s.currencies.$inferSelect, year: number) {
+  const baseIso = year >= 2026 ? 'EUR' : 'BGN';
+  const iso = currency.isoCode.trim().toUpperCase();
+  if (baseIso === 'BGN' && iso === 'EUR') return () => BGN_PER_EUR.toString();
+  if (baseIso === 'EUR' && iso === 'BGN') return () => round(dec(1).div(BGN_PER_EUR), 5).toString();
+  const rows = await db.select({ date: s.currencyRates.date, rate: s.currencyRates.rate }).from(s.currencyRates)
+    .where(and(eq(s.currencyRates.currencyId, currency.id), eq(s.currencyRates.baseIso, baseIso), lte(s.currencyRates.date, `${year}-12-31`)))
+    .orderBy(desc(s.currencyRates.date));
+  const fallback = !dec(currency.exchangeRate).isZero() && !dec(currency.exchangeRate).eq(1) ? currency.exchangeRate : !dec(currency.fixedRate).eq(1) ? currency.fixedRate : null;
+  return (date: string) => {
+    const r = rows.find((x) => x.date <= date);
+    return r ? round(r.rate, 5).toString() : fallback ? dec(fallback).toString() : null;
+  };
+}
+
+interface MappingContext {
+  ba: Awaited<ReturnType<typeof ownBankAccounts>>[number] & { accountId: number };
+  chart: Chart;
+  templates: BankTemplateDef[];
+  ctx: Parameters<typeof mapStatementRows>[1];
+  pidx: Awaited<ReturnType<typeof partnerIndex>>;
+  bindingEnabled: boolean;
+}
+
+async function mappingContext(db: DbOrTx, o: { bankAccountId: number; termProperty?: string; referenceProperty?: string }, ctx: ImportCtx): Promise<MappingContext> {
   const [ba] = (await ownBankAccounts(db)).filter((b) => b.id === o.bankAccountId);
   if (!ba) throw new DataImportError(critical('strWrongFileOrBrokenStructures'));
   if (!ba.accountId) throw new DataImportError(critical('strMissingAccountingAccount'));
+  const chart = await loadChart(db, ctx.year.year);
+  const bankAcc = chart.byId.get(ba.accountId);
+  const isForeign = !!bankAcc?.isForeignCurrency;
+  const [cur] = bankAcc && isForeign ? await db.select().from(s.currencies).where(eq(s.currencies.id, bankAcc.currencyId)) : [];
+  const rate = cur ? await rateLookup(db, cur, ctx.year.year) : () => null;
+  const pidx = await partnerIndex(db);
+  const templates = ba.bankId ? await loadTemplateDefs(db, ba.bankId, chart.isEuro) : [];
+  return {
+    ba: { ...ba, accountId: ba.accountId }, chart, templates, pidx, bindingEnabled: await getBoolConfig(db, BANK_BINDING_KEY, true),
+    ctx: {
+      bankAccountId: ba.accountId, templates, accountByNumber: (n) => chart.byNumber.get(n)?.id ?? null,
+      isCompanyAccount: (id) => isCompanyCategory(chart.byId.get(id)?.categoryId), findCompany: pidx.findCompany, isPartnerValue: pidx.isPartnerValue,
+      termProperty: o.termProperty, referenceProperty: o.referenceProperty, isForeignCurrency: isForeign, currencyRate: rate,
+    },
+  };
+}
+
+type PreviewRow = MappedBankRow & { documents: (OpenDocument & { selected: boolean })[]; duplicate: boolean; ibanCompanyId: number | null; ibanExcluded: boolean };
+
+/** Open documents, auto-binding, duplicate flags and the IBAN binding state of the mapped rows. */
+async function enrichRows(db: DbOrTx, m: MappingContext, rows: MappedBankRow[], autoBind: boolean): Promise<PreviewRow[]> {
+  const words = (await keywords(db)).map((k) => k.word);
+  const bySum = await getBoolConfig(db, 'IsBindingBySumEnabled', true);
+  const own = normalizeIban(m.ba.account);
+  const keys = [...new Set(rows.flatMap((r) => r.rowKeys))];
+  const seen = keys.length
+    ? new Set((await db.select({ k: s.bankImportedRows.rowKey }).from(s.bankImportedRows).where(and(eq(s.bankImportedRows.iban, own), inArray(s.bankImportedRows.rowKey, keys)))).map((x) => x.k))
+    : new Set<string>();
+  return Promise.all(rows.map(async (r) => {
+    let documents: (OpenDocument & { selected: boolean })[] = [];
+    const partnerAcc = [r.debitAccountId, r.creditAccountId].find((id) => id && isCompanyCategory(m.chart.byId.get(id)?.categoryId));
+    if (m.bindingEnabled && autoBind && r.companyId && partnerAcc) {
+      const isClient = isClientCategory(m.chart.byId.get(partnerAcc)?.categoryId);
+      const open = await openDocuments(db, r.companyId, partnerAcc, isClient ? 1 : -1);
+      const chosen = new Set(autoBindDocuments(r.reason, r.postAmount, open, words, bySum));
+      documents = open.map((d, i) => ({ ...d, selected: chosen.has(i) }));
+    }
+    const duplicate = r.rowKeys.some((k) => seen.has(k));
+    return {
+      ...r, documents, duplicate, warnings: duplicate ? [...r.warnings, 'strBankStatementRowAlreadyImported'] : r.warnings,
+      ibanCompanyId: r.partnerIban ? m.pidx.ibanCompany(r.partnerIban) : null, ibanExcluded: !!r.partnerIban && m.pidx.isExcluded(r.partnerIban),
+    };
+  }));
+}
+
+export async function parseStatementFile(db: DbOrTx, file: { fileName: string; bytes: Uint8Array }, o: ParseOptions, ctx: ImportCtx) {
+  const m = await mappingContext(db, o, ctx);
+  const { ba } = m;
   const isXlsx = /\.xlsx$/i.test(file.fileName) || (file.bytes[0] === 0x50 && file.bytes[1] === 0x4b);
   const parsed = isXlsx
     ? parseBankStatement({ table: sheetTable((await readWorkbook(file.bytes))[0]!) }, ba.bankCode)
     : parseBankStatement({ text: decodeText(file.bytes) }, ba.bankCode);
   if (!parsed || !parsed.rows.length) throw new DataImportError(critical('strWrongFileOrBrokenStructures'));
   if (parsed.currency && ba.currencyIso && parsed.currency.toUpperCase() !== ba.currencyIso.trim().toUpperCase()) throw new DataImportError(critical('strCurrenciesAreNotTheSame'));
-  const years = new Set(parsed.rows.map((r) => Number(r.date.slice(0, 4))));
+  // IsFileDatesValid: start year = end year = the active year (the header period when the file has one, and every row).
+  const years = new Set([...parsed.rows.map((r) => r.date), parsed.from, parsed.to].filter((d): d is string => !!d).map((d) => Number(d.slice(0, 4))));
   if (years.size !== 1 || !years.has(ctx.year.year)) throw new DataImportError(critical('strBankStatementDatesInDifferentYear'));
 
-  const chart = await loadChart(db, ctx.year.year);
-  const bankAcc = chart.byId.get(ba.accountId);
-  const isForeign = !!bankAcc?.isForeignCurrency;
-  const [cur] = bankAcc ? await db.select().from(s.currencies).where(eq(s.currencies.id, bankAcc.currencyId)) : [];
-  const pidx = await partnerIndex(db);
-  const templates = ba.bankId ? await loadTemplateDefs(db, ba.bankId, chart.isEuro) : [];
-  let rows = mapStatementRows(parsed.rows, {
-    bankAccountId: ba.accountId, templates, accountByNumber: (n) => chart.byNumber.get(n)?.id ?? null,
-    isCompanyAccount: (id) => isCompanyCategory(chart.byId.get(id)?.categoryId), findCompany: pidx.findCompany, isPartnerValue: pidx.isPartnerValue,
-    termProperty: o.termProperty, referenceProperty: o.referenceProperty, isForeignCurrency: isForeign, currencyRate: () => cur?.fixedRate ?? cur?.exchangeRate ?? null,
-  });
-  if (o.mergeCriteria && o.mergeCriteria !== 'none') rows = mergeBankRows(rows, o.mergeCriteria, new Set(templates.filter((t) => t.mergeRowsOnImport).map((t) => t.id)));
-  const words = (await keywords(db)).map((k) => k.word);
-  const bySum = await getBoolConfig(db, 'IsBindingBySumEnabled', true);
-  const withDocs = await Promise.all(rows.map(async (r) => {
-    let documents: (OpenDocument & { selected: boolean })[] = [];
-    const partnerAcc = [r.debitAccountId, r.creditAccountId].find((id) => id && isCompanyCategory(chart.byId.get(id)?.categoryId));
-    if (o.autoBind !== false && r.companyId && partnerAcc) {
-      const isClient = isClientCategory(chart.byId.get(partnerAcc)?.categoryId);
-      const open = await openDocuments(db, r.companyId, partnerAcc, isClient ? 1 : -1);
-      const chosen = new Set(autoBindDocuments(r.reason, r.postAmount, open, words, bySum));
-      documents = open.map((d, i) => ({ ...d, selected: chosen.has(i) }));
-    }
-    return { ...r, documents };
-  }));
+  let rows = mapStatementRows(parsed.rows, m.ctx);
+  if (o.mergeCriteria && o.mergeCriteria !== 'none') rows = mergeBankRows(rows, o.mergeCriteria, new Set(m.templates.filter((t) => t.mergeRowsOnImport).map((t) => t.id)));
+  const withDocs = await enrichRows(db, m, rows, o.autoBind !== false);
   const [last] = await db.select({ d: sql<string>`max(${s.accountings.accountingDate})` }).from(s.accountingDetails)
     .innerJoin(s.accountings, eq(s.accountings.id, s.accountingDetails.accountingId)).where(eq(s.accountingDetails.accountId, ba.accountId));
+  const showBalances = !!(parsed.openingBalance && !dec(parsed.openingBalance).isZero()) || !!(parsed.closingBalance && !dec(parsed.closingBalance).isZero());
   return {
     header: msg('strBankStatementImportHeader', ba.account, ba.bankName ?? '', ba.accountNumber ?? '', bgDay(parsed.from), bgDay(parsed.to)),
-    bankAccount: ba, format: parsed.format, model: parsed.model, currency: parsed.currency ?? ba.currencyIso, from: parsed.from, to: parsed.to,
-    openingBalance: parsed.openingBalance, closingBalance: parsed.closingBalance, lastAccountingDate: last?.d ?? null,
+    bankAccount: ba, format: parsed.format, model: parsed.model, currency: parsed.currency ?? ba.currencyIso, fileIban: parsed.iban ?? null, from: parsed.from, to: parsed.to,
+    openingBalance: showBalances ? parsed.openingBalance ?? null : null, closingBalance: showBalances ? parsed.closingBalance ?? null : null, lastAccountingDate: last?.d ?? null,
+    isForeignCurrency: !!m.ctx.isForeignCurrency, bindingEnabled: m.bindingEnabled,
+    templates: m.templates.map((t) => ({ id: t.id, name: t.name, priority: t.priority })),
     properties: bankModelProperties(ba.bankCode), mapper: mapperForBank(ba.bankCode).id, rows: withDocs,
   };
+}
+
+/** MapStatementToAccountingWithTemplate (1.5): re-maps one preview row with the rule the user picked (null = no rule). */
+export async function applyTemplateToRow(db: DbOrTx, row: BankStatementRow, templateId: number | null, o: { bankAccountId: number; termProperty?: string; referenceProperty?: string; autoBind?: boolean }, ctx: ImportCtx) {
+  const m = await mappingContext(db, o, ctx);
+  const t = templateId ? m.templates.find((x) => x.id === templateId) : null;
+  if (templateId && !t) throw new ApiError(404, 'Шаблонът не е намерен.');
+  const mapped = mapStatementRow(row, m.ctx, t ?? null);
+  return (await enrichRows(db, m, [mapped], o.autoBind !== false))[0]!;
 }
 
 /** Open documents of a partner on a partner account (debit side for clients, credit side for suppliers). */
@@ -282,6 +388,13 @@ export async function openDocuments(db: DbOrTx, companyId: number, accountId: nu
     .filter((d) => dec(d.amount).greaterThan(0));
 }
 
+/** Open documents of a row's partner and partner account (binding in the preview, 06 3.4). */
+export async function rowOpenDocuments(db: DbOrTx, companyId: number, accountId: number) {
+  const [a] = await db.select({ categoryId: s.accounts.accountCategoryId }).from(s.accounts).where(eq(s.accounts.id, accountId));
+  if (!a || !isCompanyCategory(a.categoryId)) return [];
+  return openDocuments(db, companyId, accountId, isClientCategory(a.categoryId) ? 1 : -1);
+}
+
 export interface PostRow {
   index: number;
   date: string;
@@ -294,26 +407,61 @@ export interface PostRow {
   postAmount: string;
   currencyAmount?: string | null;
   exchangeRate?: string | null;
+  feeAmount?: string | null;
+  feeCurrencyAmount?: string | null;
   templateId?: number | null;
   isOwnAccounts?: boolean;
-  documents?: number[];
+  /** Bound documents: accounting ids, or with the amount to bind. */
+  documents?: (number | { accountingId: number; amount?: string | null })[];
+  rowKeys?: string[];
 }
 
 /** Apply (1.8, 1.10): validates the given rows; posts every row without critical errors. */
-export async function postStatementRows(db: DbOrTx, rows: PostRow[], o: { customDocumentNumber?: string; ownAccountsTransfer?: boolean; force?: boolean }, ctx: ImportCtx) {
+export async function postStatementRows(
+  db: DbOrTx, rows: PostRow[], o: { bankAccountId?: number; customDocumentNumber?: string; ownAccountsTransfer?: boolean; force?: boolean }, ctx: ImportCtx,
+) {
   const chart = await loadChart(db, ctx.year.year);
   const info = (id: number) => {
     const a = chart.byId.get(id);
     return a ? { isLeaf: a.isLeaf, isCompany: isCompanyCategory(a.categoryId) } : null;
   };
-  const results: { index: number; status: 'posted' | 'skipped' | 'error'; id?: number; messages: ExchangeMessage[] }[] = [];
-  const checks = rows.map((r) => ({ r, msgs: validateBankRow({ ...r, companyName: r.companyName ?? '' }, { activeYear: ctx.year.year, accountInfo: info }) }));
+  const ba = o.bankAccountId ? (await ownBankAccounts(db)).find((b) => b.id === o.bankAccountId) : undefined;
+  if (o.bankAccountId && !ba?.accountId) throw new ApiError(422, msg('strMissingAccountingAccount'), [critical('strMissingAccountingAccount')]);
+  const leafOf = (categoryId: number) => {
+    const a = chart.byCategory(categoryId);
+    return a?.isLeaf ? a.id : null;
+  };
+  const postingCtx = {
+    bankAccountId: ba?.accountId ?? -1,
+    isForeignCurrency: (id: number) => !!chart.byId.get(id)?.isForeignCurrency,
+    fxIncomeAccountId: leafOf(CATEGORY.FxIncome), fxExpenseAccountId: leafOf(CATEGORY.FxExpense),
+    feeAccountId: leafOf(57) ?? (chart.byNumber.get('629')?.isLeaf ? chart.byNumber.get('629')!.id : null),
+  };
+  const results: { index: number; status: 'posted' | 'skipped' | 'error'; id?: number; feeId?: number; messages: ExchangeMessage[] }[] = [];
+  const checks = rows.map((r) => {
+    const msgs = validateBankRow({ ...r, companyName: r.companyName ?? '' }, { activeYear: ctx.year.year, accountInfo: info });
+    const lines = r.debitAccountId && r.creditAccountId && !msgs.some((m) => m.severity === 'critical')
+      ? bankPostingLines({ ...r, debitAccountId: r.debitAccountId, creditAccountId: r.creditAccountId }, postingCtx)
+      : null;
+    return { r, lines, msgs: [...msgs, ...(lines?.messages ?? [])] };
+  });
   throwIf(checkDates(rows.map((r) => r.date).filter(Boolean), ctx.year));
+  // Corrected D-04b-6: rows already posted from a statement are confirmed first.
+  const own = ba ? normalizeIban(ba.account) : null;
+  const keys = [...new Set(rows.flatMap((r) => r.rowKeys ?? []))];
+  const seen = own && keys.length
+    ? new Set((await db.select({ k: s.bankImportedRows.rowKey }).from(s.bankImportedRows).where(and(eq(s.bankImportedRows.iban, own), inArray(s.bankImportedRows.rowKey, keys)))).map((x) => x.k))
+    : new Set<string>();
+  const dups = rows.filter((r) => (r.rowKeys ?? []).some((k) => seen.has(k)));
+  if (!o.force && dups.length) {
+    const text = msg('strBankStatementRowsAlreadyImported', dups.map((r) => r.index + 1).join(', '));
+    throw new ApiError(409, text, [{ key: 'strBankStatementRowsAlreadyImported', text, severity: 'warning' }], 'confirm');
+  }
   if (!o.force && checks.some((c) => c.msgs.some((m) => m.severity === 'warning')) && !checks.some((c) => c.msgs.some((m) => m.severity === 'critical'))) {
     throw new ApiError(409, checks.flatMap((c) => c.msgs).find((m) => m.severity === 'warning')!.text, checks.flatMap((c) => c.msgs), 'confirm');
   }
-  for (const { r, msgs } of checks) {
-    if (msgs.some((m) => m.severity === 'critical')) {
+  for (const { r, lines, msgs } of checks) {
+    if (!lines || msgs.some((m) => m.severity === 'critical')) {
       results.push({ index: r.index, status: 'error', messages: msgs });
       continue;
     }
@@ -324,34 +472,49 @@ export async function postStatementRows(db: DbOrTx, rows: PostRow[], o: { custom
     const docNumber = o.customDocumentNumber?.trim() || String(Number(r.date.slice(5, 7)));
     const dAcc = chart.byId.get(r.debitAccountId!)!;
     const cAcc = chart.byId.get(r.creditAccountId!)!;
-    const amount = round2(r.postAmount).toFixed(2);
-    const cur = (a: typeof dAcc) => (a.isForeignCurrency ? { currencyAmount: r.currencyAmount ?? null, exchangeRate: r.exchangeRate ?? null } : {});
     const saved = await saveEntry(db, {
       accountingDate: r.date, documentDate: r.date, documentTypeId: DOCUMENT_TYPE.BankStatement, documentNumber: docNumber, companyId: r.companyId,
       term: r.term, reference: r.reference || null, transactionTypeId: 1, source: 'bank-import',
-      debits: [{ accountId: dAcc.id, amount, ...cur(dAcc) }], credits: [{ accountId: cAcc.id, amount, ...cur(cAcc) }],
+      debits: lines.debits, credits: lines.credits,
     }, { year: ctx.year, userId: ctx.userId, skipHeaderChecks: true });
-    // Payment binding of the selected documents.
+    let feeId: number | undefined;
+    if (lines.fee) {
+      feeId = (await saveEntry(db, {
+        accountingDate: r.date, documentDate: r.date, documentTypeId: DOCUMENT_TYPE.BankStatement, documentNumber: docNumber, companyId: null,
+        term: 'Банкова такса', reference: r.reference || null, transactionTypeId: 1, source: 'bank-import', debits: lines.fee.debits, credits: lines.fee.credits,
+      }, { year: ctx.year, userId: ctx.userId, skipHeaderChecks: true })).id;
+    }
+    // Payment binding of the selected documents (debit side if it is a partner account, else the credit side).
     const partnerAcc = isCompanyCategory(dAcc.categoryId) ? dAcc : isCompanyCategory(cAcc.categoryId) ? cAcc : null;
     if (r.documents?.length && partnerAcc && r.companyId) {
       const open = await openDocuments(db, r.companyId, partnerAcc.id, isClientCategory(partnerAcc.categoryId) ? 1 : -1);
-      let left = dec(amount);
-      for (const accId of r.documents) {
+      let left = dec(round2(r.postAmount));
+      for (const ref of r.documents) {
+        const accId = typeof ref === 'number' ? ref : ref.accountingId;
+        const wanted = typeof ref === 'number' || !ref.amount ? null : dec(ref.amount).abs();
         const doc = open.find((d) => d.accountingId === accId);
         if (!doc || !left.greaterThan(0)) continue;
-        const pay = dec(doc.amount).lessThan(left) ? dec(doc.amount) : left;
+        let pay = dec(doc.amount).lessThan(left) ? dec(doc.amount) : left;
+        if (wanted && wanted.lessThan(pay)) pay = wanted;
         const [h] = await db.select({ documentId: s.accountings.documentId }).from(s.accountings).where(eq(s.accountings.id, accId));
         await db.insert(s.accountingPaymentDetails).values({ paymentAccountingId: saved.id, refAccountingId: accId, documentId: h?.documentId ?? null, accountId: partnerAcc.id, companyId: r.companyId, amount: pay.toFixed(2) });
         left = left.minus(pay);
       }
     }
-    results.push({ index: r.index, status: 'posted', id: saved.id, messages: msgs });
+    if (own && r.rowKeys?.length) await db.insert(s.bankImportedRows).values(r.rowKeys.map((rowKey) => ({ iban: own, rowKey, accountingId: saved.id })));
+    results.push({ index: r.index, status: 'posted', id: saved.id, feeId, messages: msgs });
   }
   return { results, posted: results.filter((x) => x.status === 'posted').length };
 }
 
+/** strBindIbanToPartnerConfirm answered Yes: adds the IBAN to the partner's bank accounts (CompanyBankAccounts). */
 export async function bindIbanToPartner(db: DbOrTx, companyId: number, iban: string) {
-  await addPartnerIbans(db, companyId, [normalizeIban(iban)]);
+  const i = normalizeIban(iban);
+  const have = await db.select({ ownerId: s.bankAccounts.ownerId }).from(s.bankAccounts)
+    .where(and(eq(s.bankAccounts.ownerType, 'company'), eq(s.bankAccounts.ownerId, companyId), eq(s.bankAccounts.account, i)));
+  if (have.length) return false;
+  await addPartnerIbans(db, companyId, [i]);
+  return true;
 }
 
 export type { MappedBankRow };

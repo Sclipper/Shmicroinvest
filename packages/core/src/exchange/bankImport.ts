@@ -470,9 +470,16 @@ const nz = (v: string | null | undefined) => !!v && !dec(v).isZero();
  * bank account the bank line is valued at the row rate (currency x rate); when
  * the counter account is in base currency and its amount differs, the
  * difference goes to 624 (loss) or 724 (gain), else strCurrencyAccountsNotFound.
- * A bank fee adds Dt 629 / Ct bank with the strBankTax* checks.
+ * A bank fee is Dt 629 / Ct bank (a second entry) with the strBankTax* checks.
  */
-export function bankPostingLines(r: BankPostingRow, ctx: BankPostingContext): { debits: BankPostingLine[]; credits: BankPostingLine[]; difference: string; messages: ExchangeMessage[] } {
+export function bankPostingLines(r: BankPostingRow, ctx: BankPostingContext): {
+  debits: BankPostingLine[];
+  credits: BankPostingLine[];
+  /** The fee is a second entry of the same document (Dt 629 / Ct bank): an entry is one-to-one, one-to-many or many-to-one. */
+  fee: { debits: BankPostingLine[]; credits: BankPostingLine[] } | null;
+  difference: string;
+  messages: ExchangeMessage[];
+} {
   const messages: ExchangeMessage[] = [];
   const debits: BankPostingLine[] = [];
   const credits: BankPostingLine[] = [];
@@ -484,6 +491,7 @@ export function bankPostingLines(r: BankPostingRow, ctx: BankPostingContext): { 
   const cur = round2(foreign ? r.currencyAmount || '0' : '0');
   const rate = foreign && nz(r.exchangeRate) ? dec(r.exchangeRate!) : null;
   let difference = dec(0);
+  let fee: { debits: BankPostingLine[]; credits: BankPostingLine[] } | null = null;
   const curLine = (accountId: number, amount: Dec): BankPostingLine => ({
     accountId, amount: amount.toFixed(2), currencyAmount: cur.toFixed(2), exchangeRate: rate ? rate.toString() : bankRecalc.rate(amount.toFixed(2), cur.toFixed(2)),
   });
@@ -519,20 +527,22 @@ export function bankPostingLines(r: BankPostingRow, ctx: BankPostingContext): { 
   if (ctx.feeAccountId && bankIsCredit && r.debitAccountId === ctx.feeAccountId) {
     messages.push(...bankFeeChecks({ amount: P.toFixed(2), currencyAmount: cur.toFixed(2), rate: rate?.toString() ?? null }, foreign));
   }
-  if (nz(r.feeAmount) || nz(r.feeCurrencyAmount)) {
+  if ((bankIsDebit || bankIsCredit) && (nz(r.feeAmount) || nz(r.feeCurrencyAmount))) {
     const feeCur = round2(foreign ? r.feeCurrencyAmount || '0' : '0');
     const feeBase = foreign && rate && !feeCur.isZero() ? round2(feeCur.times(rate)) : round2(r.feeAmount || '0');
     const checks = bankFeeChecks({ amount: feeBase.toFixed(2), currencyAmount: feeCur.toFixed(2), rate: rate?.toString() ?? null }, foreign);
     if (!ctx.feeAccountId) checks.unshift(critical('strBankTaxAccountsMissing'));
     messages.push(...checks);
     if (!checks.length && ctx.feeAccountId) {
-      debits.push({ accountId: ctx.feeAccountId, amount: feeBase.toFixed(2) });
-      credits.push(foreign
-        ? { accountId: ctx.bankAccountId, amount: feeBase.toFixed(2), currencyAmount: feeCur.toFixed(2), exchangeRate: rate!.toString() }
-        : { accountId: ctx.bankAccountId, amount: feeBase.toFixed(2) });
+      fee = {
+        debits: [{ accountId: ctx.feeAccountId, amount: feeBase.toFixed(2) }],
+        credits: [foreign
+          ? { accountId: ctx.bankAccountId, amount: feeBase.toFixed(2), currencyAmount: feeCur.toFixed(2), exchangeRate: rate!.toString() }
+          : { accountId: ctx.bankAccountId, amount: feeBase.toFixed(2) }],
+      };
     }
   }
-  return { debits, credits, difference: difference.toFixed(2), messages };
+  return { debits, credits, fee, difference: difference.toFixed(2), messages };
 }
 
 /** Checks of a bank fee: strBankTaxZeroSum, and on a currency account strBankTaxZeroCurrencySum / strBankTaxZeroExchangeRate. */

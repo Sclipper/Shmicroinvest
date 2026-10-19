@@ -1,17 +1,16 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
-import { bankModelProperties, msg, type ConditionToken } from '@shmi/core';
+import { bankModelProperties, msg, normalizeIban, type ConditionToken } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import type { AppEnv } from '../context.ts';
 import { ApiError, notFound } from '../lib/errors.ts';
 import { zValidator } from '../lib/validate.ts';
 import { requirePermission, workingDate } from '../session.ts';
 import { logActivity } from '../services/audit.ts';
-import { getConfig, setConfig } from '../services/config.ts';
 import {
-  EXCLUDED_IBANS_KEY, addDefaultTemplates, bindIbanToPartner, keywords, listTemplates, ownBankAccounts, parseStatementFile, postStatementRows, saveTemplate,
-  validateTemplate, type TemplateInput,
+  addDefaultTemplates, applyTemplateToRow, bindIbanToPartner, excludedIbans, keywords, listTemplates, ownBankAccounts, parseStatementFile, postStatementRows,
+  rowOpenDocuments, saveExcludedIbans, saveTemplate, validateTemplate, type TemplateInput,
 } from '../services/exchange/bank.ts';
 import { importStep, readUpload } from '../services/exchange/common.ts';
 
@@ -40,7 +39,7 @@ export const bankRoutes = new Hono<AppEnv>()
     return c.json(banks.map((b) => ({ ...b, properties: bankModelProperties(b.code) })));
   })
   .get('/bank-statements/keywords', requirePermission(IMPORT), async (c) => c.json(await keywords(c.var.db)))
-  .post('/bank-statements/keywords', requirePermission(IMPORT), zValidator('json', z.object({ word: z.string().max(50) })), async (c) => {
+  .post('/bank-statements/keywords', requirePermission(IMPORT), zValidator('json', z.object({ word: z.string().max(255) })), async (c) => {
     const word = c.req.valid('json').word.trim();
     if (!word) throw new ApiError(400, 'Въведете ключова дума.');
     await keywords(c.var.db);
@@ -51,10 +50,15 @@ export const bankRoutes = new Hono<AppEnv>()
     await c.var.db.delete(s.bankImportKeywords).where(eq(s.bankImportKeywords.id, Number(c.req.param('id'))));
     return c.json({ ok: true });
   })
-  .get('/bank-statements/excluded-ibans', requirePermission(IMPORT), async (c) => c.json({ value: (await getConfig(c.var.db, EXCLUDED_IBANS_KEY)) ?? '' }))
-  .put('/bank-statements/excluded-ibans', requirePermission(IMPORT), zValidator('json', z.object({ value: z.string().max(2000) })), async (c) => {
-    await setConfig(c.var.db, EXCLUDED_IBANS_KEY, c.req.valid('json').value);
-    return c.json({ ok: true });
+  /** IBANs of payment intermediaries never used to find a partner (1.7 _excludedIbans). */
+  .get('/bank-statements/excluded-ibans', requirePermission(IMPORT), async (c) => {
+    const ibans = await excludedIbans(c.var.db);
+    return c.json({ ibans, value: ibans.join(',') });
+  })
+  .put('/bank-statements/excluded-ibans', requirePermission(IMPORT), zValidator('json', z.object({ ibans: z.array(z.string().max(50)).max(200).optional(), value: z.string().max(2000).optional() })), async (c) => {
+    const b = c.req.valid('json');
+    const warnings = await saveExcludedIbans(c.var.db, b.ibans ?? (b.value ?? '').split(/[\s,;]+/));
+    return c.json({ ok: true, ibans: await excludedIbans(c.var.db), warnings });
   })
   /** Wizard step: reads the file and proposes postings (Alt+F1). */
   .post('/bank-statements/parse', requirePermission(IMPORT), async (c) => {
@@ -66,8 +70,28 @@ export const bankRoutes = new Hono<AppEnv>()
     const r = await importStep(() => parseStatementFile(c.var.db, up, o, { year: c.var.year, userId: c.var.user.id, today: workingDate(c.var.session) }), false);
     return c.json(r);
   })
+  /** MapStatementToAccountingWithTemplate: one row re-mapped with the chosen rule. */
+  .post('/bank-statements/apply-template', requirePermission(IMPORT), zValidator('json', z.object({
+    bankAccountId: z.number().int(), templateId: z.number().int().nullable(), termProperty: z.string().optional(), referenceProperty: z.string().optional(), autoBind: z.boolean().optional(),
+    row: z.object({
+      index: z.number().int(), date: z.string(), isInflow: z.boolean(), amount: z.string(), baseAmount: z.string().optional(), partnerIban: z.string(), partnerName: z.string(),
+      reason: z.string(), reference: z.string(), props: z.record(z.string(), z.string()),
+    }),
+  })), async (c) => {
+    const b = c.req.valid('json');
+    const r = await importStep(() => applyTemplateToRow(c.var.db, b.row, b.templateId, b, { year: c.var.year, userId: c.var.user.id, today: workingDate(c.var.session) }), false);
+    return c.json(r);
+  })
+  /** Open documents of a row's partner on its partner account (IsBindingDocumentsInBankImportEnabled). */
+  .get('/bank-statements/open-documents', requirePermission(IMPORT), async (c) => {
+    const companyId = Number(c.req.query('companyId'));
+    const accountId = Number(c.req.query('accountId'));
+    if (!companyId || !accountId) throw new ApiError(400, 'Изберете партньор и партньорска сметка.');
+    return c.json(await rowOpenDocuments(c.var.db, companyId, accountId));
+  })
   /** Apply: posts the given rows (the current page). */
   .post('/bank-statements/post', requirePermission(IMPORT), zValidator('json', z.object({
+    bankAccountId: z.number().int().optional(),
     customDocumentNumber: z.string().max(50).optional(),
     ownAccountsTransfer: z.boolean().optional(),
     force: z.boolean().optional(),
@@ -75,7 +99,10 @@ export const bankRoutes = new Hono<AppEnv>()
       index: z.number().int(), date: z.string(), debitAccountId: z.number().int().nullable(), creditAccountId: z.number().int().nullable(),
       companyId: z.number().int().nullable(), companyName: z.string().optional(), term: z.string().max(255), reference: z.string().max(255).optional(),
       postAmount: z.string(), currencyAmount: z.string().nullable().optional(), exchangeRate: z.string().nullable().optional(),
-      templateId: z.number().int().nullable().optional(), isOwnAccounts: z.boolean().optional(), documents: z.array(z.number().int()).optional(),
+      feeAmount: z.string().nullable().optional(), feeCurrencyAmount: z.string().nullable().optional(),
+      templateId: z.number().int().nullable().optional(), isOwnAccounts: z.boolean().optional(),
+      documents: z.array(z.union([z.number().int(), z.object({ accountingId: z.number().int(), amount: z.string().nullable().optional() })])).optional(),
+      rowKeys: z.array(z.string().max(32)).max(500).optional(),
     })).min(1),
   })), async (c) => {
     const body = c.req.valid('json');
@@ -87,8 +114,9 @@ export const bankRoutes = new Hono<AppEnv>()
     const b = c.req.valid('json');
     const [p] = await c.var.db.select().from(s.companies).where(eq(s.companies.id, b.companyId));
     if (!p) throw notFound('Партньорът');
-    await bindIbanToPartner(c.var.db, b.companyId, b.iban);
-    return c.json({ ok: true, message: msg('strBindIbanToPartnerConfirm', b.iban, p.name) });
+    // The client asks strBindIbanToPartnerConfirm first (1.7); this is the Yes.
+    const added = await bindIbanToPartner(c.var.db, b.companyId, b.iban);
+    return c.json({ ok: true, added, message: msg(added ? 'strBindIbanSuccess' : 'strIbanAlreadyBound', normalizeIban(b.iban), p.name) });
   })
 
   // ------------------------------------------------------------------ posting rules (03a 9)
