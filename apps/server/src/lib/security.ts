@@ -39,7 +39,7 @@ export function securityHeaders(): MiddlewareHandler {
     h.set('Permissions-Policy', 'camera=(self), microphone=(), geolocation=(), payment=(), usb=()');
     h.set('Cross-Origin-Opener-Policy', 'same-origin');
     h.set('Cross-Origin-Resource-Policy', 'same-origin');
-    if (isHttps(c)) h.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    if (isHttps(c)) h.set('Strict-Transport-Security', 'max-age=31536000');
     if (c.req.path.startsWith('/api/') && !h.has('Cache-Control')) h.set('Cache-Control', 'no-store');
   };
 }

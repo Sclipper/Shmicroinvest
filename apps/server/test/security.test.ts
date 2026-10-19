@@ -165,7 +165,7 @@ describe('a server with a company', () => {
     // Not found and unauthorised responses carry them too.
     expect((await t.app.request('/api/nothing-here')).headers.get('x-content-type-options')).toBe('nosniff');
 
-    expect((await t.app.request('https://shmelta.example/api/health')).headers.get('strict-transport-security')).toBe('max-age=31536000; includeSubDomains');
+    expect((await t.app.request('https://shmelta.example/api/health')).headers.get('strict-transport-security')).toBe('max-age=31536000');
     expect((await t.app.request('/api/health', { headers: { 'x-forwarded-proto': 'https' } })).headers.get('strict-transport-security')).toBeNull();
     process.env.TRUST_PROXY = '1';
     expect((await t.app.request('/api/health', { headers: { 'x-forwarded-proto': 'https' } })).headers.get('strict-transport-security')).toMatch(/max-age=/);
