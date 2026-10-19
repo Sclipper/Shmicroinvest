@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { accountId, activeTab, api, menu, moduleCompany } from './fixtures.ts';
+import { writeJet, type JetColumn } from '../../apps/server/test/jetWriter.ts';
 
 const { openApp } = moduleCompany('exchange');
 
@@ -11,6 +12,29 @@ async function post(page: Page, e: { date: string; doc: string; companyId?: numb
     accountingDate: e.date, documentTypeId: 1, documentNumber: e.doc, term: 'Е2Е обмен', companyId: e.companyId,
     debits: [{ accountId: await accountId(page, e.dr[0]), amount: e.dr[1] }], credits: [{ accountId: await accountId(page, e.cr[0]), amount: e.cr[1] }],
   });
+}
+
+/** A small legacy Delta database (Jet 4): chart, one partner, one sale in 2009 and an opening balance. */
+function legacyDeltaFile() {
+  const c = (name: string, type: JetColumn['type'], size?: number): JetColumn => ({ name, type, size });
+  const year = [c('KonID', 'long'), c('Kon', 'long'), c('Acct', 'long'), c('SubAcct', 'long'), c('PriznakID', 'long'), c('Date', 'datetime'), c('FakNo', 'text', 10), c('DocType', 'text', 8), c('Osnovanie', 'text', 40), c('IsPokupka', 'byte'), c('OperType', 'byte'), c('IsKredit', 'byte'), c('Qtty', 'currency'), c('StartDebit', 'currency'), c('PartnerID', 'long')];
+  const date = new Date(Date.UTC(2009, 4, 20));
+  const sale = { KonID: 1, Date: date, FakNo: '0000000101', DocType: 'Ф-ра', Osnovanie: 'Продажба', IsPokupka: 2, OperType: 16, SubAcct: 0, PriznakID: 0 };
+  return writeJet([
+    { name: 'Priznaci', columns: [c('PriznakID', 'long'), c('Type', 'integer')], rows: [{ PriznakID: 0, Type: 0 }] },
+    { name: 'Accts', columns: [c('AcctID', 'long'), c('Acct', 'long'), c('SubAcct', 'long'), c('PriznakID', 'long'), c('Name', 'text', 50), c('IsValutna', 'boolean')], rows: [
+      { AcctID: 1, Acct: 411, SubAcct: 0, PriznakID: 0, Name: 'Клиенти' }, { AcctID: 2, Acct: 702, SubAcct: 0, PriznakID: 0, Name: 'Приходи от стоки' },
+      { AcctID: 3, Acct: 453, SubAcct: 0, PriznakID: 0, Name: 'ДДС' }, { AcctID: 4, Acct: 453, SubAcct: 2, PriznakID: 0, Name: 'ДДС продажби' },
+      { AcctID: 5, Acct: 501, SubAcct: 0, PriznakID: 0, Name: 'Каса' },
+    ] },
+    { name: 'Part', columns: [c('ID', 'long'), c('Company', 'text', 60), c('Bulstat', 'text', 13), c('IsVeryUsed', 'byte')], rows: [{ ID: 1, Company: 'Клиент Делта АД', Bulstat: '200000001', IsVeryUsed: 1 }] },
+    { name: 'Year2009', columns: year, rows: [
+      { ...sale, Kon: 1, Acct: 411, IsKredit: 2, Qtty: 120, PartnerID: 1 },
+      { ...sale, Kon: 2, Acct: 702, IsKredit: 1, Qtty: -100, PartnerID: 0 },
+      { ...sale, Kon: 3, Acct: 453, SubAcct: 2, IsKredit: 1, Qtty: -20, PartnerID: 0 },
+      { KonID: 0, Kon: 0, Acct: 501, SubAcct: 0, PriznakID: 0, StartDebit: 500 },
+    ] },
+  ]);
 }
 
 type TbRow = { number: string; openingDebit: string; openingCredit: string; debitTurnover: string; creditTurnover: string };
@@ -73,10 +97,33 @@ test.describe('data exchange', () => {
     await expect(tab.getByRole('cell', { name: file.suggestedFilename() })).toBeVisible();
   });
 
-  test('Delta conversion is shown as not supported', async ({ page }) => {
+  test('Delta conversion: refuses a non-Access file, then converts a legacy MAINACCT.MDB into an empty company (04a 7)', async ({ page }) => {
     await openApp(page);
+    // The conversion needs an empty company: a new one, in this page's own session.
+    const name = `Делта Е2Е ${uid()}`;
+    await api(page, 'POST', '/companies', { companyName: name, adminName: 'Администратор', adminPassword: 'e2e-secret', year: 2026, bulstat: '175074752' });
+    await page.goto('/');
+    await expect(page.locator('footer')).toContainText(name);
     await menu(page, 'Редакция', 'Администриране', 'Импорт от Microinvest Делта');
-    await expect(activeTab(page).getByTestId('delta-not-supported')).toContainText('не се поддържа');
+    const tab = activeTab(page);
+    await expect(tab.getByTestId('delta-type')).toHaveValue('all');
+
+    await tab.getByTestId('delta-file').setInputFiles({ name: 'MAINACCT.MDB', mimeType: 'application/octet-stream', buffer: Buffer.from('Това не е база данни на Access.\n'.repeat(100)) });
+    await tab.getByTestId('delta-run').click();
+    await expect(page.getByText('При импорта от Microinvest Делта ще бъдат прехвърлени', { exact: false })).toBeVisible();
+    await page.getByRole('button', { name: 'Да', exact: true }).click();
+    await expect(tab.getByText('Некоректен файлов формат!')).toBeVisible();
+
+    await tab.getByTestId('delta-file').setInputFiles({ name: 'MAINACCT.MDB', mimeType: 'application/octet-stream', buffer: Buffer.from(legacyDeltaFile()) });
+    await tab.getByTestId('delta-run').click();
+    await page.getByRole('button', { name: 'Да', exact: true }).click();
+    await expect(tab.getByTestId('import-done')).toHaveText('Прехвърлянето завърши.');
+    const result = tab.getByTestId('delta-result');
+    await expect(result.getByRole('row', { name: /^Контирания 1$/ })).toBeVisible();
+    await expect(result.getByRole('row', { name: /^Year2009 2009 1 1 0$/ })).toBeVisible();
+    await expect(tab.getByText('Некоректен файлов формат!')).toHaveCount(0);
+    const partners = await api<{ name: string }[]>(page, 'GET', '/partners');
+    expect(partners.map((p) => p.name)).toContain('Клиент Делта АД');
   });
 
   test('exports operations to XML and imports the file back, closing the documents by amount (04a 3)', async ({ page }) => {

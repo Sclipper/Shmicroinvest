@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { FileDown } from 'lucide-react';
-import { msg } from '@shmi/core';
 import { api, type Message } from '../../api.ts';
 import { AccountPicker } from '../../components/pickers.tsx';
 import { useDialogs } from '../../components/dialogs.tsx';
@@ -484,18 +483,88 @@ export function TrzImport() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Microinvest Delta (04a 7) - not supported                           */
+/* Microinvest Delta (04a 7)                                           */
 /* ------------------------------------------------------------------ */
 
+type DeltaType = 'partners' | 'chartAndPartners' | 'all';
+interface DeltaInfo { defaultFile: string; warning: string; types: { id: DeltaType; label: string }[]; blockers: Record<DeltaType, Message[]> }
+interface DeltaResult {
+  type: DeltaType; myCompany: boolean; accounts: number; partners: number; partnersMatched: number; accountings: number; openingBalances: number;
+  years: { year: number; table: string; accountings: number; openingBalances: number; skipped: number }[]; warnings: Message[]; message: string;
+}
+
 export function DeltaConversion() {
+  const invalidate = useInvalidate();
+  const dialogs = useDialogs();
+  const info = useQuery({ queryKey: ['exchange', 'delta'], queryFn: () => api.get<DeltaInfo>('/exchange/delta') });
+  const [file, setFile] = useState<File | null>(null);
+  const [type, setType] = useState<DeltaType>('all');
+  const [busy, setBusy] = useState(false);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [result, setResult] = useState<DeltaResult | null>(null);
+  const blockers = info.data?.blockers[type] ?? [];
+  const run = async () => {
+    if (!file || !info.data) return;
+    if (!(await dialogs.confirm(info.data.warning, 'Импорт от Microinvest Делта'))) return;
+    setBusy(true);
+    setMessages([]);
+    setResult(null);
+    try {
+      const r = await upload<DeltaResult>('/exchange/delta/import', file, { type });
+      setResult(r);
+      await invalidate('entries', 'reports', 'partners', 'accounts', 'years', 'my-company', 'exchange');
+    } catch (e) {
+      setMessages(errorMessages(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
-    <div className="h-full overflow-auto p-3">
-      <Panel title="Импорт от Microinvest Делта" className="max-w-[640px]">
-        <div className="space-y-2 p-3 text-[13px]">
-          <p data-testid="delta-not-supported">{msg('strDeltaConversionNotSupported')}</p>
-          <p className="text-slate-600">След експорта използвайте „Импорт от XML“ или „Импорт от текстов файл“.</p>
-        </div>
-      </Panel>
+    <div className="h-full overflow-auto p-3" data-testid="delta-conversion">
+      <div className="flex max-w-[760px] flex-col gap-3">
+        <Panel title="Импорт от Microinvest Делта">
+          <div className="flex flex-col gap-3 p-3">
+            <Field label="База данни на Microinvest Делта (*.mdb)" hint={info.data ? `Обичайно местоположение: ${info.data.defaultFile}` : undefined}>
+              <FileInput file={file} onChange={setFile} accept=".mdb,.MDB" testId="delta-file" />
+            </Field>
+            <Field label="Вид на импорта">
+              <Select value={type} onChange={(e) => setType(e.target.value as DeltaType)} className="w-80" data-testid="delta-type">
+                {(info.data?.types ?? []).map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+              </Select>
+            </Field>
+            <p className="text-[12px] text-slate-500">Данните се прехвърлят в активната фирма, която трябва да е празна. Операциите до 2025 г. се записват в лева, всяка в своята счетоводна година.</p>
+          </div>
+        </Panel>
+        <MessageList messages={[...blockers, ...messages]} />
+        {result && (
+          <Panel title="Резултат">
+            <div className="flex flex-col gap-2 p-3" data-testid="delta-result">
+              <div className="rounded-sm border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-800" data-testid="import-done">{result.message}</div>
+              <table className="grid-table">
+                <tbody>
+                  <tr><td className="w-72">Данни за фирмата</td><td>{result.myCompany ? 'прехвърлени' : 'няма'}</td></tr>
+                  <tr><td>Сметки</td><td className="tabular-nums">{result.accounts}</td></tr>
+                  <tr><td>Партньори (нови / съществуващи)</td><td className="tabular-nums">{result.partners} / {result.partnersMatched}</td></tr>
+                  <tr><td>Контирания</td><td className="tabular-nums">{result.accountings}</td></tr>
+                  <tr><td>Начални салда</td><td className="tabular-nums">{result.openingBalances}</td></tr>
+                </tbody>
+              </table>
+              {result.years.length > 0 && (
+                <table className="grid-table">
+                  <thead><tr><th>Таблица</th><th className="w-24">Година</th><th className="w-28 text-right">Контирания</th><th className="w-28 text-right">Начални салда</th><th className="w-28 text-right">Пропуснати</th></tr></thead>
+                  <tbody>
+                    {result.years.map((y) => (
+                      <tr key={y.table}><td>{y.table}</td><td>{y.year}</td><td className="text-right tabular-nums">{y.accountings}</td><td className="text-right tabular-nums">{y.openingBalances}</td><td className="text-right tabular-nums">{y.skipped}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              <MessageList messages={result.warnings} />
+            </div>
+          </Panel>
+        )}
+        <div className="flex justify-end"><Button variant="primary" disabled={!file || busy || blockers.length > 0} onClick={run} data-testid="delta-run">{busy ? 'Прехвърляне...' : 'Импорт'}</Button></div>
+      </div>
     </div>
   );
 }

@@ -120,7 +120,6 @@ export const EXCHANGE_MESSAGES = {
   strImportFromTRZProFailed: 'Неуспешен импорт от Microinvest ТРЗ Pro!',
 
   // --- legacy Delta (04a 7)
-  strDeltaConversionNotSupported: 'Импортът от Microinvest Делта (.mdb, Microsoft Jet) не се поддържа в уеб версията. Използвайте експорт към текстов файл или XML от старата програма.',
   strPartners: 'Партньори',
   strChartAndPartners: 'Сметкоплан и партньори',
   strOperationsChartPartners: 'Операции, сметкоплан и партньори',
