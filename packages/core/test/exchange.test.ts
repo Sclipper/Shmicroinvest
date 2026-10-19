@@ -9,7 +9,7 @@ import {
   DEFAULT_BANK_TEMPLATES, defaultTemplateTokens, bankRecalc,
   parseTrzFeed, trzAggregate, trzGrid, trzDefaultTerm, trzDefaultAccountingDate, trzAccountingDateValid, trzAvailableMonths, TRZ_ITEMS,
   columnIndex, columnLetters, validateExcelMapping, parseExcelOperationRow, parseDirection, parseCharacter, icaDefaultTerm, cellDate, readSetupSheet,
-  toEuro, convertOpenings, defaultEuroMapping, accountDifference,
+  toEuro, convertOpenings, defaultEuroMapping, accountDifference, convertBalanceToEuro, euroBalanceKind,
   backupFileName, parseBackupFileName, sanitizeCompanyName, compareVersions,
   parseExportReport, bindNamedParameters, writeExportCsv, exportFileName, checkExportParameters, isReadOnlyQuery,
   msg, parseImportDate, fromOADate,
@@ -444,9 +444,34 @@ describe('euro conversion (04b 4)', () => {
     expect(r.difference).toEqual({ accountId: 99, debit: '0.00', credit: '0.01' });
     expect(accountDifference('51.13', '0', '100', '0').toFixed(2)).toBe('0.00');
   });
-  it('default mapping by number, skipping cash in base currency', () => {
-    const m = defaultEuroMapping([{ id: 1, number: '501', categoryId: 21 }, { id: 2, number: '411', categoryId: 10 }, { id: 3, number: '999', categoryId: null }], [{ id: 11, number: '501', categoryId: 21 }, { id: 12, number: '411', categoryId: 10 }], { 3: 12 });
-    expect([...m.entries()]).toEqual([[2, 12], [3, 12]]);
+  it('default mapping by number (cash in base currency too); relations override, null leaves unmapped', () => {
+    const bgn = [{ id: 1, number: '501', categoryId: 21 }, { id: 2, number: '411', categoryId: 10 }, { id: 3, number: '999', categoryId: null }];
+    const eur = [{ id: 11, number: '501', categoryId: 21 }, { id: 12, number: '411', categoryId: 10 }];
+    expect([...defaultEuroMapping(bgn, eur, { 3: 12 }).entries()]).toEqual([[1, 11], [2, 12], [3, 12]]);
+    expect([...defaultEuroMapping(bgn, eur, { 1: null }).entries()]).toEqual([[2, 12]]);
+  });
+  it('opening kinds and their conversion (04b 4 per-account detail conversion)', () => {
+    const cur = { bgn: 1, eur: 2 };
+    expect(euroBalanceKind({ categoryId: 21, currencyId: 1 }, cur)).toBe('cash');
+    expect(euroBalanceKind({ categoryId: 26, currencyId: 2 }, cur)).toBe('eur');
+    expect(euroBalanceKind({ categoryId: 27, currencyId: 3 }, cur)).toBe('foreign');
+    expect(euroBalanceKind({ categoryId: 3, currencyId: 1, productId: 7 }, cur)).toBe('material');
+    expect(euroBalanceKind({ categoryId: 10, currencyId: 1 }, cur)).toBe('bgn');
+    const f = { priceDecimals: 3, rateDecimals: 5 };
+    const sides = (d: string, c: string, cd = '0', cc = '0', qd = '0', qc = '0') => ({ debit: d, credit: c, curDebit: cd, curCredit: cc, qtyDebit: qd, qtyCredit: qc });
+    const show = (x: ReturnType<typeof convertBalanceToEuro>) => [x.debit.toFixed(2), x.credit.toFixed(2), x.curDebit.toFixed(2), x.curCredit.toFixed(2), x.rate?.toString() ?? null, x.fixedRate?.toString() ?? null, x.price?.toString() ?? null];
+    // Cash: EUR amount, the leva as a BGN currency detail with FixedRate 1.
+    expect(show(convertBalanceToEuro('cash', sides('1000', '0'), f))).toEqual(['511.29', '0.00', '1000.00', '0.00', '0.51129', '1', null]);
+    // Foreign: the rate is recalculated, the amount follows the currency amount (not 180000 / 1.95583 = 92032.54).
+    expect(show(convertBalanceToEuro('foreign', sides('180000', '0', '100000'), f))).toEqual(['92033.00', '0.00', '100000.00', '0.00', '0.92033', null, null]);
+    // ... and without a currency amount the plain conversion is the fallback.
+    expect(show(convertBalanceToEuro('foreign', sides('0', '19.56'), f))).toEqual(['0.00', '10.00', '0.00', '0.00', null, null, null]);
+    // Material: price rounded to PriceFormat, amount = price x quantity (1000 x 0.511 = 511.00, not 1000 / 1.95583 = 511.29).
+    expect(show(convertBalanceToEuro('material', sides('1000', '0', '0', '0', '1000'), f))).toEqual(['511.00', '0.00', '0.00', '0.00', null, null, '0.511']);
+    expect(show(convertBalanceToEuro('material', sides('10', '0'), f))).toEqual(['5.11', '0.00', '0.00', '0.00', null, null, null]);
+    // BGN converted per side; EUR accounts copy their currency amounts.
+    expect(show(convertBalanceToEuro('bgn', sides('100', '0.01'), f))).toEqual(['51.13', '0.01', '0.00', '0.00', null, null, null]);
+    expect(show(convertBalanceToEuro('eur', sides('195.58', '0', '100'), f))).toEqual(['100.00', '0.00', '0.00', '0.00', null, null, null]);
   });
 });
 

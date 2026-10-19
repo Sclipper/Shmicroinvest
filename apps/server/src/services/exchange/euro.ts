@@ -1,11 +1,12 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import {
-  DataImportError, EURO_FLAGS, EURO_FROM_YEAR, EURO_TO_YEAR, critical, dec, defaultEuroMapping, msg, round2, toEuro,
+  DataImportError, EURO_FLAGS, EURO_FROM_YEAR, EURO_TO_YEAR, critical, dec, defaultEuroMapping, msg,
 } from '@shmi/core';
 import * as s from '../../db/company/schema/index.ts';
-import type { DbOrTx } from '../../db/provider.ts';
+import { exec, type DbOrTx } from '../../db/provider.ts';
 import { rebuildAccountsTree } from '../chart.ts';
 import { getConfig, setConfig } from '../config.ts';
+import { concludeIntoYear } from '../yearEnd.ts';
 import { convertFixedAssets, convertReschedules, convertTemplates } from './euroModules.ts';
 
 /**
@@ -100,7 +101,7 @@ export async function convertDatabaseToEuro(db: DbOrTx, o: EuroOptions, userId: 
   for (const [from, to] of Object.entries(o.relations ?? {})) {
     if (to !== null && !eurIds.has(to)) throw new DataImportError(critical('strEuroConversionInvalidMapping', bgn.find((b) => b.id === Number(from))?.number ?? from, String(to)));
   }
-  // 1. Mapping (SaveMappingAccounts); cash in base currency only through an explicit relation.
+  // 1. Mapping (SaveMappingAccounts): same number by default (cash in base currency too), relations override.
   const relations = { ...Object.fromEntries(bgn.filter((b) => b.mappedAccountId).map((b) => [b.id, b.mappedAccountId])), ...(o.relations ?? {}) };
   const mapping = defaultEuroMapping(
     bgn.map((b) => ({ id: b.id, number: b.number, categoryId: b.accountCategoryId, productId: b.productId })),
@@ -135,66 +136,31 @@ export async function convertDatabaseToEuro(db: DbOrTx, o: EuroOptions, userId: 
       if (!acc || !ref) throw new DataImportError(critical('strEuroConversionInvalidMapping', bgn.find((b) => b.id === (acc ? w.refAccountId : w.accountId))?.number ?? '', '-'));
       await db.update(s.accountingDetails).set({ accountId: acc, refAccountId: ref }).where(eq(s.accountingDetails.id, w.id));
     }
+    // Allocations between two 2026 entries follow their legs (MappedAccountID was saved in step 1).
+    await exec(db, sql`
+      UPDATE accounting_payment_details p SET account_id = ac.mapped_account_id
+      FROM accounts ac, accountings pa, accountings ra
+      WHERE ac.id = p.account_id AND NOT ac.is_euro AND ac.mapped_account_id IS NOT NULL
+        AND pa.id = p.payment_accounting_id AND ra.id = p.ref_accounting_id
+        AND pa.financial_year_id = ${y.to.id} AND ra.financial_year_id = ${y.to.id}`);
     report.postings = wrong.length;
     await setConfig(db, EURO_FLAGS.postings, 'True');
   }
 
-  // 4. Opening balances of 2026 = closing of 2025 converted (ConcludeFinancialYear + SumAndEqualizeToAccount).
+  // 4. Opening balances of 2026 = ConcludeFinancialYear(2025, 2026) converted (04b 4 steps 2, 6 and 9):
+  // non-partner accounts per account, partner accounts per open item with its document; the earlier
+  // openings (a year-end transfer, a previous run) are replaced, and the payment links of the replaced
+  // openings are saved and restored onto the new ones (SumAndEqualizeToAccount books the rounding).
   if (!(await flag(db, EURO_FLAGS.openings))) {
-    const res = (await db.execute(sql`
-      SELECT d.account_id, d.company_id, d.product_id, d.currency_id,
-        sum(d.amount) AS d, sum(d.ref_amount) AS c,
-        sum(CASE WHEN d.sign = 1 THEN coalesce(d.currency_amount, 0) ELSE -coalesce(d.currency_amount, 0) END) AS cur,
-        sum(CASE WHEN d.sign = 1 THEN coalesce(d.quantity, 0) ELSE -coalesce(d.quantity, 0) END) AS qty
-      FROM accounting_details d JOIN accountings a ON a.id = d.accounting_id
-      WHERE a.financial_year_id = ${y.from.id} AND NOT (a.is_initial_balance AND a.is_initial_correspondence)
-      GROUP BY d.account_id, d.company_id, d.product_id, d.currency_id`)) as unknown as { rows: { account_id: number; company_id: number | null; product_id: number | null; currency_id: number | null; d: string; c: string; cur: string; qty: string }[] };
-    const balances = res.rows.map((r) => ({ ...r, net: round2(dec(r.d).minus(r.c)) })).filter((r) => !r.net.isZero());
-    const unmapped = balances.filter((r) => !mapping.has(r.account_id));
-    if (unmapped.length) {
-      const no = bgn.find((b) => b.id === unmapped[0]!.account_id)?.number ?? String(unmapped[0]!.account_id);
-      throw new DataImportError(critical('strEuroConversionInvalidMapping', no, '-'));
-    }
-    // The conversion is the 2025 conclusion: it replaces earlier conversion openings and those of a
-    // year-end transfer (02c "Прехвърляне на салда"), which would otherwise be counted twice.
-    const old = await db.select({ id: s.accountings.id }).from(s.accountings).where(and(eq(s.accountings.financialYearId, y.to.id), eq(s.accountings.isInitialBalance, true), inArray(s.accountings.source, ['euro-conversion', 'year-close'])));
-    if (old.length) await db.delete(s.accountings).where(inArray(s.accountings.id, old.map((x) => x.id)));
-    const [eurCur] = await db.select().from(s.currencies).where(eq(s.currencies.isoCode, 'EUR'));
-    const [head] = await db.insert(s.accountings).values({
-      financialYearId: y.to.id, number: '', date: `${EURO_TO_YEAR}-01-01`, accountingDate: `${EURO_TO_YEAR}-01-01`, viesMonth: `${EURO_TO_YEAR}-01-01`,
-      transactionTypeId: 1, userId, isInitialBalance: true, source: 'euro-conversion',
-    }).returning({ id: s.accountings.id });
-    let pos = 0;
-    let totalD = dec(0);
-    let totalC = dec(0);
-    for (const r of balances) {
-      const to = mapping.get(r.account_id)!;
-      const amount = toEuro(r.net.abs());
-      if (amount.isZero()) continue;
-      const sign = r.net.isPositive() ? 1 : -1;
-      if (sign === 1) totalD = totalD.plus(amount);
-      else totalC = totalC.plus(amount);
-      const foreign = r.currency_id && r.currency_id !== eurCur?.id;
-      const curAmt = dec(r.cur).abs();
-      const qty = dec(r.qty).abs();
-      await db.insert(s.accountingDetails).values({
-        accountingId: head!.id, accountId: to, refAccountId: to, companyId: r.company_id, vatTermId: 1, sign,
-        amount: sign === 1 ? amount.toFixed(2) : '0', refAmount: sign === 1 ? '0' : amount.toFixed(2),
-        currencyId: foreign ? r.currency_id : null, currencyAmount: foreign ? curAmt.toFixed(2) : null,
-        exchangeRate: foreign && !curAmt.isZero() ? amount.div(curAmt).toDecimalPlaces(6).toFixed(6) : null, fixedRate: foreign ? '1' : null,
-        productId: r.product_id, quantity: r.product_id ? qty.toFixed(6) : null, price: r.product_id && !qty.isZero() ? amount.div(qty).toDecimalPlaces(6).toFixed(6) : null,
-        position: pos++,
-      });
-    }
-    const diff = round2(totalD.minus(totalC));
-    if (!diff.isZero()) {
-      await db.insert(s.accountingDetails).values({
-        accountingId: head!.id, accountId: diffId, refAccountId: diffId, vatTermId: 1, sign: diff.isPositive() ? -1 : 1,
-        amount: diff.isNegative() ? diff.abs().toFixed(2) : '0', refAmount: diff.isPositive() ? diff.toFixed(2) : '0', position: pos++,
-      });
-    }
-    report.openings = pos;
-    report.difference = diff.abs().toFixed(2);
+    const r = await concludeIntoYear(db, y.from, y.to, userId, {
+      map: mapping, euro: true, differencesAccountId: diffId, source: 'euro-conversion',
+      onUnmapped: (accountId) => {
+        throw new DataImportError(critical('strEuroConversionInvalidMapping', bgn.find((b) => b.id === accountId)?.number ?? String(accountId), '-'));
+      },
+    });
+    report.openings = r.openings;
+    report.relinked = r.relinked;
+    report.difference = (r.difference ?? dec(0)).abs().toFixed(2);
     await setConfig(db, EURO_FLAGS.openings, 'True');
   }
 

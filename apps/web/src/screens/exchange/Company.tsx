@@ -219,7 +219,7 @@ interface EuroGrid {
 
 const FLAG_LABELS: Record<string, string> = {
   mapping: 'Съответствие на сметките', openings: 'Начални салда 2026', postings: 'Контирания в 2026 по евро сметкоплана', bankTemplates: 'Банкови шаблони',
-  fixedAssets: 'Дълготрайни активи', templates: 'Шаблони', reschedules: 'Разсрочвания', companyAccounts: 'Сметки на партньори', difference: 'Разлика от закръгляване',
+  fixedAssets: 'Дълготрайни активи', templates: 'Шаблони', reschedules: 'Разсрочвания', companyAccounts: 'Сметки на партньори', difference: 'Разлика от закръгляване', relinked: 'Възстановени връзки с плащания',
 };
 
 /** Euro account of one BGN account: typed by number (a select per row would be too heavy for the whole chart). */

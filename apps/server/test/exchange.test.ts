@@ -1,9 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { sql } from 'drizzle-orm';
 import ExcelJS from 'exceljs';
 import { BACKUP_FORMAT_VERSION, formatTextImportLine, writeTransferXml, type TransferData } from '@shmi/core';
 import { createTestCompany, type TestCompany } from './helpers.ts';
 import { encodeBackup } from '../src/services/exchange/backup.ts';
 import { encodeLogicalDump, logicalDump } from '../src/db/logicalDump.ts';
+import { queryRows } from '../src/db/provider.ts';
+import { insertPaymentLinks, openItems } from '../src/services/openItems.ts';
 
 let t: TestCompany;
 let call: TestCompany['call'];
@@ -583,7 +586,7 @@ describe('euro conversion (04b 4)', { timeout: 60_000 }, () => {
       expect(asset.status, asset.text).toBe(201);
       const rent = await y.call('POST', '/templates', { name: 'Наем', debits: [{ accountId: y.acc('602'), amount: '500' }], credits: [{ accountId: y.acc('503'), amount: '500' }] });
       expect(rent.status, rent.text).toBe(201);
-      // Cash in base currency has no EUR counterpart by default: the template is skipped.
+      // A template with a cash-in-base-currency account is skipped (04b 4 templates).
       expect((await y.call('POST', '/templates', { name: 'Каса', debits: [{ accountId: y.acc('501'), amount: '10' }], credits: [{ accountId: y.acc('702'), amount: '10' }] })).status).toBe(201);
       const card = await y.call('POST', '/reschedules', {
         name: 'Застраховка', amount: '1200', documentTypeId: 1, documentNumber: '1', documentDate: '2025-07-01',
@@ -627,6 +630,97 @@ describe('euro conversion (04b 4)', { timeout: 60_000 }, () => {
       expect((await y.call('PUT', '/years/active', { year: 2026 })).status).toBe(200);
       const tb = await balances(y, '2026-01-01', '2026-12-31');
       expect([tb['503']!.od, tb['101']!.oc]).toEqual(['511.29', '511.29']); // 1000 / 1.95583, once
+    } finally {
+      await y.drop();
+    }
+  });
+
+  type Sib = Awaited<ReturnType<typeof sibling>>;
+  const entry = async (y: Sib, e: { date: string; docType?: number; docNumber: string; partner?: number; dr: [string, string, Record<string, unknown>?][]; cr: [string, string, Record<string, unknown>?][] }) => {
+    const r = await y.call('POST', '/entries', {
+      accountingDate: e.date, documentDate: e.date, documentTypeId: e.docType ?? 1, documentNumber: e.docNumber, term: 'Тест', companyId: e.partner ?? null,
+      debits: e.dr.map(([n, a, x]) => ({ accountId: y.acc(n), amount: a, ...x })), credits: e.cr.map(([n, a, x]) => ({ accountId: y.acc(n), amount: a, ...x })),
+    });
+    expect(r.status, r.text).toBe(201);
+    return r.body.id as number;
+  };
+  /** 2026 opening legs: account, partner, document, money, currency detail. */
+  const openingLegs = async (database: string) => queryRows<{ id: number; source: string; number: string; company_id: number | null; doc: string | null; dr: string; cr: string; iso: string | null; cur: string | null; rate: string | null; fixed: string | null }>(
+    await t.driver.company(database), sql`
+      SELECT a.id, a.source, ac.number, d.company_id, doc.number AS doc, d.amount::numeric(19,2)::text AS dr, d.ref_amount::numeric(19,2)::text AS cr,
+        c.iso_code AS iso, d.currency_amount::numeric(19,2)::text AS cur, d.exchange_rate::text AS rate, d.fixed_rate::numeric(19,2)::text AS fixed
+      FROM accountings a JOIN financial_years fy ON fy.id = a.financial_year_id JOIN accounting_details d ON d.accounting_id = a.id
+        JOIN accounts ac ON ac.id = d.account_id LEFT JOIN documents doc ON doc.id = a.document_id LEFT JOIN currencies c ON c.id = d.currency_id
+      WHERE fy.year = 2026 AND a.is_initial_balance AND (d.amount <> 0 OR d.ref_amount <> 0) ORDER BY ac.number, doc.number`);
+
+  it('carries partner open items per document; BGN cash gets a BGN currency detail and is mapped by default (04b 4)', async () => {
+    const y = await sibling('Евро Документи ООД', 2025);
+    try {
+      const cl = await y.partner('Клиент 2025', ['411']);
+      await entry(y, { date: '2025-11-10', docNumber: 'F-77', partner: cl, dr: [['411', '1955.83']], cr: [['702', '1955.83']] });
+      await entry(y, { date: '2025-12-01', docNumber: 'F-78', partner: cl, dr: [['411', '391.17']], cr: [['702', '391.17']] });
+      await y.post({ date: '2025-12-02', dr: [['501', '1000']], cr: [['101', '1000']] });
+      expect((await y.call('POST', '/years', { year: 2026 })).status).toBe(201);
+      const diff = (await y.call('GET', '/euro-conversion')).body.euroAccounts.find((x: { number: string }) => x.number === '123').id;
+      // No relations: the cash account is mapped to the EUR 501 instead of blocking.
+      const r = await y.call('POST', '/euro-conversion', { differencesAccountId: diff });
+      expect(r.status, r.text).toBe(200);
+      const legs = await openingLegs(y.database);
+      expect(legs.filter((l) => l.number === '411').map((l) => [l.company_id, l.doc, l.dr])).toEqual([[cl, 'F-77', '1000.00'], [cl, 'F-78', '200.00']]);
+      expect(legs.filter((l) => l.number === '501').map((l) => [l.dr, l.iso, l.cur, l.fixed, l.rate])).toEqual([['511.29', 'BGN', '1000.00', '1.00', '0.511290']]);
+      expect((await y.call('PUT', '/years/active', { year: 2026 })).status).toBe(200);
+      const d = await t.driver.company(y.database);
+      const items = await openItems(d, { startDate: '2026-01-01', endDate: '2026-12-31' });
+      expect(items.filter((i) => i.companyId === cl).map((i) => [i.documentNumber, i.isInitialBalance, i.open])).toEqual([['F-77', true, '1000.00'], ['F-78', true, '200.00']]);
+    } finally {
+      await y.drop();
+    }
+  });
+
+  it('a 2026 payment bound to a year-end opening keeps its binding; foreign currency at the recalculated rate (04b 4 steps 2/9)', async () => {
+    const y = await sibling('Евро Връзки ООД', 2025);
+    try {
+      const cl = await y.partner('Клиент Връзки', ['411']);
+      expect((await y.call('POST', '/accounts', { parentId: y.acc('504'), description: 'Банка USD', accountCategoryId: 27, currencyId: 3 })).status).toBe(201);
+      await y.reloadAccounts();
+      const usd = ((await y.call('GET', '/accounts')).body as { number: string }[]).map((a) => a.number).find((n) => n.startsWith('504/'))!;
+      await entry(y, { date: '2025-11-10', docNumber: 'F-91', partner: cl, dr: [['411', '1955.83']], cr: [['702', '1955.83']] });
+      await entry(y, { date: '2025-11-11', docNumber: 'F-92', partner: cl, dr: [['411', '977.92']], cr: [['702', '977.92']] });
+      // USD 100 000 at 1.80 BGN: EUR rate round(1.8 / 1.95583, 5) = 0.92033 -> 92 033.00 (not 180 000 / 1.95583 = 92 032.54).
+      await entry(y, { date: '2025-12-01', docNumber: 'B-1', dr: [[usd, '180000', { currencyAmount: '100000' }]], cr: [['101', '180000']] });
+      expect((await y.call('POST', '/years', { year: 2026 })).status).toBe(201);
+      const years = (await y.call('GET', '/years')).body as { id: number; year: number }[];
+      const diff = (await y.call('GET', '/euro-conversion')).body.euroAccounts.find((x: { number: string }) => x.number === '123').id;
+      expect((await y.call('POST', `/years/${years.find((x) => x.year === 2025)!.id}/conclude`, { differencesAccountId: diff })).status).toBe(200);
+      expect((await y.call('PUT', '/years/active', { year: 2026 })).status).toBe(200);
+      await y.reloadAccounts();
+      const d = await t.driver.company(y.database);
+      const before = await openingLegs(y.database);
+      const f91 = before.find((l) => l.doc === 'F-91')!;
+      const f92 = before.find((l) => l.doc === 'F-92')!;
+      expect(f91.source).toBe('year-close');
+      // A 2026 payment bound to the year-end opening of F-91, another one bound directly to the 2025 invoice F-92.
+      const pay = await entry(y, { date: '2026-02-01', docType: 9, docNumber: 'P-1', partner: cl, dr: [['503', '400']], cr: [['411', '400']] });
+      const pay2 = await entry(y, { date: '2026-02-02', docType: 9, docNumber: 'P-2', partner: cl, dr: [['503', '100']], cr: [['411', '100']] });
+      const inv92 = (await queryRows<{ id: number }>(d, sql`SELECT a.id FROM accountings a JOIN documents doc ON doc.id = a.document_id WHERE doc.number = 'F-92' AND NOT a.is_initial_balance`))[0]!.id;
+      await insertPaymentLinks(d, [
+        { paymentAccountingId: pay, refAccountingId: f91.id, documentId: null, accountId: y.acc('411'), companyId: cl, amount: '400' },
+        { paymentAccountingId: pay2, refAccountingId: inv92, documentId: null, accountId: y.acc('411'), companyId: cl, amount: '100' },
+      ]);
+
+      const r = await y.call('POST', '/euro-conversion', { differencesAccountId: diff });
+      expect(r.status, r.text).toBe(200);
+      const after = await openingLegs(y.database);
+      const n91 = after.find((l) => l.doc === 'F-91')!;
+      const n92 = after.find((l) => l.doc === 'F-92')!;
+      expect([n91.source, n91.dr, n92.dr]).toEqual(['euro-conversion', '1000.00', '500.00']);
+      expect(n91.id).not.toBe(f91.id);
+      expect(after.filter((l) => l.number === usd).map((l) => [l.dr, l.iso, l.cur, l.rate])).toEqual([['92033.00', 'USD', '100000.00', '0.920330']]);
+      // The binding follows the new opening: F-91 600 open, F-92 400 open (its 2025 link moved onto the opening).
+      const links = await queryRows<{ payment_accounting_id: number; ref_accounting_id: number }>(d, sql`SELECT payment_accounting_id, ref_accounting_id FROM accounting_payment_details ORDER BY payment_accounting_id`);
+      expect(links).toEqual([{ payment_accounting_id: pay, ref_accounting_id: n91.id }, { payment_accounting_id: pay2, ref_accounting_id: n92.id }]);
+      const items = await openItems(d, { startDate: '2026-01-01', endDate: '2026-12-31' });
+      expect(items.filter((i) => i.companyId === cl).map((i) => [i.documentNumber, i.open])).toEqual([['F-91', '600.00'], ['F-92', '400.00']]);
     } finally {
       await y.drop();
     }
