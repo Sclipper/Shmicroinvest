@@ -82,6 +82,8 @@ The e2e suite includes a smoke test that opens every menu screen and runs every 
 
 The Microinvest Delta conversion has a pilot (`apps/server/test/deltaPilot.test.ts`): a synthetic legacy company over 2024-2025 (VAT sales and purchases, currencies, materials, fixed assets, payments, year-end closing) is converted, and the totals computed from the legacy tables are compared with the trial balance, the VAT diaries, the partner balances and the 2026 euro openings. The default run is a small regression version; `DELTA_PILOT=full pnpm --filter @shmi/server exec vitest run test/deltaPilot.test.ts` runs the large one (400 partners, about 20 000 turnover rows, about 2 minutes).
 
+Performance is measured on a busy company rather than in the test suite. `node apps/server/scripts/seed-volume.ts` builds one through the application: about 100 000 entries over 2025 (BGN) and 2026 (EUR), 2 000 partners, payments bound to invoices, fixed assets, VAT closings and the euro conversion. It takes about 30 minutes and writes to `apps/server/.data-perf`. `node apps/server/scripts/perf.ts --runs=3` then times the heavy endpoints on a copy of it and prints p50 and max against the budgets: interactive under 500 ms, reports under 2 s, year-end under 30 s. `--only` and `--skip` select cases, and `--json` saves the results. Both scripts take a test slot.
+
 ## Known limitations
 
 - Some Bulgarian texts have no wording in the spec; those were written for this project.
