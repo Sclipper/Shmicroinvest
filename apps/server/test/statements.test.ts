@@ -194,6 +194,89 @@ describe('EUR year 2026 with the previous year in EUR', () => {
   });
 });
 
+describe('formats: abbreviated, micro, 2015, English (Тип справка)', () => {
+  type Gfo = { title: string; lines: { key: string; description: string; source: string; cp: string; ep: string }[] }[];
+  const Y = 'from=2026-01-01&to=2026-12-31';
+
+  it('micro: the abbreviated balance and ОПР add up to the full statements, plus ГФО Микро', async () => {
+    await t.call('PUT', '/years/active', { year: 2026, force: true });
+    const { run: r, cell } = await run(`${Y}&format=micro`);
+    expect((r as Run & { format: string }).format).toBe('micro');
+    expect(r.statements.map((s) => [s.code, (s as Statement & { abbreviated?: boolean }).abbreviated])).toEqual([['balance', true], ['opr', true]]);
+    expect(cell.get('sb14')).toMatchObject({ cp: '13800.00', ep: '12000.00', source: 'b50' }); // = b50 of the full balance
+    expect(cell.get('sb27')).toMatchObject({ cp: '13800.00', ep: '12000.00' });
+    expect(cell.get('sb11')!.cp).toBe('10000.00'); // cash = b47
+    expect(cell.get('sb19')!.cp).toBe('3000.00'); // retained earnings b61
+    expect(cell.get('sb20')!.cp).toBe('1800.00');
+    expect(cell.get('sr11')).toMatchObject({ cp: '1800.00', ep: '3000.00' });
+    expect(cell.get('sr13')!.cp).toBe('3000.00');
+    expect(cell.get('sr12')!.cp).toBe(cell.get('sr22')!.cp);
+    expect(cell.has('b50')).toBe(false);
+    const balance = r.statements[0]!;
+    expect(balance.rows.find((x) => x.cells.BalansCol2?.key === 'sb15')!.headings).toEqual(['А. СОБСТВЕН КАПИТАЛ']);
+    const gfo = (r as Run & { gfo: Gfo }).gfo;
+    expect(gfo.map((s) => s.title)).toEqual(['I. СЧЕТОВОДЕН БАЛАНС (съкратен)', 'II. ОТЧЕТ ЗА ПРИХОДИТЕ И РАЗХОДИТЕ (съкратен)', 'III. ДОПЪЛНИТЕЛНИ ДАННИ']);
+    const line = new Map(gfo.flatMap((s) => s.lines).map((l) => [l.key, l]));
+    expect(line.get('m08')).toMatchObject({ cp: '13800.00', ep: '12000.00' });
+    expect(line.get('m19')!.cp).toBe('13800.00');
+    expect(line.get('m32')).toMatchObject({ cp: '1800.00', ep: '3000.00', source: 'r30-r54' });
+    expect(line.get('m30')!.cp).toBe('1800.00');
+    // Other statements are not part of the micro format.
+    const { run: opp } = await run(`${Y}&format=micro&statements=opp`);
+    expect(opp.statements).toEqual([]);
+  });
+
+  it('Експорт на съкратени отчети: abbreviated statements in thousands for any format', async () => {
+    const r = await t.call<Run & { gfo: Gfo }>('GET', `/statements/abbreviated?${Y}&thousands=1&format=national`);
+    expect(r.status, r.text).toBe(200);
+    expect(r.body.unit).toBe('хил. евро');
+    expect(r.body.statements.map((s) => s.code)).toEqual(['balance', 'opr']);
+    const cell = cellsOf(r.body);
+    expect(cell.get('sb14')).toMatchObject({ cp: '14', ep: '12' });
+    expect(cell.get('sr11')!.cp).toBe('2');
+    expect(r.body.gfo).toHaveLength(3);
+  });
+
+  it('the 2015 forms: same cells, without the extraordinary rows and with renumbered results', async () => {
+    const { run: r, cell } = await run(`${Y}&format=f2015&statements=balance,opr`);
+    const opr = r.statements.find((s) => s.code === 'opr')!;
+    const label = (key: string) => opr.rows.find((x) => Object.values(x.cells).some((c) => c.key === key))?.description;
+    expect(label('r24')).toBeUndefined();
+    expect(label('r51')).toBeUndefined();
+    expect(label('r27')).toBe('8. Счетоводна печалба (общо приходи - общо разходи)');
+    expect(label('r30')).toBe('11. Печалба (8-9-10)');
+    expect(cell.get('r30')!.cp).toBe('1800.00');
+    expect(cell.get('b50')!.cp).toBe('13800.00');
+    const national = await run(`${Y}&statements=opr`);
+    expect(national.run.statements[0]!.rows.length - opr.rows.length).toBe(6);
+  });
+
+  it('English captions (NSI language choice)', async () => {
+    const { run: r, cell } = await run(`${Y}&format=nsi&lang=en&statements=balance,sda`);
+    expect(r.unit).toBe('EUR');
+    const balance = r.statements.find((s) => s.code === 'balance')! as Statement & { title: string };
+    expect(balance.title).toBe('B A L A N C E   S H E E T');
+    expect(balance.rows.find((x) => x.cells.BalansCol1?.key === 'b50')!.description).toBe('Total assets (A+B+C+D)');
+    expect(balance.rows.find((x) => x.cells.BalansCol1?.key === 'b2')!.headings).toEqual(['B. NON-CURRENT (FIXED) ASSETS', 'I. Intangible assets']);
+    expect(cell.get('b50')!.cp).toBe('13800.00');
+    const sda = r.statements.find((s) => s.code === 'sda')! as Statement & { columns: { identifier: string; description: string }[] };
+    expect(sda.columns.some((c) => c.identifier === 'SDANSICol2a')).toBe(true);
+    const micro = await t.call<Run & { gfo: Gfo }>('GET', `/statements/report?${Y}&format=micro&lang=en`);
+    expect(micro.body.gfo[0]!.title).toBe('I. BALANCE SHEET (abbreviated)');
+    expect(cellsOf(micro.body).get('sb14')!.cp).toBe('13800.00');
+    expect((await t.call('GET', `/statements/report?${Y}&format=xyz`)).body.error).toBe('Непознат тип справка.');
+    expect((await t.call('GET', `/statements/report?${Y}&lang=de`)).status).toBe(400);
+  });
+
+  it('runs the previous-year counterparts of the checks', async () => {
+    const r = await t.call('GET', `/statements/verify?${Y}`);
+    const ids = r.body.checks.map((c: { id: string }) => c.id);
+    for (const id of ['cash_2', 'equity_2', 'equity_result_2', 'capital_2', 'premium_2', 'revaluation_2', 'reserves_2', 'profit_2']) expect(ids).toContain(id);
+    const failed = r.body.checks.filter((c: { ok: boolean }) => !c.ok);
+    expect(failed, JSON.stringify(failed)).toEqual([]);
+  });
+});
+
 describe('statement formula editor (9.9)', () => {
   it('validates formulas and keeps the default for restore', async () => {
     const formulas = (await t.call('GET', '/statements/formulas')).body as { id: number; key: string; defaultFormula: string }[];

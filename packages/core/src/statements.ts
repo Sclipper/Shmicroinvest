@@ -220,11 +220,7 @@ export interface StatementCheck {
 
 const SDA_PAIRS: [string, number][] = [['b2', 309], ['b3', 310], ['b4', 311], ['b5', 312], ['b6', 313], ['b7', 314], ['b8', 315], ['b9', 316], ['b10', 317], ['b11', 318], ['b12', 319], ['b13', 320]];
 
-export const STATEMENT_CHECKS: readonly StatementCheck[] = [
-  { id: 'balance', formulas: ['B50CP-B108CP'], message: 'Сумата на актива не е равна на сумата на пасива (текуща година). Разлика: {0} {1}', severity: 'critical', balanceOnly: true },
-  { id: 'balance_2', formulas: ['B50EP-B108EP'], message: 'Сумата на актива не е равна на сумата на пасива (предходна година). Разлика: {0} {1}', severity: 'critical', balanceOnly: true },
-  { id: 'result', formulas: ['B62CP-r30CP+r54CP'], message: 'Текущата печалба (загуба) в баланса не съответства на резултата в отчета за приходите и разходите. Разлика: {0} {1}', severity: 'critical' },
-  { id: 'result_2', formulas: ['B62EP-r30EP+r54EP'], message: 'Текущата печалба (загуба) в баланса не съответства на резултата в отчета за приходите и разходите (предходна година). Разлика: {0} {1}', severity: 'critical' },
+const CURRENT_CHECKS: readonly StatementCheck[] = [
   { id: 'cash', formulas: ['B47CP-P56CP'], message: 'Паричните средства в баланса не съответстват на паричните средства в края на периода в отчета за паричните потоци. Разлика: {0} {1}', severity: 'warning' },
   { id: 'equity', formulas: ['B63CP-K196CP'], message: 'Собственият капитал в баланса не съответства на отчета за собствения капитал. Разлика: {0} {1}', severity: 'critical' },
   { id: 'equity_result', formulas: ['B62CP-K188CP'], message: 'Текущата печалба (загуба) в баланса не съответства на отчета за собствения капитал. Разлика: {0} {1}', severity: 'critical' },
@@ -233,10 +229,30 @@ export const STATEMENT_CHECKS: readonly StatementCheck[] = [
   { id: 'revaluation', formulas: ['B53CP-K52CP'], message: 'Резервът от последващи оценки в баланса не съответства на отчета за собствения капитал. Разлика: {0} {1}', severity: 'critical' },
   { id: 'reserves', formulas: ['B58CP-(K70CP+K88CP+K106CP+K124CP)'], message: 'Резервите в баланса не съответстват на отчета за собствения капитал. Разлика: {0} {1}', severity: 'critical' },
   { id: 'profit', formulas: ['r30CP-r54CP-K170CP'], message: 'Финансовият резултат в отчета за приходите и разходите не съответства на отчета за собствения капитал. Разлика: {0} {1}', severity: 'critical' },
+];
+
+/** Checks that also run for the previous year (balance_2 and result_2 are listed explicitly). */
+const PREVIOUS_YEAR_OF = ['cash', 'equity', 'equity_result', 'capital', 'premium', 'revaluation', 'reserves', 'profit'] as const;
+
+export const STATEMENT_CHECKS: readonly StatementCheck[] = [
+  { id: 'balance', formulas: ['B50CP-B108CP'], message: 'Сумата на актива не е равна на сумата на пасива (текуща година). Разлика: {0} {1}', severity: 'critical', balanceOnly: true },
+  { id: 'balance_2', formulas: ['B50EP-B108EP'], message: 'Сумата на актива не е равна на сумата на пасива (предходна година). Разлика: {0} {1}', severity: 'critical', balanceOnly: true },
+  { id: 'result', formulas: ['B62CP-r30CP+r54CP'], message: 'Текущата печалба (загуба) в баланса не съответства на резултата в отчета за приходите и разходите. Разлика: {0} {1}', severity: 'critical' },
+  { id: 'result_2', formulas: ['B62EP-r30EP+r54EP'], message: 'Текущата печалба (загуба) в баланса не съответства на резултата в отчета за приходите и разходите (предходна година). Разлика: {0} {1}', severity: 'critical' },
+  ...CURRENT_CHECKS,
   ...SDA_PAIRS.map(([b, s]): StatementCheck => ({
     id: `sda_${b}`, formulas: [`${b.toUpperCase()}CP-S${s}`],
     message: `Стойността на ред ${b} в баланса не съответства на справката за нетекущите активи. Разлика: {0} {1}`, severity: 'critical',
   })),
+  // Previous-year counterparts ("_2" .. "_7", 9.8) of the balance-sheet checks against ОПП and ОСК.
+  // RECONSTRUCTED: the spec names only the suffixes; these are the same checks over the EP cells.
+  ...PREVIOUS_YEAR_OF.map((id): StatementCheck => {
+    const c = CURRENT_CHECKS.find((x) => x.id === id)!;
+    return {
+      id: `${id}_2`, formulas: c.formulas.map((f) => f.replace(/CP\b/g, 'EP')), severity: c.severity,
+      message: c.message.replace('. Разлика:', ' (предходна година). Разлика:'),
+    };
+  }),
 ];
 
 /** string.Format(message, difference, unit). */

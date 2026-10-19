@@ -1,8 +1,10 @@
 import { asc, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import {
-  BGN_PER_EUR, EURO_CHANGEOVER_DATE, FormulaCalculator, STATEMENTS, STATEMENT_CHECKS, STATEMENT_COLUMNS, buildStatementSeed, dec, formatCheckMessage,
-  round2, statementByCode, statementLayout, statementOfKey, statementPeriods, statementUnit, toThousands, validateFormula,
-  type DateWindow, type Dec, type FormulaDataSet, type FormulaIssue, type FormulaPeriod, type LayoutRow, type StatementCode,
+  ABBREVIATED_STATEMENTS, BGN_PER_EUR, EURO_CHANGEOVER_DATE, FormulaCalculator, GFO_MICRO, STATEMENTS, STATEMENT_CHECKS, STATEMENT_COLUMNS,
+  STATEMENT_COLUMNS_EN, STATEMENT_TITLES_EN, applyStatementFormat, buildStatementSeed, captionEn, dec, formatCheckMessage, round2, statementByCode,
+  statementLayout, statementOfKey, statementPeriods, statementUnit, statementUnitEn, toThousands, validateFormula,
+  type AbbreviatedStatementDef, type DateWindow, type Dec, type FormulaDataSet, type FormulaIssue, type FormulaPeriod, type LayoutRow,
+  type StatementCode, type StatementFormat, type StatementLanguage,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import { exec, type DbOrTx } from '../db/provider.ts';
@@ -195,6 +197,10 @@ export interface StatementRunOptions {
   sameIntervalPreviousYear?: boolean;
   /** NSI (statistics) format: the NSI columns of СДА are included. */
   nsi?: boolean;
+  /** "Тип справка": national (default), nsi, f2015 (2015 captions) or micro (abbreviated balance and ОПР + ГФО Микро). */
+  format?: StatementFormat;
+  /** SelectedLanguageCode: English captions (NSI format and the English workbook). */
+  lang?: StatementLanguage;
 }
 
 /** Calculator over the statement cells for a run. */
@@ -222,48 +228,132 @@ export interface StatementCellValue {
   key: string;
   cp: string;
   ep: string | null;
+  /** Abbreviated / micro lines: the aggregation of national cells. */
+  source?: string;
 }
 
 export interface StatementResult {
   code: StatementCode;
   name: string;
   title: string;
+  /** true = the abbreviated form (lines are aggregations of the national cells). */
+  abbreviated?: boolean;
   columns: { identifier: string; description: string }[];
   rows: (Omit<LayoutRow, 'cells'> & { cells: Record<string, StatementCellValue> })[];
 }
 
+export interface GfoSection {
+  title: string;
+  lines: { key: string; description: string; headings: string[]; bold: boolean; source: string; cp: string; ep: string }[];
+}
+
 const WITH_PREVIOUS: StatementCode[] = ['balance', 'opr', 'opp'];
+
+type Fmt = (v: Dec) => string;
+const formatter = (thousands?: boolean): Fmt => (v) => (thousands ? toThousands(v).toFixed(0) : v.toFixed(2));
+
+/** An abbreviated statement in the shape of a full one (cells keyed by the side column). */
+function abbreviatedStatement(def: AbbreviatedStatementDef, calc: FormulaCalculator, fmt: Fmt, lang: StatementLanguage): StatementResult {
+  const en = lang === 'en';
+  const columns = STATEMENT_COLUMNS.filter((c) => c.statement === def.code);
+  return {
+    code: def.code, abbreviated: true, name: en ? def.nameEn : def.name, title: en ? def.titleEn : def.title,
+    columns: columns.map((c) => ({ identifier: c.identifier, description: en ? STATEMENT_COLUMNS_EN[c.identifier] ?? c.description : c.description })),
+    rows: def.lines.map((l) => ({
+      identifier: l.code, description: en ? l.en : l.label, headings: [...((en ? l.headingsEn : l.headings) ?? [])], bold: Boolean(l.bold),
+      cells: { [l.column]: { key: l.code, source: l.expr, cp: fmt(calc.expression(l.expr, 'cp')), ep: fmt(calc.expression(l.expr, 'ep')) } },
+    })),
+  };
+}
+
+/** "ГФО Микро" sheet (reconstructed NSI micro form, see GFO_MICRO). */
+function gfoSections(calc: FormulaCalculator, fmt: Fmt, lang: StatementLanguage): GfoSection[] {
+  const en = lang === 'en';
+  return GFO_MICRO.map((sec) => ({
+    title: en ? sec.titleEn : sec.title,
+    lines: sec.lines.map((l) => ({
+      key: l.code, description: en ? l.en : l.label, headings: [...((en ? l.headingsEn : l.headings) ?? [])], bold: Boolean(l.bold), source: l.expr,
+      cp: fmt(calc.expression(l.expr, 'cp')), ep: fmt(calc.expression(l.expr, 'ep')),
+    })),
+  }));
+}
+
+function translate(st: StatementResult): StatementResult {
+  const t = STATEMENT_TITLES_EN[st.code];
+  return {
+    ...st, name: t.name, title: t.title,
+    columns: st.columns.map((c) => ({ ...c, description: STATEMENT_COLUMNS_EN[c.identifier] ?? c.description })),
+    rows: st.rows.map((r) => ({ ...r, description: captionEn(r.description), headings: r.headings.map(captionEn) })),
+  };
+}
+
+function unitOf(o: StatementRunOptions) {
+  const endYear = Number(o.endDate.slice(0, 4));
+  return o.lang === 'en' ? statementUnitEn(endYear, Boolean(o.thousands)) : statementUnit(endYear, Boolean(o.thousands));
+}
 
 export async function runStatements(db: DbOrTx, o: StatementRunOptions) {
   const { calc, formulas, periods } = await statementCalculator(db, o);
+  const format: StatementFormat = o.format ?? (o.nsi ? 'nsi' : 'national');
+  const lang = o.lang ?? 'bg';
   const codes = o.statements?.length ? o.statements : STATEMENTS.map((x) => x.code);
-  const fmt = (v: Dec) => (o.thousands ? toThousands(v).toFixed(0) : v.toFixed(2));
+  for (const code of codes) if (!statementByCode(code)) throw new ApiError(400, 'Непознат отчет.');
+  const fmt = formatter(o.thousands);
   const out: StatementResult[] = [];
-  for (const code of codes) {
-    const def = statementByCode(code);
-    if (!def) throw new ApiError(400, 'Непознат отчет.');
-    const columns = STATEMENT_COLUMNS.filter((c) => c.statement === code && (o.nsi || !c.nsi));
-    const colSet = new Set(columns.map((c) => c.identifier));
-    const mine = formulas.filter((f) => f.statement === code && colSet.has(f.columnIdentifier));
-    const rowsById = new Map<string, { identifier: string; description: string; order: number }>();
-    for (const f of formulas.filter((x) => x.statement === code)) rowsById.set(f.rowIdentifier, { identifier: f.rowIdentifier, description: f.rowDescription, order: f.rowOrder });
-    const layout = statementLayout(code, [...rowsById.values()], mine);
-    const withPrev = WITH_PREVIOUS.includes(code);
-    out.push({
-      code, name: def.name, title: def.title,
-      columns: columns.map((c) => ({ identifier: c.identifier, description: c.description })),
-      rows: layout.filter((r) => Object.keys(r.cells).length > 0).map((r) => ({
-        ...r,
-        cells: Object.fromEntries(Object.entries(r.cells).map(([col, c]) => [col, { key: c.key, cp: fmt(calc.cell(c.key, 'cp')), ep: withPrev ? fmt(calc.cell(c.key, 'ep')) : null }])),
-      })),
-    });
+  let gfo: GfoSection[] | null = null;
+  if (format === 'micro') {
+    // Micro enterprises present only the abbreviated balance sheet and ОПР (Accounting Act чл. 29).
+    for (const def of ABBREVIATED_STATEMENTS) if (codes.includes(def.code)) out.push(abbreviatedStatement(def, calc, fmt, lang));
+    gfo = gfoSections(calc, fmt, lang);
+  } else {
+    for (const code of codes) {
+      const def = statementByCode(code)!;
+      const columns = STATEMENT_COLUMNS.filter((c) => c.statement === code && (format === 'nsi' || !c.nsi));
+      const colSet = new Set(columns.map((c) => c.identifier));
+      const mine = formulas.filter((f) => f.statement === code && colSet.has(f.columnIdentifier));
+      const rowsById = new Map<string, { identifier: string; description: string; order: number }>();
+      for (const f of formulas.filter((x) => x.statement === code)) rowsById.set(f.rowIdentifier, { identifier: f.rowIdentifier, description: f.rowDescription, order: f.rowOrder });
+      const layout = applyStatementFormat(statementLayout(code, [...rowsById.values()], mine), format);
+      const withPrev = WITH_PREVIOUS.includes(code);
+      const st: StatementResult = {
+        code, name: def.name, title: def.title,
+        columns: columns.map((c) => ({ identifier: c.identifier, description: c.description })),
+        rows: layout.filter((r) => Object.keys(r.cells).length > 0).map((r) => ({
+          ...r,
+          cells: Object.fromEntries(Object.entries(r.cells).map(([col, c]) => [col, { key: c.key, cp: fmt(calc.cell(c.key, 'cp')), ep: withPrev ? fmt(calc.cell(c.key, 'ep')) : null }])),
+        })),
+      };
+      out.push(lang === 'en' ? translate(st) : st);
+    }
   }
-  const endYear = Number(o.endDate.slice(0, 4));
   return {
     periods,
-    unit: statementUnit(endYear, Boolean(o.thousands)),
+    format,
+    lang,
+    unit: unitOf(o),
     thousands: Boolean(o.thousands),
     statements: out,
+    gfo,
+    issues: calc.issues as FormulaIssue[],
+  };
+}
+
+/**
+ * "Експорт на съкратени отчети": the abbreviated balance sheet and income
+ * statement of small and micro enterprises (whatever the selected format) and
+ * the ГФО Микро figures.
+ */
+export async function runAbbreviatedStatements(db: DbOrTx, o: StatementRunOptions) {
+  const { calc, periods } = await statementCalculator(db, o);
+  const lang = o.lang ?? 'bg';
+  const fmt = formatter(o.thousands);
+  return {
+    periods,
+    lang,
+    unit: unitOf(o),
+    thousands: Boolean(o.thousands),
+    statements: ABBREVIATED_STATEMENTS.map((def) => abbreviatedStatement(def, calc, fmt, lang)),
+    gfo: gfoSections(calc, fmt, lang),
     issues: calc.issues as FormulaIssue[],
   };
 }
