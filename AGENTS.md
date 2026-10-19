@@ -23,5 +23,5 @@ A web rebuild of Microinvest Delta Pro 1.01.089. The functional spec lives at `.
 
 - **Core unit tests:** `pnpm --filter @shmi/core test`.
 - **API integration tests:** `pnpm --filter @shmi/server test`. Use `test/helpers.ts` → `createTestCompany()` (in-memory PGlite, logged-in admin). It provides `call`, `acc('411')`, `partner()` and `post({ date, dr: [['411', 120]], cr: [...] })`. Use one test file per module.
-- **End-to-end UI tests:** `pnpm test:e2e` (Playwright, `e2e/tests/*.spec.ts`). The run builds the web app and starts a fresh server on port 4310, or `E2E_PORT`. Helpers are in `e2e/tests/fixtures.ts` (`openApp`, `menu`, `activeTab`, `api`, `accountId`).
+- **End-to-end UI tests:** `pnpm test:e2e` (Playwright, `e2e/tests/*.spec.ts`). For one spec, run `cd e2e && npx playwright test tests/<name>.spec.ts`; `pnpm test:e2e -- <spec>` runs them all. The run builds the web app and starts a fresh server on port 4310, or `E2E_PORT`. Helpers are in `e2e/tests/fixtures.ts` (`openApp`, `menu`, `activeTab`, `api`, `accountId`).
 - Run `pnpm -r typecheck` before committing.
