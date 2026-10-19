@@ -269,8 +269,8 @@ export function ExcelImport() {
     setBusy(true);
     res.reset();
     try {
-      const r = await upload<{ rows: number; created: number; message: string }>('/exchange/excel/import', file, { entity, mapping: m });
-      res.setDone(`${r.message} Обработени редове: ${r.rows}, записани: ${r.created}.`);
+      const r = await upload<{ rows: number; created: number; updated: number; message: string }>('/exchange/excel/import', file, { entity, mapping: m });
+      res.setDone(`${r.message} Обработени редове: ${r.rows}, записани: ${r.created}${r.updated ? `, обновени: ${r.updated}` : ''}.`);
       await invalidate('entries', 'reports', 'partners', 'accounts', 'exchange');
     } catch (e) {
       res.setMessages(errorMessages(e));
@@ -316,11 +316,9 @@ export function ExcelImport() {
               {entity === 'operations' && <Checkbox label="Колони за ВОП" checked={!!m.hasIcaColumns} onChange={(v) => setM({ ...m, hasIcaColumns: v })} />}
               {entity !== 'operations' && entity !== 'initialBalances' && (
                 <Field label="При съществуващ запис">
-                  <Select value={m.conflictMode ?? 'ignore'} onChange={(e) => setM({ ...m, conflictMode: e.target.value as Mapping['conflictMode'] })} className="w-48">
-                    <option value="ignore">Пропускане</option>
+                  <Select value={m.conflictMode === 'update' ? 'update' : 'error'} onChange={(e) => setM({ ...m, conflictMode: e.target.value as Mapping['conflictMode'] })} className="w-48" aria-label="При съществуващ запис">
+                    <option value="error">{entity === 'chart' ? 'Грешка' : 'Без промяна'}</option>
                     <option value="update">Обновяване</option>
-                    <option value="insert">Добавяне на нов</option>
-                    <option value="error">Грешка</option>
                   </Select>
                 </Field>
               )}

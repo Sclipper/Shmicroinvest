@@ -65,7 +65,7 @@ export interface ExcelMapping {
   endingRow: number;
   columns: Record<string, string>;
   hasIcaColumns?: boolean;
-  /** Persisted but never read (defect D7, compatibility). */
+  /** Error (default): entity-specific behaviour; Update: matched partners, accounts and products are updated (corrected D7). insert/ignore act as Error. */
   conflictMode?: 'insert' | 'update' | 'ignore' | 'error';
 }
 

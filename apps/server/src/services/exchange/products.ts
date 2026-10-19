@@ -41,8 +41,10 @@ const parentNumber = (n: string, sep = '/') => (n.includes(sep) ? n.slice(0, n.l
  * Creates (or reuses) a product with its material sub-accounts (XML 3.5 / Excel 5.4):
  * the supply account becomes the parent of a new `parent/N`; the release
  * account likewise. Mutates `chart` so later rows see the new accounts.
+ * An existing product (same name under the same supply parent) is reused;
+ * with `update` (Excel conflict mode Update) its code and measure are updated.
  */
-export async function importProduct(db: DbOrTx, chart: Chart, p: ProductInput, m: ProductMessages): Promise<{ productId: number; created: boolean }> {
+export async function importProduct(db: DbOrTx, chart: Chart, p: ProductInput, m: ProductMessages, opts: { update?: boolean } = {}): Promise<{ productId: number; created: boolean; updated?: boolean }> {
   const resolveParent = (num: string, allowed: readonly number[]): { parent: ImportAccount; exact: string | null } => {
     const exact = chart.byNumber.get(num);
     const parent = exact ?? chart.byNumber.get(parentNumber(num));
@@ -65,7 +67,14 @@ export async function importProduct(db: DbOrTx, chart: Chart, p: ProductInput, m
   if (existing.length) {
     const accs = await db.select().from(s.accounts).where(inArray(s.accounts.productId, existing.map((e) => e.id)));
     const hit = accs.find((a) => a.parentId === supply.parent.id);
-    if (hit) return { productId: hit.productId!, created: false };
+    if (hit) {
+      if (!opts.update) return { productId: hit.productId!, created: false };
+      const set: Partial<typeof s.products.$inferInsert> = {};
+      if (p.code.trim()) set.code = p.code.trim().slice(0, 50);
+      if (p.measure.trim()) set.measure = p.measure.trim().slice(0, 50);
+      if (Object.keys(set).length) await db.update(s.products).set(set).where(eq(s.products.id, hit.productId!));
+      return { productId: hit.productId!, created: false, updated: true };
+    }
   }
   const [prod] = await db.insert(s.products).values({ name: p.name.trim().slice(0, 255), code: p.code.trim().slice(0, 50) || null, measure: p.measure.trim().slice(0, 50) || 'бр.', price: p.price || '0' }).returning({ id: s.products.id });
   const productId = prod!.id;

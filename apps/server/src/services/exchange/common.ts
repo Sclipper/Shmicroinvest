@@ -133,10 +133,14 @@ export interface IncomingPartner {
 /**
  * Partner matching (04a 3.6): Bulstat, VAT number, IBAN, then exact name
  * (a name-only match is discarded when the record carries a usable
- * identifier). A matched partner is never updated; only missing partner
- * accounts and IBANs are added. Returns null for a partner without a name.
+ * identifier). A matched partner is never updated; only the partner accounts
+ * (chart accounts, CompanyAccounts) it does not have yet are added. Bank
+ * accounts (IBANs) are not partner accounts: they are copied only onto a new
+ * partner. The Excel conflict mode "Update" (`update`, corrected D7) updates
+ * the matched partner from the record instead. Returns null for a partner
+ * without a name.
  */
-export async function findOrCreatePartner(db: DbOrTx, p: IncomingPartner, cache?: Map<string, number>): Promise<{ id: number; created: boolean } | null> {
+export async function findOrCreatePartner(db: DbOrTx, p: IncomingPartner, cache?: Map<string, number>, opts: { update?: boolean } = {}): Promise<{ id: number; created: boolean; updated?: boolean } | null> {
   const name = p.name.trim().slice(0, 255);
   if (!name) return null;
   const bulstat = usableIdentifier(p.bulstat);
@@ -160,6 +164,11 @@ export async function findOrCreatePartner(db: DbOrTx, p: IncomingPartner, cache?
   }
   if (!id && !bulstat && !vat) id = (await db.select({ id: s.companies.id }).from(s.companies).where(and(live, eq(s.companies.name, name))).limit(1))[0]?.id ?? null;
   let created = false;
+  let updated = false;
+  if (id && opts.update) {
+    await updatePartner(db, id, { ...p, name }, { bulstat, vat, ibans });
+    updated = true;
+  }
   if (!id) {
     const [row] = await db.insert(s.companies).values({
       name, contactName: p.contactName?.trim() || null, bulstat: bulstat ?? bulstatFromVat(vat) ?? (p.bulstat?.trim() === IDENTIFIER_PLACEHOLDER ? IDENTIFIER_PLACEHOLDER : null),
@@ -174,11 +183,35 @@ export async function findOrCreatePartner(db: DbOrTx, p: IncomingPartner, cache?
         phone: a.phone?.trim().slice(0, 100) || null, postalCode: a.postalCode?.trim().slice(0, 10) || null, isPrimary: true,
       });
     }
+    await addPartnerIbans(db, id, ibans);
   }
-  await addPartnerIbans(db, id, ibans);
   await addPartnerAccounts(db, id, p.accountIds ?? []);
   cache?.set(key, id);
-  return { id, created };
+  return { id, created, updated };
+}
+
+/** Conflict mode "Update": the record's non-empty fields overwrite the matched partner; IBANs are added. */
+async function updatePartner(db: DbOrTx, id: number, p: IncomingPartner & { name: string }, k: { bulstat: string | null; vat: string | null; ibans: string[] }) {
+  const set: Partial<typeof s.companies.$inferInsert> = { name: p.name };
+  if (p.contactName?.trim()) set.contactName = p.contactName.trim().slice(0, 255);
+  if (k.bulstat) set.bulstat = k.bulstat;
+  if (k.vat) {
+    set.vatNumber = k.vat;
+    set.isVat = true;
+  }
+  await db.update(s.companies).set(set).where(eq(s.companies.id, id));
+  const a = p.address;
+  if (a && (a.city?.trim() || a.address?.trim() || a.phone?.trim())) {
+    const values = {
+      city: a.city?.trim().slice(0, 50) || null, address: a.address?.trim().slice(0, 255) || null,
+      phone: a.phone?.trim().slice(0, 100) || null, postalCode: a.postalCode?.trim().slice(0, 10) || null,
+    };
+    const [primary] = await db.select({ id: s.addresses.id }).from(s.addresses)
+      .where(and(eq(s.addresses.ownerType, 'company'), eq(s.addresses.ownerId, id), eq(s.addresses.isPrimary, true))).limit(1);
+    if (primary) await db.update(s.addresses).set(values).where(eq(s.addresses.id, primary.id));
+    else await db.insert(s.addresses).values({ ownerType: 'company', ownerId: id, ...values, isPrimary: true });
+  }
+  await addPartnerIbans(db, id, k.ibans);
 }
 
 export async function addPartnerIbans(db: DbOrTx, companyId: number, ibans: string[]) {

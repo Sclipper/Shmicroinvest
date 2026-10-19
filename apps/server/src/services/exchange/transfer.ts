@@ -19,15 +19,30 @@ export interface ImportCtx { year: ActiveYear; userId: number; today: string }
 
 export interface ChartAccountInput { number: string; description: string; englishDescription?: string; currency?: string; categoryId?: number | null; isActive?: boolean | null }
 
-/** Adds an account of the active chart; an existing number is reused untouched (XML) or refused (Excel). */
-export async function importChartAccount(db: DbOrTx, chart: Chart, a: ChartAccountInput, opts: { duplicate: 'reuse' | DataImportError; fail: (key: 'currency' | 'category' | 'parent' | 'synthetic', value: string) => DataImportError }) {
+/**
+ * Adds an account of the active chart; an existing number is reused untouched (XML), refused
+ * (Excel, conflict mode Error) or updated (Excel, conflict mode Update: names, category and
+ * character; the currency of an existing account cannot change).
+ */
+export async function importChartAccount(db: DbOrTx, chart: Chart, a: ChartAccountInput, opts: { duplicate: 'reuse' | 'update' | DataImportError; fail: (key: 'currency' | 'category' | 'parent' | 'synthetic', value: string) => DataImportError }) {
   const number = a.number.trim();
   const existing = chart.byNumber.get(number);
-  if (existing) {
-    if (opts.duplicate === 'reuse') return { account: existing, created: false };
-    throw opts.duplicate;
-  }
   const isos = await currencyIdsByIso(db);
+  if (existing) {
+    if (opts.duplicate === 'reuse') return { account: existing, created: false, updated: false };
+    if (opts.duplicate !== 'update') throw opts.duplicate;
+    const iso = a.currency?.trim().toUpperCase();
+    if (iso && isos.get(iso) !== existing.currencyId) throw opts.fail('currency', iso);
+    if (a.categoryId != null && !chart.categories.some((c) => c.id === a.categoryId)) throw opts.fail('category', String(a.categoryId));
+    const set: Partial<typeof s.accounts.$inferInsert> = { description: a.description.trim().slice(0, 255) };
+    if (a.englishDescription?.trim()) set.englishDescription = a.englishDescription.trim().slice(0, 255);
+    if (a.categoryId != null) set.accountCategoryId = a.categoryId;
+    if (a.isActive != null) set.isActive = a.isActive;
+    await db.update(s.accounts).set(set).where(eq(s.accounts.id, existing.id));
+    existing.description = set.description!;
+    if (a.categoryId != null) existing.categoryId = a.categoryId;
+    return { account: existing, created: false, updated: true };
+  }
   const iso = (a.currency?.trim() || (chart.isEuro ? 'EUR' : 'BGN')).toUpperCase();
   const currencyId = isos.get(iso);
   if (!currencyId) throw opts.fail('currency', iso);
@@ -47,7 +62,7 @@ export async function importChartAccount(db: DbOrTx, chart: Chart, a: ChartAccou
   parent.isLeaf = false;
   chart.byNumber.set(number, acc);
   chart.byId.set(acc.id, acc);
-  return { account: acc, created: true };
+  return { account: acc, created: true, updated: false };
 }
 
 const xmlAccountFail = (number: string) => (key: 'currency' | 'category' | 'parent' | 'synthetic', value: string) => {

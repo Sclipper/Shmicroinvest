@@ -354,6 +354,39 @@ describe('Excel import (04a 5)', () => {
     expect(keys(r)).toEqual(['strInvalidDataFormatInExcelCell']);
   });
 
+  it('conflict mode: Error leaves a matched partner as it is (only accounts are added), Update overwrites it (5.2, 3.6)', async () => {
+    const pMap = (conflictMode?: string) => ({ sheetName: 'Данни', startingRow: 2, endingRow: 10, conflictMode, columns: { CompanyName: 'A', ContactName: 'B', City: 'C', Address: 'D', Phone: 'E', VATNumber: 'F', Bulstat: 'G', IBAN: 'H', CompanyAccounts: 'I' } });
+    const imp = async (row: string[], conflictMode?: string) => {
+      const r = await call('POST', '/exchange/excel/import', { fileName: 'p.xlsx', contentBase64: await xlsx([['h'], row]), entity: 'partners', mapping: pMap(conflictMode) });
+      expect(r.status, r.text).toBe(200);
+      return r.body as { created: number; updated: number };
+    };
+    expect(await imp(['Конфликт ООД', 'Иван', 'Русе', 'ул. 1', '082', '', '171819202', '', '411'])).toMatchObject({ created: 1, updated: 0 });
+    const id = ((await call('GET', '/partners?q=Конфликт')).body as { id: number; name: string }[] | { rows: { id: number; name: string }[] });
+    const pid = (Array.isArray(id) ? id : id.rows).find((x) => x.name === 'Конфликт ООД')!.id;
+    // Error (default): matched by Bulstat; name, contact, address and IBAN stay; the new partner account is added.
+    expect(await imp(['Конфликт Ново ООД', 'Петър', 'Плевен', 'ул. 2', '064', '', '171819202', 'BG80BNBG96611020345678', '401'], 'error')).toMatchObject({ created: 0, updated: 0 });
+    let p = (await call('GET', `/partners/${pid}`)).body;
+    expect([p.name, p.contactName, p.addresses.map((a: { city: string }) => a.city), p.bankAccounts.length]).toEqual(['Конфликт ООД', 'Иван', ['Русе'], 0]);
+    expect(p.accounts.map((a: { number: string }) => a.number).sort()).toEqual(['401', '411']);
+    // Update: the record's fields overwrite the partner and its IBAN is added.
+    expect(await imp(['Конфликт Ново ООД', 'Петър', 'Плевен', 'ул. 2', '064', '', '171819202', 'BG80BNBG96611020345678', ''], 'update')).toMatchObject({ created: 0, updated: 1 });
+    p = (await call('GET', `/partners/${pid}`)).body;
+    expect([p.name, p.contactName, p.addresses.map((a: { city: string }) => a.city), p.bankAccounts.map((b: { account: string }) => b.account)]).toEqual(['Конфликт Ново ООД', 'Петър', ['Плевен'], ['BG80BNBG96611020345678']]);
+
+    // Chart: Error refuses an existing number, Update renames it; the currency of an existing account cannot change.
+    const chartMap = (conflictMode?: string) => ({ sheetName: 'Данни', startingRow: 2, endingRow: 10, conflictMode, columns: { Number: 'A', Description: 'B', EnglishDescription: 'C', Currency: 'D', Category: 'E', Character: 'F' } });
+    const chart = async (row: string[], conflictMode?: string) => call('POST', '/exchange/excel/import', { fileName: 'c.xlsx', contentBase64: await xlsx([['h'], row]), entity: 'chart', mapping: chartMap(conflictMode) });
+    expect((await chart(['413/7', 'Клиенти 7', '', 'EUR', '', ''])).status).toBe(200);
+    expect(keys(await chart(['413/7', 'Клиенти седем', '', '', '', ''], 'error'))).toEqual(['strNotUniqueAccountNumberInExcel']);
+    const upd = await chart(['413/7', 'Клиенти седем', 'Customers 7', '', '', '2-Пасивна'], 'update');
+    expect(upd.body).toMatchObject({ created: 0, updated: 1 });
+    expect(keys(await chart(['413/7', 'Клиенти седем', '', 'USD', '', ''], 'update'))).toEqual(['strInvalidDataFormatInExcelCell']);
+    await t.reloadAccounts();
+    const a = ((await call('GET', '/accounts')).body as { id: number; number: string; description: string; isActive: boolean | null }[]).find((x) => x.number === '413/7')!;
+    expect([a.description, a.isActive]).toEqual(['Клиенти седем', false]);
+  });
+
   it('inspects a workbook with a setup sheet and builds a template', async () => {
     const wb = new ExcelJS.Workbook();
     wb.addWorksheet('Данни').addRow(['a']);
