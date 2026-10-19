@@ -1,7 +1,11 @@
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
-import { DEPRECIATION_CATEGORIES, DEPRECIATION_METHODS, TERMINATION_TYPES, CATEGORY_MAX_RATE, RATE_PRESETS } from '@shmi/core';
+import { ASSET_IMPORT_COLUMNS, ASSET_IMPORT_MESSAGES, dapSheetName, DEPRECIATION_CATEGORIES, DEPRECIATION_METHODS, TERMINATION_TYPES, CATEGORY_MAX_RATE, RATE_PRESETS } from '@shmi/core';
 import type { AppEnv } from '../context.ts';
+import { logActivity } from '../services/audit.ts';
+import { importStep, readUpload } from '../services/exchange/common.ts';
+import { importFixedAssets } from '../services/exchange/assetImport.ts';
+import { readWorkbook, writeWorkbook } from '../services/exchange/xlsx.ts';
 import { zValidator } from '../lib/validate.ts';
 import { requirePermission, workingDate } from '../session.ts';
 import {
@@ -114,6 +118,24 @@ export const assetRoutes = new Hono<AppEnv>()
   })
   .get('/assets/protocol58', requirePermission(ASSETS), async (c) => c.json(await protocol58(c.var.db, ctxOf(c), ids(c.req.query('ids')))))
   .get('/assets/scrapping-protocol', requirePermission(ASSETS), async (c) => c.json(await scrappingProtocol(c.var.db, ctxOf(c), ids(c.req.query('ids')))))
+  /* ---- Excel import (04a 5.5): САП sheet + "{name} - ДАП" sheet ---- */
+  .post('/assets/import-excel', requirePermission(ASSETS), async (c) => {
+    const up = await readUpload(c);
+    const sheets = await importStep(() => readWorkbook(up.bytes), false);
+    const r = await c.var.db.transaction((tx) => importFixedAssets(tx, ctxOf(c), sheets));
+    await logActivity(c.var.db, c.var.user.id, 'import', 'fixedAssets', null, `Импорт на дълготрайни активи от Excel: ${up.fileName} (${r.imported})`);
+    return c.json(r);
+  })
+  .get('/assets/import-excel/template', requirePermission(ASSETS), async (c) => {
+    const sap = ASSET_IMPORT_MESSAGES.strSap;
+    const data = await writeWorkbook([
+      { name: sap, header: ASSET_IMPORT_COLUMNS.map((x) => x.caption), rows: [] },
+      { name: dapSheetName(sap), header: ASSET_IMPORT_COLUMNS.filter((x) => !x.sapOnly).map((x) => x.caption), rows: [] },
+    ]);
+    c.header('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    c.header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent('Дълготрайни активи.xlsx')}`);
+    return c.body(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer);
+  })
   .get('/assets/:id', requirePermission(ASSETS), async (c) => c.json(await assetView(c.var.db, ctxOf(c), Number(c.req.param('id')))))
   .get('/assets/:id/card', requirePermission(ASSETS), async (c) => c.json(await assetCard(c.var.db, ctxOf(c), Number(c.req.param('id')), c.req.query('date') ?? workingDate(c.var.session))))
   .put('/assets/:id', requirePermission(ASSETS), zValidator('json', assetBody), async (c) => {

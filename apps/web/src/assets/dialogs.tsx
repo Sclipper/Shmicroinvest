@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { parseAmount } from '@shmi/core';
-import { api } from '../api.ts';
+import { api, ApiError, type Message } from '../api.ts';
 import { useDialogs } from '../components/dialogs.tsx';
 import { AccountPicker } from '../components/pickers.tsx';
 import { Button, Checkbox, Dialog, Field, Select, Spinner, TextInput } from '../components/ui.tsx';
 import { bgDate, money, monthLabel } from '../format.ts';
+import { download, FileInput, MessageList, upload } from '../screens/exchange/common.tsx';
 import { DocHeader, PrintableDoc, Signatures, useAssetLookups, type AssetRow, type Location } from './common.tsx';
 
 const num = (v: string) => {
@@ -388,6 +389,53 @@ export function CheckDialog({ year, onClose }: { year: number; onClose: () => vo
       {q.isFetching ? <Spinner /> : q.data && (
         <div className={q.data.ok ? 'rounded-sm bg-emerald-50 p-2 text-emerald-800' : 'rounded-sm bg-amber-50 p-2 text-amber-900'}>
           {q.data.lines.map((l, i) => <div key={i} className={l.endsWith(':') ? 'font-semibold' : ''}>{l}</div>)}
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+/**
+ * Импорт на дълготрайни активи от Excel (04a 5.5): the workbook has the САП
+ * sheet and the "{name} - ДАП" sheet; every check blocks the import and the
+ * messages are listed together.
+ */
+export function AssetImportDialog({ onClose, onDone }: { onClose: () => void; onDone: (r: { imported: number; message: string; warnings: Message[] }) => void }) {
+  const dialogs = useDialogs();
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<{ text: string; messages: Message[] } | null>(null);
+  const run = async () => {
+    if (!file) return;
+    setBusy(true);
+    setError(null);
+    try {
+      onDone(await upload<{ imported: number; message: string; warnings: Message[] }>('/assets/import-excel', file));
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 422) setError({ text: e.messages?.length ? e.message.split('\n')[0]! : e.message, messages: e.messages ?? [] });
+      else await dialogs.error(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog title="Импорт на дълготрайни активи от Excel" onClose={onClose} width={640}
+      footer={
+        <>
+          <Button onClick={() => void download('/assets/import-excel/template').catch((e) => dialogs.error(e))}>Шаблон</Button>
+          <Button variant="primary" disabled={!file || busy} onClick={() => void run()}>{busy ? <Spinner className="size-3.5" /> : 'Импорт'}</Button>
+          <Button onClick={onClose}>Затвори</Button>
+        </>
+      }
+    >
+      <p className="mb-2 text-[13px] text-slate-600">Файлът съдържа таб със счетоводните амортизации (САП) и таб „{'{име}'} - ДАП“ с данъчните. Първият ред е заглавен.</p>
+      <Field label="Път до файла">
+        <FileInput file={file} onChange={(f) => { setFile(f); setError(null); }} accept=".xlsx,.xls" testId="asset-import-file" />
+      </Field>
+      {error && (
+        <div className="mt-3 space-y-1" data-testid="asset-import-errors">
+          <div className="text-[13px] font-semibold text-red-700">{error.text}</div>
+          <MessageList messages={error.messages} />
         </div>
       )}
     </Dialog>

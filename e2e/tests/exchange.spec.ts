@@ -1,8 +1,14 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { accountId, activeTab, api, menu, moduleCompany } from './fixtures.ts';
 
 const { openApp } = moduleCompany('exchange');
+
+// exceljs comes from the server package (the e2e package has no dependency on it).
+const ExcelJS = createRequire(new URL('../../apps/server/package.json', import.meta.url))('exceljs') as {
+  Workbook: new () => { addWorksheet(name: string): { addRow(r: unknown[]): void }; xlsx: { writeBuffer(): Promise<ArrayBuffer> } };
+};
 
 const uid = () => `${Date.now()}${Math.floor(Math.random() * 1000)}`;
 
@@ -258,6 +264,45 @@ test.describe('data exchange', () => {
     await tab.getByRole('button', { name: 'Запис' }).click();
     await expect.poll(async () => (await api<{ key: string; value: string }[]>(page, 'GET', '/settings')).find((s) => s.key === 'IsBindingDocumentsInBankImportEnabled')?.value).toBe('False');
     await api(page, 'PUT', '/settings', { IsBindingDocumentsInBankImportEnabled: 'True' });
+  });
+
+  test('imports fixed assets from Excel: САП and "… - ДАП" sheets, errors listed together (04a 5.5)', async ({ page }) => {
+    await openApp(page);
+    const n = uid().slice(-6);
+    const sapHeader = ['Инвентарен номер', 'Наименование', 'МОЛ', 'Местонахождение', 'Категория', 'Дата на придобиване', 'Дата на въвеждане в експлоатация', 'Крайна дата', 'Към дата',
+      'Полезен срок (месеци)', 'Годишна норма (%)', 'Начислена амортизация', 'Остатъчна стойност', 'Амортизируема стойност', 'Преоценъчен резерв', 'Сметка на актива',
+      'Сметка за амортизация', 'Разходна сметка', 'Синхронизирани планове'];
+    const dapHeader = ['Инвентарен номер', 'Наименование', 'Категория', 'Дата на придобиване', 'Дата на въвеждане в експлоатация', 'Крайна дата', 'Към дата', 'Полезен срок (месеци)', 'Годишна норма (%)', 'Начислена амортизация', 'Остатъчна стойност', 'Амортизируема стойност'];
+    const book = async (sapAccount: string, extraDap: boolean) => {
+      const wb = new ExcelJS.Workbook();
+      const sap = wb.addWorksheet('Активи');
+      sap.addRow(sapHeader);
+      sap.addRow([`E${n}`, `Е2Е машина ${n}`, 'Иван', '', 'Категория 2', '10.01.2025', '15.01.2025', '', '31.12.2025', 24, '', 1100, 0, 2400, 0, sapAccount, '241/2', '603', 'Не']);
+      const dap = wb.addWorksheet('Активи - ДАП');
+      dap.addRow(dapHeader);
+      dap.addRow([`E${n}`, `Е2Е машина ${n}`, 'Категория 2', '10.01.2025', '15.01.2025', '', '31.12.2025', 24, '', 1200, 0, 2400]);
+      if (extraDap) dap.addRow([`X${n}`, 'Само в ДАП', 'Категория 2', '10.01.2025', '15.01.2025', '', '31.12.2025', 24, '', 0, 0, 100]);
+      return Buffer.from(await wb.xlsx.writeBuffer());
+    };
+    const xlsxType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+    await menu(page, 'Операции', 'Дълготрайни активи');
+    const tab = activeTab(page);
+    await tab.getByRole('button', { name: 'Импорт от Excel' }).click();
+    const dlg = page.getByRole('dialog').filter({ hasText: 'Импорт на дълготрайни активи от Excel' });
+    await dlg.getByTestId('asset-import-file').setInputFiles({ name: 'активи.xlsx', mimeType: xlsxType, buffer: await book('999', true) });
+    await dlg.getByRole('button', { name: 'Импорт', exact: true }).click();
+    const errors = dlg.getByTestId('asset-import-errors');
+    await expect(errors).toContainText('Импортът не може да бъде извършен поради следните причини:');
+    await expect(errors).toContainText(`X${n}`);
+    await expect(errors).toContainText('Не е намерена сметка с номер: 999.');
+
+    await dlg.getByTestId('asset-import-file').setInputFiles({ name: 'активи.xlsx', mimeType: xlsxType, buffer: await book('203', false) });
+    await dlg.getByRole('button', { name: 'Импорт', exact: true }).click();
+    const alert = page.getByRole('dialog').filter({ hasText: 'Импортирани дълготрайни активи: 1.' });
+    await expect(alert).toBeVisible();
+    await alert.getByRole('button', { name: 'OK' }).click();
+    await expect(tab.getByRole('table', { name: 'Дълготрайни активи' })).toContainText(`Е2Е машина ${n}`);
   });
 
   // Runs last: it adds the 2025 year (BGN chart) and opens 2026 from it.

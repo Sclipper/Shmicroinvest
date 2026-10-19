@@ -242,6 +242,8 @@ export interface AssetInput {
   clearImprovements?: boolean;
   /** Yes to strDepreciationsAccountingAndTaxDepreciationDiffer. */
   plansDifferAccepted?: boolean;
+  /** Migration import (14.2): both plans are built in "international accounting recalculation" mode. */
+  iasMode?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -445,12 +447,12 @@ export async function computeAsset(db: DbOrTx, ctx: AssetCtx, input: AssetInput,
   const storedSap = existing ? plans!.get(existing.accountingDepreciationId) : undefined;
   const storedDap = existing ? plans!.get(existing.taxDepreciationId) : undefined;
   const wasSync = existing?.areDepreciationsSynchronized ?? input.synchronized;
-  const accounting = computePlan({ isAccounting: true, input: input.accounting, synchronized: input.synchronized, wasSynchronized: wasSync, categoryId: input.categoryId, stored: storedSap, reserve: planReserve(storedSap), locks, appDate: ctx.appDate });
+  const accounting = computePlan({ isAccounting: true, input: input.accounting, synchronized: input.synchronized, wasSynchronized: wasSync, categoryId: input.categoryId, stored: storedSap, reserve: planReserve(storedSap), locks, appDate: ctx.appDate, iasMode: input.iasMode });
   // opts.stored: show the stored plans as they are (the ДАП copy happens on save only, R7).
   const copy = input.synchronized && !opts.stored;
   const taxInput = copy ? copyPlanInput(input.accounting, input.tax) : input.tax;
   if (copy && storedDap && !existing?.areDepreciationsSynchronized) taxInput.regenerate = true;
-  const tax = computePlan({ isAccounting: false, input: taxInput, synchronized: input.synchronized, wasSynchronized: wasSync, categoryId: input.categoryId, stored: storedDap, reserve: ZERO, locks, appDate: ctx.appDate });
+  const tax = computePlan({ isAccounting: false, input: taxInput, synchronized: input.synchronized, wasSynchronized: wasSync, categoryId: input.categoryId, stored: storedDap, reserve: ZERO, locks, appDate: ctx.appDate, iasMode: input.iasMode });
   if (copy && storedDap && tax.regenerated) {
     // The copy may not change months of a locked period (strDepreciationsAreSynchronisedChangeConflictsWithLockedPeriod).
     const newByMonth = new Map(tax.rows.map((r) => [r.month, r.amount]));
