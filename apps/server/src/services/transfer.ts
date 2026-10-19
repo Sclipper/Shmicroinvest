@@ -13,6 +13,10 @@ export interface TransferOptions {
   users?: boolean;
   partners?: boolean;
   accountings?: boolean;
+  /** Шаблони на контировки, with their schedules (01b 1.2 AccountingTemplates). */
+  accountingTemplates?: boolean;
+  /** Шаблони за банков импорт, with their condition formulas (01b 1.2 BankTemplates). */
+  bankTemplates?: boolean;
 }
 
 type Row = Record<string, unknown>;
@@ -34,13 +38,16 @@ async function tableExists(db: DbOrTx, table: string) {
 
 const read = (db: DbOrTx, table: string, where = '') => queryRows<Row>(db, sql.raw(`SELECT * FROM ${table}${where ? ` WHERE ${where}` : ''} ORDER BY 1`));
 
+/** jsonb values (e.g. bank-template formulas) travel as JSON text; drizzle would expand an array into a record. */
+const param = (v: unknown) => (v != null && typeof v === 'object' && !(v instanceof Date) && !(v instanceof Uint8Array) ? JSON.stringify(v) : v ?? null);
+
 /** Inserts rows (columns common to both schemas); upsert replaces rows with the same id. */
 async function write(db: DbOrTx, table: string, rows: Row[], mode: 'insert' | 'upsert' = 'insert') {
   if (!rows.length) return;
   const cols = (await columns(db, table)).filter((c) => c in rows[0]!);
   for (let i = 0; i < rows.length; i += 200) {
     const chunk = rows.slice(i, i + 200);
-    const values = sql.join(chunk.map((r) => sql`(${sql.join(cols.map((c) => sql`${r[c] ?? null}`), sql`, `)})`), sql`, `);
+    const values = sql.join(chunk.map((r) => sql`(${sql.join(cols.map((c) => sql`${param(r[c])}`), sql`, `)})`), sql`, `);
     const conflict: SQL = mode === 'upsert'
       ? sql.raw(` ON CONFLICT (id) DO UPDATE SET ${cols.filter((c) => c !== 'id').map((c) => `${c} = EXCLUDED.${c}`).join(', ')}`)
       : sql``;
@@ -60,7 +67,8 @@ async function copy(src: DbOrTx, dst: DbOrTx, table: string, o: { where?: string
 export async function transferEntities(src: DbOrTx, dst: DbOrTx, opts: TransferOptions) {
   const counts: Record<string, number> = {};
   // Entries need the accounts and partners they post to.
-  const chart = !!(opts.chartOfAccounts || opts.accountings);
+  // Templates post to accounts: like entries they bring the chart along (01b 1.2 "chart of accounts (with ... templates)").
+  const chart = !!(opts.chartOfAccounts || opts.accountings || opts.accountingTemplates || opts.bankTemplates);
   const partners = !!(opts.partners || opts.accountings);
 
   if (chart) {
@@ -72,6 +80,12 @@ export async function transferEntities(src: DbOrTx, dst: DbOrTx, opts: TransferO
     await dst.execute(sql`DELETE FROM accounts`);
     counts.accounts = await copy(src, dst, 'accounts');
     await copy(src, dst, 'product_accounts');
+    // The chart type goes with the chart (03a 1.1: an empty type asks for the selection again).
+    const [type] = await queryRows<{ value: string }>(src, sql`SELECT value FROM configuration WHERE key = 'ChartOfAccountsType' AND user_id IS NULL`);
+    if (type?.value) {
+      await dst.execute(sql`DELETE FROM configuration WHERE key = 'ChartOfAccountsType' AND user_id IS NULL`);
+      await dst.execute(sql`INSERT INTO configuration (key, value, user_id) VALUES ('ChartOfAccountsType', ${type.value}, NULL)`);
+    }
   }
 
   if (opts.users) {
@@ -136,6 +150,23 @@ export async function transferEntities(src: DbOrTx, dst: DbOrTx, opts: TransferO
     });
     for (const t of ['accounting_details', 'accounting_extended_details', 'accounting_attachments', 'accounting_payment_details']) await copy(src, dst, t);
     await copy(src, dst, 'account_initial_balances', { map: (r) => ({ ...r, financial_year_id: fy(r.financial_year_id) }) });
+  }
+
+  // Templates: partners and users that were not carried over are dropped from them.
+  const partnerRef = (v: unknown) => (partners ? v : null);
+  const userRef = (v: unknown) => (opts.users || v == null ? v : 1);
+  if (opts.accountingTemplates || opts.bankTemplates) await copy(src, dst, 'document_types', { mode: 'upsert' });
+  if (opts.accountingTemplates) {
+    counts.accountingTemplates = await copy(src, dst, 'accounting_templates', { map: (r) => ({ ...r, company_id: partnerRef(r.company_id), user_id: userRef(r.user_id) }) });
+    await copy(src, dst, 'accounting_template_details', { map: (r) => ({ ...r, company_id: partnerRef(r.company_id) }) });
+    await copy(src, dst, 'schedules');
+    // Generated schedule rows point to entries; they come only with the entries.
+    if (opts.accountings) await copy(src, dst, 'accounting_template_schedules');
+  }
+  if (opts.bankTemplates) {
+    await copy(src, dst, 'banks', { mode: 'upsert' });
+    counts.bankTemplates = await copy(src, dst, 'bank_templates', { map: (r) => ({ ...r, company_id: partnerRef(r.company_id), user_id: userRef(r.user_id) }) });
+    await copy(src, dst, 'bank_template_details', { map: (r) => ({ ...r, company_id: partnerRef(r.company_id) }) });
   }
   return counts;
 }

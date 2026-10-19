@@ -41,6 +41,44 @@ describe('new company with data carried over (01b 1.2)', { timeout: 60_000 }, ()
     t.session.set(src);
   });
 
+  it('carries over accounting templates and bank-import templates with their formulas (01b 1.2, 06 3.6)', async () => {
+    const src = t.session.get();
+    const bankId = ((await t.call('GET', '/banks')).body as { id: number; code: string }[]).find((b) => b.code === 'STSABGSF')!.id;
+    const client = (await t.call('GET', '/partners?q=Прехвърляне')).body[0].id as number;
+    const tpl = await t.call('POST', '/templates', {
+      name: 'Наем офис', documentTypeId: 10, term: 'Начислен наем', companyId: client,
+      debits: [{ accountId: t.acc('602'), amount: '500' }], credits: [{ accountId: t.acc('401'), amount: '500' }],
+      schedule: { mode: 2, interval: 1, weekDays: 0, months: 4095, days: 1 },
+    });
+    expect(tpl.status, tpl.text).toBe(201);
+    const bt = await t.call('POST', '/bank-templates', { bankId, name: 'Банкови такси', formula: 'Reason съдържа "такса"', debitAccountId: t.acc('602'), termText: 'такса', priority: 2 });
+    expect(bt.status, bt.text).toBe(201);
+    const srcBank = (await t.call('GET', `/bank-templates?bankId=${bankId}`)).body.find((x: { name: string }) => x.name === 'Банкови такси');
+
+    const r = await newCompany('Шаблони ООД', { accountingTemplates: true, bankTemplates: true });
+    expect(r.status, r.text).toBe(201);
+    // Templates bring the chart and its type; no entries, partners or users.
+    expect((await t.call('GET', '/session')).body.chartOfAccountsType).toBe('commercial');
+    expect((await t.call('GET', '/entries')).body.total).toBe(0);
+    expect((await t.call('GET', '/partners')).body).toHaveLength(0);
+    const list = (await t.call('GET', '/templates')).body as { id: number; name: string }[];
+    const copied = list.find((x) => x.name === 'Наем офис')!;
+    expect(copied).toBeTruthy();
+    const full = (await t.call('GET', `/templates/${copied.id}`)).body;
+    expect(full.companyId ?? null).toBeNull();
+    expect(full.schedule).toMatchObject({ mode: 2, months: 4095 });
+    const banks = (await t.call('GET', `/bank-templates?bankId=${bankId}`)).body as { name: string; formula: string; debitAccountNumber: string; priority: number }[];
+    const b = banks.find((x) => x.name === 'Банкови такси')!;
+    expect(b).toMatchObject({ debitAccountNumber: '602', priority: 2, formula: srcBank.formula });
+
+    // Without the options nothing of the kind is copied.
+    t.session.set(src);
+    expect((await newCompany('Без шаблони ООД', { chartOfAccounts: true })).status).toBe(201);
+    expect((await t.call('GET', '/templates')).body).toHaveLength(0);
+    expect((await t.call('GET', `/bank-templates?bankId=${bankId}`)).body).toHaveLength(0);
+    t.session.set(src);
+  });
+
   it('copies only partners when asked and seeds a fresh chart', async () => {
     const r = await newCompany('Само партньори ООД', { partners: true });
     expect(r.status, r.text).toBe(201);

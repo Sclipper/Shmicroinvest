@@ -6,6 +6,8 @@ export interface Tab {
   title: string;
   params?: Record<string, unknown>;
   dirty?: boolean;
+  /** Question asked when a dirty tab is closed (default: lose unsaved data?). */
+  dirtyMessage?: string;
 }
 
 export interface ScreenProps {
@@ -29,7 +31,7 @@ interface WorkspaceApi {
   close: (key: string) => void;
   closeAll: (exceptKey?: string) => void;
   activate: (key: string) => void;
-  update: (key: string, patch: Partial<Pick<Tab, 'title' | 'dirty' | 'params'>>) => void;
+  update: (key: string, patch: Partial<Pick<Tab, 'title' | 'dirty' | 'dirtyMessage' | 'params'>>) => void;
 }
 
 const Ctx = createContext<WorkspaceApi | null>(null);

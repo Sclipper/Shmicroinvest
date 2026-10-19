@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, Copy, FolderPlus, Plus, Save, Trash2 } from 'lucide-react';
-import { ACCOUNT_CATEGORIES, STOCK_MESSAGES, canHaveConcludeAccount } from '@shmi/core';
+import { ACCOUNT_CATEGORIES, SHELL_MESSAGES, STOCK_MESSAGES, canHaveConcludeAccount } from '@shmi/core';
 import { api } from '../api.ts';
 import { compareAccountNumbers as cmp, money } from '../format.ts';
 import { useDialogs } from '../components/dialogs.tsx';
@@ -9,6 +9,7 @@ import { AccountPicker } from '../components/pickers.tsx';
 import { Button, Checkbox, CommandBar, Dialog, Empty, Field, Panel, Select, Spinner, TextInput, cx } from '../components/ui.tsx';
 import { useAccounts, useCan, useInvalidate, useLookups, useSession } from '../session.tsx';
 import type { Account } from '../types.ts';
+import { useWorkspace } from '../shell/workspace.tsx';
 
 interface Form {
   id?: number;
@@ -40,6 +41,21 @@ export function ChartOfAccounts() {
   const s = useSession();
   const can = useCan();
   const dialogs = useDialogs();
+  const ws = useWorkspace();
+  // 03a 1.1: without a chart type (config ChartOfAccountsType) the message comes first, then the type selection.
+  const askedType = useRef(false);
+  useEffect(() => {
+    if (askedType.current || s.chartOfAccountsType === undefined || s.chartOfAccountsType) return;
+    askedType.current = true;
+    void (async () => {
+      if (!can('UI_Operations_ChartOfAccounts_ChartOfAccountsSelection')) {
+        await dialogs.alert(SHELL_MESSAGES.strSelectChartOfAccountsNotAllowed, 'Индивидуален сметкоплан');
+        return;
+      }
+      await dialogs.alert(SHELL_MESSAGES.strChartOfAccountsNotDefined, 'Индивидуален сметкоплан');
+      ws.open('chartSelection', { params: { notDefined: true } });
+    })();
+  }, [s.chartOfAccountsType, can, dialogs, ws]);
   const invalidate = useInvalidate();
   const lookups = useLookups();
   const { data: accountsRaw, isLoading } = useAccounts();

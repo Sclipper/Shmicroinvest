@@ -104,7 +104,9 @@ export function NewCompanyForm({ firstRun, onDone, onCancel }: { firstRun: boole
   const [f, setF] = useState({ companyName: '', bulstat: '', adminName: 'Администратор', adminPassword: '', confirm: '', year: new Date().getFullYear() });
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
-  const [transfer, setTransfer] = useState({ chartOfAccounts: false, users: false, partners: false, accountings: false });
+  const [transfer, setTransfer] = useState({ chartOfAccounts: false, users: false, partners: false, accountings: false, accountingTemplates: false, bankTemplates: false });
+  // Entries and templates post to accounts: they bring the chart along (01b 1.2).
+  const chartForced = transfer.accountings || transfer.accountingTemplates || transfer.bankTemplates;
   const dupConfirmed = useRef<string | null>(null);
   const [dupWarning, setDupWarning] = useState(false);
   const companies = useQuery({ queryKey: ['companies'], queryFn: () => api.get<CompanyItem[]>('/companies') });
@@ -162,15 +164,17 @@ export function NewCompanyForm({ firstRun, onDone, onCancel }: { firstRun: boole
         <fieldset className="rounded-sm border border-slate-200 px-3 pt-1 pb-2">
           <legend className="px-1 text-[12px] text-slate-500">Прехвърляне на данни от активната фирма</legend>
           <div className="grid grid-cols-2 gap-1">
-            <Checkbox label="Сметкоплан" checked={transfer.chartOfAccounts || transfer.accountings} disabled={transfer.accountings} onChange={(v) => setTransfer({ ...transfer, chartOfAccounts: v })} />
+            <Checkbox label="Сметкоплан" checked={transfer.chartOfAccounts || chartForced} disabled={chartForced} onChange={(v) => setTransfer({ ...transfer, chartOfAccounts: v })} />
             <Checkbox label="Потребители" checked={transfer.users} onChange={(v) => setTransfer({ ...transfer, users: v })} />
             <Checkbox label="Партньори" checked={transfer.partners || transfer.accountings} disabled={transfer.accountings} onChange={(v) => setTransfer({ ...transfer, partners: v })} />
             <Checkbox label="Контировки" checked={transfer.accountings} onChange={(v) => setTransfer({ ...transfer, accountings: v })} />
+            <Checkbox label="Шаблони на контировки" checked={transfer.accountingTemplates} onChange={(v) => setTransfer({ ...transfer, accountingTemplates: v })} />
+            <Checkbox label="Шаблони за банков импорт" checked={transfer.bankTemplates} onChange={(v) => setTransfer({ ...transfer, bankTemplates: v })} />
           </div>
         </fieldset>
       )}
       <div className="text-[12px] text-slate-500">
-        {transfer.chartOfAccounts || transfer.accountings ? 'Сметкопланът се копира от активната фирма.' : 'Фирмата се създава с Фирмен (Търговски) сметкоплан.'} От 2026 г. основната валута е евро.
+        {transfer.chartOfAccounts || chartForced ? 'Сметкопланът се копира от активната фирма.' : 'Фирмата се създава с Фирмен (Търговски) сметкоплан.'} От 2026 г. основната валута е евро.
       </div>
       {dupWarning && (
         <div role="alert" className="flex items-center gap-2 rounded-sm border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
