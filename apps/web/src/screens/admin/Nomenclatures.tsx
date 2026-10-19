@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { Plus, Save, Trash2 } from 'lucide-react';
+import { Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
 import { api, qs } from '../../api.ts';
 import { bgDate } from '../../format.ts';
 import { useDialogs } from '../../components/dialogs.tsx';
@@ -180,9 +180,30 @@ const ISK_STOPPED = 'БНБ не публикува курс на исландс
 export function Currencies() {
   const can = useCan();
   const s = useSession();
+  const dialogs = useDialogs();
+  const invalidate = useInvalidate();
+  const [refreshing, setRefreshing] = useState(false);
   const base = s.baseCurrency;
+  /** "Обновяване на фиксингите от БНБ" (DownloadCurrenciesCommand, 03a 5.4): the rates of the working date become the fixed rates. */
+  const refreshFixings = async () => {
+    setRefreshing(true);
+    try {
+      const r = await api.post<{ message: string }>('/currencies/refresh-fixings', {});
+      await invalidate('currencies', 'lookups');
+      await dialogs.alert(r.message, 'Валути');
+    } catch (e) {
+      await dialogs.error(e, 'Валути');
+    } finally {
+      setRefreshing(false);
+    }
+  };
   return (
     <ListEdit<Currency, CurrencyForm>
+      toolbar={
+        <Button className="ml-2" icon={<RefreshCw className="size-3.5" />} onClick={refreshFixings} disabled={!can('UI_Edit_Currencies') || refreshing} title="Обновяване на фиксингите от БНБ">
+          Обновяване на фиксингите от БНБ
+        </Button>
+      }
       queryKey={['currencies']}
       url="/currencies"
       basePath="/currencies"
