@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { and, asc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import {
   DEFAULT_SHORTCUTS, duplicateShortcutWarnings, effectiveShortcuts, isAllowedEditableGesture, JOURNAL_EXTRA_MESSAGES as X,
-  MANDATORY_DOCUMENT_TYPES, sequenceEditorValues, sequencePreview, sequenceStorage, validateSequence, type ValidationMessage,
+  MANDATORY_DOCUMENT_TYPES, DEFAULT_SKIN, SKIN_SETTING, sequenceEditorValues, sequencePreview, sequenceStorage, validateSequence, validateSkin, type ValidationMessage,
 } from '@shmi/core';
 import type { AppEnv } from '../context.ts';
 import * as s from '../db/company/schema/index.ts';
@@ -76,6 +76,8 @@ export const SETTING_CHILDREN: Record<string, string[]> = {
 /** Per-user options (Configuration rows with UserID). */
 const USER_SETTINGS: Record<string, string> = {
   KeepAccountingOpen: 'False',
+  // 06 2.7 / 3.2: the skin ("Визуален стил"); Delta keeps it per machine, the web per user.
+  [SKIN_SETTING]: DEFAULT_SKIN,
 };
 
 async function shortcutOverrides(db: DbOrTx, userId: number): Promise<Record<string, string>> {
@@ -253,10 +255,14 @@ export const settingsExtraRoutes = new Hono<AppEnv>()
   })
 
   .put('/settings/user', zValidator('json', z.record(z.string(), z.string())), async (c) => {
-    for (const [k, v] of Object.entries(c.req.valid('json'))) {
-      if (!(k in USER_SETTINGS)) throw badRequest(`Непозната настройка ${k}.`);
-      await setConfig(c.var.db, k, v, c.var.user.id);
+    const body = c.req.valid('json');
+    const unknown = Object.keys(body).find((k) => !(k in USER_SETTINGS));
+    if (unknown) throw badRequest(`Непозната настройка ${unknown}.`);
+    if (SKIN_SETTING in body) {
+      const errs = validateSkin(body[SKIN_SETTING]);
+      if (errs.length) throw new ApiError(400, errs[0]!.text, errs);
     }
+    for (const [k, v] of Object.entries(body)) await setConfig(c.var.db, k, v, c.var.user.id);
     return c.json({ ok: true });
   })
 

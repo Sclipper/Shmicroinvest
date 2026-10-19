@@ -9,6 +9,7 @@ import { Dialog } from './components/ui.tsx';
 import { Shell } from './shell/Shell.tsx';
 import { WorkspaceProvider } from './shell/workspace.tsx';
 import { SCREENS } from './registry.tsx';
+import { UserSkin } from './skin.ts';
 
 export function App() {
   const session = useSessionQuery();
@@ -32,6 +33,7 @@ export function App() {
   return (
     <DialogProvider>
       <WorkspaceProvider key={`${session.data.company.db}:${session.data.user.id}`} screens={SCREENS}>
+        <UserSkin />
         <Shell
           screens={SCREENS}
           onCommand={(c) => {
