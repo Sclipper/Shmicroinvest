@@ -11,6 +11,7 @@ import { useDialogs } from '../components/dialogs.tsx';
 import { Button, Dialog, Field, TextInput, cx } from '../components/ui.tsx';
 import { MENU, TOOLBAR, UNBINDABLE, findMenuItem, gestureOf, type MenuEntry, type MenuItem } from './menu.ts';
 import { useWorkspace, type ScreenDef } from './workspace.tsx';
+import { chooseActiveYear } from '../screens/admin/yearChoice.ts';
 
 type Cmd = NonNullable<Extract<MenuItem, { label: string }>['command']>;
 
@@ -403,6 +404,7 @@ function StatusBar({ onCommand }: { onCommand: (c: Cmd) => void }) {
 /** Year chooser from the status bar (01b 6.3): locked years cannot be chosen. */
 function YearDialog({ onClose }: { onClose: () => void }) {
   const s = useSession();
+  const ws = useWorkspace();
   const qc = useQueryClient();
   const dialogs = useDialogs();
   const years = useQuery({ queryKey: ['years'], queryFn: () => api.get<{ id: number; year: number; isLocked: boolean }[]>('/years') });
@@ -413,8 +415,10 @@ function YearDialog({ onClose }: { onClose: () => void }) {
       return;
     }
     try {
-      await api.put('/years/active', { year });
-      await qc.invalidateQueries();
+      const r = await chooseActiveYear(dialogs, s.workingDate, year);
+      if (r === 'cancel') return;
+      if (r === 'conclude') ws.open('years', { params: { concludeYear: year - 1 } });
+      else await qc.invalidateQueries();
       onClose();
     } catch (e) {
       await dialogs.error(e);

@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestCompany, type TestCompany } from './helpers.ts';
+import { findSequence, reserveNumber } from '../src/services/sequences.ts';
+import * as schema from '../src/db/company/schema/index.ts';
 
 let t: TestCompany;
 let call: TestCompany['call'];
@@ -118,6 +120,137 @@ describe('api', () => {
     const temp = await call('POST', '/users', { name: 'Временен', password: 'parola1', roleId: role.body.id });
     expect((await call('DELETE', `/roles/${role.body.id}`)).status).toBe(400);
     await call('DELETE', `/users/${temp.body.id}`);
+    expect((await call('PUT', `/roles/${role.body.id}`, { name: 'Временна 2' })).status).toBe(200);
+    const perm = perms.find((p) => p.key === 'UI_File_NewCompany')!;
+    expect((await call('PUT', `/roles/${role.body.id}/permissions`, { [perm.id]: true })).status).toBe(200);
     expect((await call('DELETE', `/roles/${role.body.id}`)).status).toBe(200);
+    // Role and permission changes are in the activity log (01b 8).
+    const log = (await call('GET', '/activity?limit=20')).body as { activity: string; entityType: string; entityId: number; description: string }[];
+    const roleRows = log.filter((r) => r.entityId === role.body.id && r.entityType.startsWith('userRole')).map((r) => [r.activity, r.entityType, r.description]);
+    expect(roleRows).toEqual([
+      ['delete', 'userRole', 'Потребителска група Временна 2'],
+      ['edit', 'userRolePermissions', 'Права на група Временна 2 (1)'],
+      ['edit', 'userRole', 'Потребителска група Временна 2'],
+      ['add', 'userRole', 'Потребителска група Временна'],
+    ]);
+  });
+
+  it('reserves entry numbers atomically (01b 9 spGetNextNumber)', async () => {
+    const db = await t.driver.company(t.companyDb);
+    const year = (await call('GET', '/session')).body.year as { id: number };
+    const start = (await findSequence(db, 1, year.id))!.lastNumber;
+    // Another session reserves a number while this one is between "read" and "write":
+    // the increment works on the stored value, so both get different numbers.
+    let other: string | null = null;
+    const mine = await reserveNumber(db, 1, year.id, async (n) => {
+      if (!other) other = (await reserveNumber(db, 1, year.id, async () => false)).number;
+      return n === other;
+    });
+    expect(other).toBe(String(start + 2).padStart(10, '0'));
+    expect(mine.number).toBe(String(start + 1).padStart(10, '0'));
+
+    // Parallel saves through the API: every entry gets its own number.
+    const posts = await Promise.all(Array.from({ length: 8 }, (_, i) => call('POST', '/entries', {
+      accountingDate: '2026-04-01', documentTypeId: 1, documentNumber: `P-${i}`, term: 'Паралелно',
+      debits: [{ accountId: acc('501'), amount: '1' }], credits: [{ accountId: acc('101'), amount: '1' }],
+    })));
+    for (const p of posts) expect(p.status, p.text).toBe(201);
+    const numbers = posts.map((p) => p.body.number as string);
+    expect(new Set(numbers).size).toBe(8);
+    expect(numbers.map(Number).sort((a, b) => a - b)).toEqual(Array.from({ length: 8 }, (_, i) => start + 3 + i));
+  });
+
+  it('rejects saving an entry that changed since it was loaded (01b 9 optimistic concurrency)', async () => {
+    const body = (amount: string, term: string) => ({
+      accountingDate: '2026-04-02', documentTypeId: 1, documentNumber: 'V-1', term,
+      debits: [{ accountId: acc('501'), amount }], credits: [{ accountId: acc('101'), amount }],
+    });
+    const created = await call('POST', '/entries', body('10', 'Версия'));
+    expect(created.status, created.text).toBe(201);
+    const id = created.body.id as number;
+    const first = (await call('GET', `/entries/${id}`)).body;
+    expect(first.version).toMatch(/^\d+$/);
+    expect(first.version).toBe(created.body.version);
+    // User A and user B both opened version 1; A saves first.
+    const a = await call('PUT', `/entries/${id}`, { ...body('20', 'Промяна А'), version: first.version });
+    expect(a.status, a.text).toBe(200);
+    expect(a.body.version).not.toBe(first.version);
+    const b = await call('PUT', `/entries/${id}`, { ...body('30', 'Промяна Б'), version: first.version });
+    expect(b.status).toBe(409);
+    expect(b.body.code).toBe('conflict');
+    expect(b.body.error).toBe('Контирането е променено от друг потребител след зареждането му. Заредете го отново, за да видите промените.');
+    const now = (await call('GET', `/entries/${id}`)).body;
+    expect([now.term, now.debits[0].amount, now.version]).toEqual(['Промяна А', '20.00', a.body.version]);
+    // Reloaded, B saves; callers without a version are not checked.
+    expect((await call('PUT', `/entries/${id}`, { ...body('30', 'Промяна Б'), version: now.version })).status).toBe(200);
+    expect((await call('PUT', `/entries/${id}`, body('40', 'Без версия'))).status).toBe(200);
+  });
+
+  it('does not delete a user who appears in entries (strUserHasOperations, 01b 3.4)', async () => {
+    const u = await call('POST', '/users', { name: 'Счетоводител', password: 'parola1', roleId: 2 });
+    expect(u.status, u.text).toBe(201);
+    const [company] = (await call('GET', '/companies')).body;
+    expect((await call('POST', '/login', { companyDb: company.name, userId: u.body.id, password: 'parola1' })).status).toBe(200);
+    expect((await call('POST', '/entries', {
+      accountingDate: '2026-04-03', documentTypeId: 1, documentNumber: 'U-1', term: 'От друг потребител',
+      debits: [{ accountId: acc('501'), amount: '1' }], credits: [{ accountId: acc('101'), amount: '1' }],
+    })).status).toBe(201);
+    expect((await call('POST', '/login', { companyDb: company.name, userId: 1, password: 'secret1' })).status).toBe(200);
+    const r = await call('DELETE', `/users/${u.body.id}`);
+    expect(r.status).toBe(422);
+    expect(r.body.error).toBe('Потребителят не може да бъде изтрит, тъй като участва в операции!');
+    expect(r.body.messages.map((m: { key: string }) => m.key)).toEqual(['strUserHasOperations']);
+    expect((await call('GET', '/users')).body.some((x: { id: number }) => x.id === u.body.id)).toBe(true);
+    // Without entries the user is deleted.
+    const idle = await call('POST', '/users', { name: 'Без операции', password: 'parola1', roleId: 5 });
+    expect((await call('DELETE', `/users/${idle.body.id}`)).status).toBe(200);
+  });
+
+  it('keeps user names unique among active users and the last administrator under concurrency (01b 3.4)', async () => {
+    const a = await call('POST', '/users', { name: 'Петър Петров', password: 'parola1', roleId: 5 });
+    expect(a.status, a.text).toBe(201);
+    const dup = await call('POST', '/users', { name: 'петър петров', password: 'parola1', roleId: 5 });
+    expect([dup.status, dup.body.error]).toEqual([400, 'Вече съществува потребител с такова име.']);
+    const b = await call('POST', '/users', { name: 'Мария', password: 'parola1', roleId: 5 });
+    const rename = await call('PUT', `/users/${b.body.id}`, { name: 'ПЕТЪР ПЕТРОВ', roleId: 5 });
+    expect([rename.status, rename.body.error]).toEqual([400, 'Вече съществува потребител с такова име.']);
+    // The database refuses a duplicate too (partial unique index); a deleted user's name is free again.
+    const db = await t.driver.company(t.companyDb);
+    await expect(db.insert(schema.users).values({ name: 'ПЕТЪР петров', userRoleId: 5 })).rejects.toThrow();
+    expect((await call('DELETE', `/users/${a.body.id}`)).status).toBe(200);
+    expect((await call('POST', '/users', { name: 'Петър Петров', password: 'parola1', roleId: 5 })).status).toBe(201);
+
+    // Two administrators demoted at the same time: one of them stays an administrator.
+    const admin2 = await call('POST', '/users', { name: 'Втори администратор', password: 'parola1', roleId: 2 });
+    const others = ((await call('GET', '/users')).body as { id: number; roleId: number }[]).filter((u) => u.roleId === 2 && u.id !== 1 && u.id !== admin2.body.id);
+    for (const o of others) await call('PUT', `/users/${o.id}`, { name: `Админ ${o.id}`, roleId: 5 });
+    const [r1, r2] = await Promise.all([
+      call('PUT', '/users/1', { name: 'Администратор', roleId: 5 }),
+      call('PUT', `/users/${admin2.body.id}`, { name: 'Втори администратор', roleId: 5 }),
+    ]);
+    expect([r1.status, r2.status].sort()).toEqual([200, 400]);
+    expect([r1, r2].find((r) => r.status === 400)!.body.error).toBe('Трябва да има поне един потребител администратор.');
+    // Restore the administrator role of user 1 (from the remaining administrator when user 1 lost it).
+    const [company] = (await call('GET', '/companies')).body;
+    if (r1.status === 200) {
+      expect((await call('POST', '/login', { companyDb: company.name, userId: admin2.body.id, password: 'parola1' })).status).toBe(200);
+      expect(((await call('GET', '/users')).body as { roleId: number }[]).filter((u) => u.roleId === 2)).toHaveLength(1);
+      expect((await call('PUT', '/users/1', { name: 'Администратор', roleId: 2 })).status).toBe(200);
+      expect((await call('POST', '/login', { companyDb: company.name, userId: 1, password: 'secret1' })).status).toBe(200);
+    } else {
+      expect(((await call('GET', '/users')).body as { roleId: number }[]).filter((u) => u.roleId === 2)).toHaveLength(1);
+    }
+  });
+
+  it('voids only entries of the active year', async () => {
+    const e = await t.post({ date: '2026-05-01', dr: [['501', 3]], cr: [['101', 3]] });
+    expect((await call('POST', '/years', { year: 2027, force: true })).status).toBe(201);
+    expect((await call('PUT', '/years/active', { year: 2027 })).status).toBe(200);
+    const other = await call('DELETE', `/entries/${e.id}`);
+    expect([other.status, other.body.error]).toEqual([400, 'Датата на контирането е различна от текущата счетоводна година!']);
+    expect((await call('POST', '/journal/void', { ids: [e.id] })).status).toBe(400);
+    expect((await call('GET', `/entries/${e.id}`)).status).toBe(200);
+    expect((await call('PUT', '/years/active', { year: 2026 })).status).toBe(200);
+    expect((await call('DELETE', `/entries/${e.id}`)).status).toBe(200);
   });
 });

@@ -633,7 +633,7 @@ describe('02a 9 templates, schedules, reschedules', () => {
       });
 
       it('skips rows of another financial year with a warning', async () => {
-        expect((await call('POST', '/years', { year: 2027 })).status).toBe(201);
+        expect((await call('POST', '/years', { year: 2027, force: true })).status).toBe(201);
         expect((await call('PUT', '/years/active', { year: 2027 })).status).toBe(200);
         const g = await call('POST', `/templates/${rentId}/schedule/generate`);
         expect(g.body.generated).toBe(12);

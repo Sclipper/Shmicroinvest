@@ -90,4 +90,36 @@ describe('chart of accounts rules (03a 1.5-1.9)', () => {
     // Copying into the account's own branch is refused.
     expect(keys(await call('POST', `/accounts/${t.acc('40')}/copy`, { targetId: t.acc('402') }))).toEqual(['strCanNotAddSubAccount']);
   });
+
+  it('stores the conclude account for active and passive accounts only (01a 4.1, 07 3.5)', async () => {
+    const expense = await add('602', { number: '602/50', isActive: true, concludeAccountId: t.acc('123') });
+    expect(expense.status, expense.text).toBe(201);
+    expect(expense.body.concludeAccountId).toBe(t.acc('123'));
+    const listed = (await call('GET', '/accounts')).body.find((a: { id: number }) => a.id === expense.body.id);
+    expect(listed.concludeAccountId).toBe(t.acc('123'));
+    // Switching to active-passive clears it; an active-passive account cannot get one.
+    const ap = await call('PUT', `/accounts/${expense.body.id}`, { isActive: null });
+    expect(ap.status, ap.text).toBe(200);
+    expect(ap.body.concludeAccountId).toBeNull();
+    const stillAp = await call('PUT', `/accounts/${expense.body.id}`, { concludeAccountId: t.acc('123') });
+    expect(stillAp.body.concludeAccountId).toBeNull();
+    const passive = await call('PUT', `/accounts/${expense.body.id}`, { isActive: false, concludeAccountId: t.acc('123') });
+    expect(passive.body.concludeAccountId).toBe(t.acc('123'));
+    // Itself is not a conclude account; an unknown account is refused.
+    expect((await call('PUT', `/accounts/${expense.body.id}`, { concludeAccountId: expense.body.id })).body.concludeAccountId).toBeNull();
+    expect((await call('PUT', `/accounts/${expense.body.id}`, { concludeAccountId: 999999 })).status).toBe(400);
+  });
+
+  it('edits the "usable for bank statements" flag (01a 4.1 IsForBanks)', async () => {
+    const r = await add('503', { number: '503/40', isForBanks: true });
+    expect(r.status, r.text).toBe(201);
+    expect(r.body.isForBanks).toBe(true);
+    const off = await call('PUT', `/accounts/${r.body.id}`, { isForBanks: false });
+    expect(off.body.isForBanks).toBe(false);
+    const listed = (await call('GET', '/accounts')).body.find((a: { id: number }) => a.id === r.body.id);
+    expect(listed.isForBanks).toBe(false);
+    // Other edits keep the flag.
+    await call('PUT', `/accounts/${r.body.id}`, { isForBanks: true });
+    expect((await call('PUT', `/accounts/${r.body.id}`, { description: 'Банка 2' })).body.isForBanks).toBe(true);
+  });
 });

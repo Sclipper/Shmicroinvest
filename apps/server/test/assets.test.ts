@@ -65,7 +65,7 @@ function harness() {
       return r.body as { posted: { scheduleId: number; accountingId: number; number: string; documentNumber: string }[]; failed: number[]; skippedOtherYear: number; warnings: { key: string }[] };
     },
     async addYear(year: number) {
-      const r = await t.call('POST', '/years', { year });
+      const r = await t.call('POST', '/years', { year, force: true });
       expect(r.status, r.text).toBe(201);
     },
     sum: (ms: { amount: string }[]) => (Math.round(ms.reduce((a, m) => a + Number(m.amount), 0) * 100) / 100).toFixed(2),

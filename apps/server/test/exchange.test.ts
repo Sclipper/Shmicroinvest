@@ -556,7 +556,7 @@ describe('euro conversion (04b 4)', { timeout: 60_000 }, () => {
     await e.post({ date: '2025-03-01', dr: [['503', '1000']], cr: [['101', '1000']] });
     await e.post({ date: '2025-03-02', partner: p, dr: [['411', '100']], cr: [['702', '100']] });
     await e.post({ date: '2025-03-03', dr: [['503', '0.01']], cr: [['101', '0.01']] });
-    expect((await e.call('POST', '/years', { year: 2026 })).status).toBe(201);
+    expect((await e.call('POST', '/years', { year: 2026, force: true })).status).toBe(201);
     const grid = await e.call('GET', '/euro-conversion');
     expect(grid.status, grid.text).toBe(200);
     const row503 = grid.body.rows.find((x: { number: string }) => x.number === '503');
@@ -603,7 +603,7 @@ describe('euro conversion (04b 4)', { timeout: 60_000 }, () => {
       });
       expect(card.status, card.text).toBe(201);
 
-      expect((await y.call('POST', '/years', { year: 2026 })).status).toBe(201);
+      expect((await y.call('POST', '/years', { year: 2026, force: true })).status).toBe(201);
       const diff = (await y.call('GET', '/euro-conversion')).body.euroAccounts.find((x: { number: string }) => x.number === '123').id;
       const r = await y.call('POST', '/euro-conversion', { differencesAccountId: diff, fixedAssets: true, templates: true, reschedules: true });
       expect(r.status, r.text).toBe(200);
@@ -629,7 +629,7 @@ describe('euro conversion (04b 4)', { timeout: 60_000 }, () => {
     const y = await sibling('Евро Прехвърляне ООД', 2025);
     try {
       await y.post({ date: '2025-03-01', dr: [['503', '1000']], cr: [['101', '1000']] });
-      expect((await y.call('POST', '/years', { year: 2026 })).status).toBe(201);
+      expect((await y.call('POST', '/years', { year: 2026, force: true })).status).toBe(201);
       const y2025 = ((await y.call('GET', '/years')).body as { id: number; year: number }[]).find((x) => x.year === 2025)!.id;
       const diff = (await y.call('GET', '/euro-conversion')).body.euroAccounts.find((x: { number: string }) => x.number === '123').id;
       const closed = await y.call('POST', `/years/${y2025}/conclude`, { differencesAccountId: diff });

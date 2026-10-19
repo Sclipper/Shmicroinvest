@@ -502,7 +502,7 @@ export async function persistPlan(db: DbOrTx, depId: number | null, p: ComputedP
   const conflictIds = new Set(p.conflicts.map((c) => c.id));
   if (p.conflicts.length) {
     for (const c of p.conflicts) {
-      if (resolution === 'delete' && c.accountingId) await deleteEntry(db, c.accountingId, ctx.year, ctx.userId);
+      if (resolution === 'delete' && c.accountingId) await deleteEntry(db, c.accountingId, ctx.year, ctx.userId, { anyYear: true });
       await db.update(s.depreciationSchedules).set({ accountingId: null, isProcessed: false }).where(eq(s.depreciationSchedules.id, c.id));
     }
   }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, Copy, FolderPlus, Plus, Save, Trash2 } from 'lucide-react';
-import { ACCOUNT_CATEGORIES, STOCK_MESSAGES } from '@shmi/core';
+import { ACCOUNT_CATEGORIES, STOCK_MESSAGES, canHaveConcludeAccount } from '@shmi/core';
 import { api } from '../api.ts';
 import { compareAccountNumbers as cmp, money } from '../format.ts';
 import { useDialogs } from '../components/dialogs.tsx';
@@ -19,7 +19,9 @@ interface Form {
   accountCategoryId: number | null;
   currencyId: number;
   isActive: boolean | null;
+  concludeAccountId: number | null;
   isHidden: boolean;
+  isForBanks: boolean;
   iban: string;
   accountType: AccountType;
   measure: string;
@@ -91,7 +93,7 @@ export function ChartOfAccounts() {
 
   const select = (a: ChartAccount) => {
     setSelId(a.id);
-    setForm({ id: a.id, parentId: a.parentId!, number: a.number, description: a.description, englishDescription: a.englishDescription ?? '', accountCategoryId: a.categoryId, currencyId: a.currencyId, isActive: a.isActive, isHidden: a.isHidden, iban: a.iban ?? '', accountType: typeOf(a), measure: a.measure ?? '', productCode: a.productCode ?? '' });
+    setForm({ id: a.id, parentId: a.parentId!, number: a.number, description: a.description, englishDescription: a.englishDescription ?? '', accountCategoryId: a.categoryId, currencyId: a.currencyId, isActive: a.isActive, concludeAccountId: a.concludeAccountId, isHidden: a.isHidden, isForBanks: a.isForBanks, iban: a.iban ?? '', accountType: typeOf(a), measure: a.measure ?? '', productCode: a.productCode ?? '' });
   };
   const parentOf = (f: Form) => accounts.find((a) => a.id === f.parentId);
   // Material type only for a leaf below the group level (03a 1.5).
@@ -107,7 +109,7 @@ export function ChartOfAccounts() {
     let number = '';
     if (parent.number !== '0') number = (await api.get<{ number: string }>(`/accounts/${parent.id}/next-number`)).number;
     const currencyId = parent.currencyId || baseCurrencyId;
-    setForm({ parentId: parent.id, number, description: '', englishDescription: '', accountCategoryId: parent.categoryId, currencyId, isActive: parent.isActive, isHidden: false, iban: '', accountType: currencyId !== baseCurrencyId ? 'currency' : 'standard', measure: '', productCode: '' });
+    setForm({ parentId: parent.id, number, description: '', englishDescription: '', accountCategoryId: parent.categoryId, currencyId, isActive: parent.isActive, concludeAccountId: null, isHidden: false, isForBanks: false, iban: '', accountType: currencyId !== baseCurrencyId ? 'currency' : 'standard', measure: '', productCode: '' });
     setSelId(null);
   };
 
@@ -115,6 +117,7 @@ export function ChartOfAccounts() {
     if (!form) return;
     const body = {
       ...form, iban: form.iban || null, id: undefined,
+      concludeAccountId: canHaveConcludeAccount(form.isActive) ? form.concludeAccountId : null,
       currencyId: form.accountType === 'currency' ? form.currencyId : baseCurrencyId,
       measure: form.accountType === 'material' ? form.measure : null, productCode: form.accountType === 'material' ? form.productCode || null : null,
     };
@@ -283,11 +286,20 @@ export function ChartOfAccounts() {
                     <TextInput value={form.englishDescription} onChange={(e) => setForm({ ...form, englishDescription: e.target.value })} disabled={!editable} />
                   </Field>
                   <Field label="Характер на сметка">
-                    <Select value={form.isActive === null ? 'ap' : form.isActive ? 'a' : 'p'} onChange={(e) => setForm({ ...form, isActive: e.target.value === 'ap' ? null : e.target.value === 'a' })} disabled={!editable}>
+                    <Select value={form.isActive === null ? 'ap' : form.isActive ? 'a' : 'p'} onChange={(e) => setForm({ ...form, isActive: e.target.value === 'ap' ? null : e.target.value === 'a' })} disabled={!editable} aria-label="Характер на сметка">
                       <option value="a">Активна</option>
                       <option value="p">Пасивна</option>
                       <option value="ap">Активно-пасивна</option>
                     </Select>
+                  </Field>
+                  <Field label="Сметка за приключване" hint={!canHaveConcludeAccount(form.isActive) ? 'Не се задава за активно-пасивни сметки.' : undefined}>
+                    <AccountPicker
+                      value={canHaveConcludeAccount(form.isActive) ? form.concludeAccountId : null}
+                      onChange={(a) => setForm({ ...form, concludeAccountId: a?.id ?? null })}
+                      filter={(a) => a.id !== form.id}
+                      disabled={!editable || !canHaveConcludeAccount(form.isActive)}
+                      ariaLabel="Сметка за приключване"
+                    />
                   </Field>
                   <fieldset className="flex flex-col gap-1" disabled={!editable || (selected?.isUsed ?? false)}>
                     <legend className="mb-0.5 text-[12px] text-slate-600">Тип на сметката</legend>
@@ -345,6 +357,7 @@ export function ChartOfAccounts() {
                     <TextInput value={form.iban} onChange={(e) => setForm({ ...form, iban: e.target.value })} disabled={!editable} />
                   </Field>
                   <Checkbox label="Сметката не се ползва" checked={form.isHidden} onChange={(v) => setForm({ ...form, isHidden: v })} disabled={!editable} />
+                  <Checkbox label="Сметката се използва за банкови извлечения" checked={form.isForBanks} onChange={(v) => setForm({ ...form, isForBanks: v })} disabled={!editable} />
                   <div className="flex justify-end gap-2 pt-1">
                     <Button variant="primary" icon={<Save className="size-3.5" />} onClick={save} disabled={!editable || !form.description.trim()}>
                       Запис

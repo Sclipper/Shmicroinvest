@@ -52,8 +52,8 @@ beforeAll(async () => {
   await post({ date: '2025-12-31', term: 'Приключване на приходи', dr: [['702', u(6)]], cr: [['123', u(6)]] });
 
   // ---- 2026 (EUR) ----
-  expect((await t.call('POST', '/years', { year: 2026 })).status).toBe(201);
-  expect((await t.call('PUT', '/years/active', { year: 2026 })).status).toBe(200);
+  expect((await t.call('POST', '/years', { year: 2026, force: true })).status).toBe(201);
+  expect((await t.call('PUT', '/years/active', { year: 2026, force: true })).status).toBe(200);
   await t.reloadAccounts();
   const ib = { date: '2026-01-01', isInitialBalance: true, docType: null };
   await post({ ...ib, dr: [['503', 8000]], cr: [['101', 5000], ['122', 3000]] });
@@ -145,7 +145,7 @@ describe('balance sheet and income statement, BGN year 2025', () => {
 
 describe('EUR year 2026 with the previous year in EUR', () => {
   it('balances and converts the 2025 column at 1.95583', async () => {
-    await t.call('PUT', '/years/active', { year: 2026 });
+    await t.call('PUT', '/years/active', { year: 2026, force: true });
     const { run: r, cell } = await run('from=2026-01-01&to=2026-12-31');
     expect(r.unit).toBe('евро');
     expect(r.periods.ep).toEqual({ start: '2025-01-01', end: '2025-12-31' });
@@ -356,7 +356,7 @@ describe('user-defined reports (section 10)', () => {
     expect(values[3]).toBe(u(1)); // April
     expect(values.filter((v, i) => i < 12 && v !== '0.00')).toHaveLength(1);
     expect(values[12]).toBe(u(1));
-    await t.call('PUT', '/years/active', { year: 2026 });
+    await t.call('PUT', '/years/active', { year: 2026, force: true });
   });
 
   it('two-column report, edit, copy and delete', async () => {

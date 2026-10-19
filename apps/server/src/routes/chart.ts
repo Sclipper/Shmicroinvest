@@ -22,6 +22,7 @@ const accountBody = z.object({
   isActive: z.boolean().nullable().optional(),
   concludeAccountId: z.number().int().nullable().optional(),
   isHidden: z.boolean().optional(),
+  isForBanks: z.boolean().optional(),
   iban: z.string().max(50).nullable().optional(),
   accountType: z.enum(['standard', 'currency', 'material']).optional(),
   measure: z.string().trim().max(50).nullable().optional(),
@@ -44,7 +45,7 @@ export const chartRoutes = new Hono<AppEnv>()
     return c.json(rows.map((r) => ({
       id: r.id, parentId: r.parentId, number: r.number, description: r.description, englishDescription: r.englishDescription,
       level: r.level, categoryId: r.accountCategoryId, currencyId: r.currencyId, productId: r.productId, isActive: r.isActive,
-      concludeAccountId: r.concludeAccountId, isHidden: r.isHidden, iban: r.iban,
+      concludeAccountId: r.concludeAccountId, isHidden: r.isHidden, isForBanks: r.isForBanks, iban: r.iban,
       isLeaf: isLeaf({ left: r.leftIndex, right: r.rightIndex }) && r.number !== '0',
       isForeignCurrency: r.currencyId !== base, isMaterial: r.productId != null, isUsed: usedSet.has(r.id),
       measure: r.productId ? (productById.get(r.productId)?.measure ?? null) : null,

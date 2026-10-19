@@ -564,8 +564,8 @@ describe('euro changeover (02b 13)', () => {
       const bgn = (await c.call('POST', '/vat/diaries', report('2025-12-01', '2025-12-31'))).body;
       expect(bgn.sales[0].cols.slice(0, 4)).toEqual(['1955.83', '391.17', '1955.83', '391.17']);
 
-      expect((await c.call('POST', '/years', { year: 2026 })).status).toBe(201);
-      expect((await c.call('PUT', '/years/active', { year: 2026 })).status).toBe(200);
+      expect((await c.call('POST', '/years', { year: 2026, force: true })).status).toBe(201);
+      expect((await c.call('PUT', '/years/active', { year: 2026, force: true })).status).toBe(200);
       await c.reloadAccounts();
       const eur = (await c.call('POST', '/vat/diaries', report('2025-12-01', '2026-01-31'))).body;
       expect(eur.sales[0].cols.slice(0, 4)).toEqual(['1000.00', '200.00', '1000.00', '200.00']);

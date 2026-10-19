@@ -156,7 +156,7 @@ export async function saveProtocol(db: DbOrTx, mainId: number, input: ProtocolIn
   }
   const code = input.vatDiaryCode ?? t.defaultCode;
   if (code) await db.insert(s.accountingExtendedDetails).values({ accountingId: pid, vatDiaryCode: code });
-  await db.update(s.accountings).set({ icaAccountingId: pid, updatedAt: new Date() }).where(eq(s.accountings.id, a.id));
+  await db.update(s.accountings).set({ icaAccountingId: pid }).where(eq(s.accountings.id, a.id));
   await logActivity(db, ctx.userId, old ? 'edit' : 'add', 'accounting', pid, `Протокол по ЗДДС ${number} към контиране ${a.number}`);
   return { id: pid, documentNumber: number, warnings: messages.filter((m) => m.severity === 'warning') };
 }

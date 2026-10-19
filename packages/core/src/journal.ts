@@ -138,6 +138,8 @@ export interface ValidationMessage {
 }
 
 export const JOURNAL_MESSAGES = {
+  /** Stale-row update (ChangeConflictException, 01b 9): the entry changed after it was loaded. */
+  strAccountingChangeConflict: 'Контирането е променено от друг потребител след зареждането му. Заредете го отново, за да видите промените.',
   strMissingValidDebitAccount: 'Не е въведена валидна сметка за дебит!',
   strMissingValidCreditAccount: 'Не е въведена валидна сметка за кредит!',
   strInvalidDebitCreditAmounts: 'Сумите въведени в дебит и кредит се различават!',

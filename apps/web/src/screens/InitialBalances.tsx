@@ -229,7 +229,14 @@ function BalanceEditor({ account, rows, otherTotal, editable, documentTypes, cur
   };
   const remove = async () => {
     if (!(await dialogs.confirm(`Желаете ли изтриване на началните салда на сметка ${account.number}?`))) return;
-    await api.del(`/initial-balances/${account.id}`);
+    try {
+      await api.del(`/initial-balances/${account.id}`);
+    } catch (e) {
+      // Payments are bound to the rows: they are unbound only when confirmed.
+      if (!(e instanceof ApiError && e.code === 'warnings' && e.messages)) return dialogs.error(e);
+      if (!(await dialogs.messages('Предупреждение', e.messages, true))) return;
+      await api.del(`/initial-balances/${account.id}?force=1`);
+    }
     onSaved();
   };
 

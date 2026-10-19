@@ -39,18 +39,25 @@ export async function peekNextNumber(db: DbOrTx, channel: number, financialYearI
 /**
  * Reserve the next number (spGetNextNumber): increments LastNumber, skipping
  * numbers already used by entries of the year so manual numbers never collide.
+ *
+ * Atomic under concurrency (01b 9): each step is one
+ * `UPDATE ... SET last_number = last_number + 1 RETURNING`, so the increment
+ * happens on the stored value (not on a value read earlier) and the row stays
+ * locked until the caller's transaction ends; two concurrent saves can never
+ * get the same number.
  */
 export async function reserveNumber(db: DbOrTx, channel: number, financialYearId: number, isUsed: (n: string) => Promise<boolean>, userId?: number | null) {
   const seq = await findSequence(db, channel, financialYearId, userId);
   if (!seq) throw new Error(`Няма номерация за канал ${channel}.`);
-  let n = seq.lastNumber;
   let formatted: string;
-  do {
-    n++;
-    formatted = formatSequenceNumber(seq, n);
+  for (;;) {
+    const [row] = await db.update(s.sequences).set({ lastNumber: sql`${s.sequences.lastNumber} + 1` })
+      .where(eq(s.sequences.id, seq.id)).returning({ lastNumber: s.sequences.lastNumber });
+    const n = row!.lastNumber;
     if (String(n).length > seq.numericLength && seq.channel !== 999) throw new Error('Номерацията е изчерпана.');
-  } while (await isUsed(formatted));
-  await db.update(s.sequences).set({ lastNumber: n }).where(eq(s.sequences.id, seq.id));
+    formatted = formatSequenceNumber(seq, n);
+    if (!(await isUsed(formatted))) break;
+  }
   return { number: formatted, sequenceId: seq.id };
 }
 

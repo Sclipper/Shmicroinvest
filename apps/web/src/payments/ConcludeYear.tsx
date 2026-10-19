@@ -27,13 +27,13 @@ interface ConcludeInfo {
 const differencesFilter = (a: Account) => !isCompanyCategory(a.categoryId);
 
 /** "Приключване" tab of Счетоводна година: transfer of the closing balances (spec 01b 6.4, euro changeover 04b 4). */
-export function ConcludeYearPanel() {
+export function ConcludeYearPanel({ initialYearId }: { initialYearId?: number } = {}) {
   const s = useSession();
   const can = useCan();
   const dialogs = useDialogs();
   const qc = useQueryClient();
   const years = useQuery({ queryKey: ['years'], queryFn: () => api.get<FinancialYear[]>('/years') });
-  const [yearId, setYearId] = useState<number>(s.year.id);
+  const [yearId, setYearId] = useState<number>(initialYearId ?? s.year.id);
   const info = useQuery({ queryKey: ['years', 'conclude-info', yearId], queryFn: () => api.get<ConcludeInfo>(`/years/${yearId}/conclude-info`) });
   const [diffId, setDiffId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);

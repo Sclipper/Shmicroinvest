@@ -1,5 +1,5 @@
 {
-  "id": "6b528d49-6278-4422-8d40-af947d5f5760",
+  "id": "474529ff-5c06-48c8-811f-fc7ee54cf649",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -503,7 +503,24 @@
           "notNull": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "ix_users_name_active": {
+          "name": "ix_users_name_active",
+          "columns": [
+            {
+              "expression": "lower(\"name\")",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "NOT \"users\".\"is_deleted\"",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "users_user_role_id_user_roles_id_fk": {
           "name": "users_user_role_id_user_roles_id_fk",

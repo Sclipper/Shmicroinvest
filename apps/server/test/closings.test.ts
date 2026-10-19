@@ -417,8 +417,8 @@ describe('euro changeover 2025 BGN -> 2026 EUR (04b 4)', () => {
     const yearId = (await e.call('GET', '/years')).body[0].id;
     expect((await e.call('GET', `/years/${yearId}/conclude-info`)).body).toMatchObject({ year: 2025, nextYear: 2026, isEuroChangeover: true });
     // A 2026 posting made on the BGN chart is re-pointed to the EUR chart.
-    expect((await e.call('POST', '/years', { year: 2026 })).status).toBe(201);
-    expect((await e.call('PUT', '/years/active', { year: 2026 })).status).toBe(200);
+    expect((await e.call('POST', '/years', { year: 2026, force: true })).status).toBe(201);
+    expect((await e.call('PUT', '/years/active', { year: 2026, force: true })).status).toBe(200);
     const wrong = await e.post({ date: '2026-01-15', dr: [['501', 100, { currencyAmount: '195.58' }]], cr: [['702', 100, { currencyAmount: '195.58' }]] });
     const missing = await e.call('POST', `/years/${yearId}/conclude`, {});
     expect(missing.status).toBe(400);

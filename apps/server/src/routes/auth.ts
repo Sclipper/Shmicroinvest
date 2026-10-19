@@ -8,9 +8,10 @@ import * as s from '../db/company/schema/index.ts';
 import type { AppEnv } from '../context.ts';
 import { ApiError } from '../lib/errors.ts';
 import { verifyPassword, isStrongPassword } from '../lib/password.ts';
-import { createSession, destroySession, readSession, permissionResolver } from '../session.ts';
+import { createSession, destroySession, readSession, permissionResolver, todayInSofia } from '../session.ts';
 import { PRODUCT_VERSION, seedCompany } from '../services/companySetup.ts';
 import { logActivity } from '../services/audit.ts';
+import { applyLoginYear } from '../services/years.ts';
 import { logApp } from '../services/appLog.ts';
 import { transferEntities } from '../services/transfer.ts';
 
@@ -115,6 +116,8 @@ export const authRoutes = new Hono<AppEnv>()
     failedLogins.delete(key);
     await destroySession(c);
     await createSession(c, companyDb, u.id);
+    // OpenLoginWindow: 2026 without the euro chart falls back to 2025 (06 4.1).
+    await applyLoginYear(db, u.id, todayInSofia());
     await logActivity(db, u.id, 'login', 'identification', null, 'Вписване');
     await logApp({ level: 'info', message: `Вписване на потребител ${u.name}`, company: companyDb, user: u.name });
     return c.json({ ok: true });

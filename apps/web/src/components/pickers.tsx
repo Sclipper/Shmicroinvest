@@ -20,10 +20,11 @@ interface ComboProps<T> {
   autoFocus?: boolean;
   invalid?: boolean;
   listWidth?: number;
+  ariaLabel?: string;
 }
 
 /** Type-ahead combo with F4 / Alt+Down to open the list (Delta pickers are F4). */
-export function Combo<T>({ value, items, display, render, filter, isSelectable = () => true, onChange, onQuery, placeholder, className, disabled, autoFocus, invalid, listWidth }: ComboProps<T>) {
+export function Combo<T>({ value, items, display, render, filter, isSelectable = () => true, onChange, onQuery, placeholder, className, disabled, autoFocus, invalid, listWidth, ariaLabel }: ComboProps<T>) {
   const [text, setText] = useState(value ? display(value) : '');
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(0);
@@ -61,6 +62,7 @@ export function Combo<T>({ value, items, display, render, filter, isSelectable =
         className={cx('field-input', invalid && 'border-red-400 bg-red-50')}
         value={text}
         disabled={disabled}
+        aria-label={ariaLabel}
         autoFocus={autoFocus}
         placeholder={placeholder}
         onChange={(e) => {
@@ -130,7 +132,7 @@ const accDisplay = (a: Account) => `${a.number} ${a.description}`;
 const accFilter = (a: Account, q: string) => !q || a.number.startsWith(q) || a.description.toLowerCase().includes(q.toLowerCase()) || `${a.number} ${a.description}`.toLowerCase().startsWith(q.toLowerCase());
 
 /** Account picker; by default only leaf (postable) accounts can be chosen. */
-export function AccountPicker({ value, onChange, leafOnly = true, autoFocus, invalid, className, filter }: { value: number | null; onChange: (a: Account | null) => void; leafOnly?: boolean; autoFocus?: boolean; invalid?: boolean; className?: string; filter?: (a: Account) => boolean }) {
+export function AccountPicker({ value, onChange, leafOnly = true, autoFocus, invalid, className, filter, disabled, ariaLabel }: { value: number | null; onChange: (a: Account | null) => void; leafOnly?: boolean; autoFocus?: boolean; invalid?: boolean; className?: string; filter?: (a: Account) => boolean; disabled?: boolean; ariaLabel?: string }) {
   const { data = [] } = useAccounts();
   const items = useMemo(() => data.filter((a) => a.number !== '0' && !a.isHidden && (!filter || filter(a))), [data, filter]);
   const selected = data.find((a) => a.id === value) ?? null;
@@ -146,6 +148,8 @@ export function AccountPicker({ value, onChange, leafOnly = true, autoFocus, inv
       autoFocus={autoFocus}
       invalid={invalid}
       className={className}
+      disabled={disabled}
+      ariaLabel={ariaLabel}
       listWidth={420}
       placeholder="Сметка (F4)"
       render={(a) => (

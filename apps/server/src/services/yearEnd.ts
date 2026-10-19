@@ -1,12 +1,13 @@
 import { asc, eq, inArray, sql } from 'drizzle-orm';
 import {
-  COMPANY_CATEGORIES, DOCUMENT_TYPE, VAT_CATEGORIES, YEAR_END_MESSAGES, ZERO, bgnToEur, conversionDifference, dec, isSettledPair,
+  COMPANY_CATEGORIES, DOCUMENT_TYPE, EURO_FLAGS, VAT_CATEGORIES, YEAR_END_MESSAGES, ZERO, bgnToEur, conversionDifference, dec, isSettledPair,
   partnerCarry, splitBalance, type Dec,
 } from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import { exec, queryRows, type CompanyDb, type DbOrTx } from '../db/provider.ts';
 import { ApiError, badRequest, notFound } from '../lib/errors.ts';
-import { applyChartTemplate, rebuildAccountsTree } from './chart.ts';
+import { rebuildAccountsTree } from './chart.ts';
+import { addFinancialYear, ensureEuroChart } from './years.ts';
 import { getConfig, setConfig } from './config.ts';
 import { baseCurrencyId } from './journal.ts';
 import { openItems } from './openItems.ts';
@@ -40,24 +41,11 @@ interface Carry {
 
 const isEuroChangeover = (year: number, next: number) => year === 2025 && next === 2026;
 
-/** Creates a financial year like POST /years (sequences of yearly-reset channels; EUR chart seeded from 2026). */
+/** The next year, created like POST /years (AddFinancialYear) when missing; a EUR year gets the EUR chart. */
 async function ensureYear(tx: DbOrTx, year: number) {
   const [existing] = await tx.select().from(s.financialYears).where(eq(s.financialYears.year, year));
-  let fy = existing;
-  if (!fy) {
-    [fy] = await tx.insert(s.financialYears).values({ year, startDate: `${year}-01-01` }).returning();
-    const resetting = await tx.select().from(s.sequences).where(eq(s.sequences.isNumberResetNextYear, true));
-    const channels = [...new Set(resetting.map((r) => r.channel))];
-    if (channels.length) await tx.insert(s.sequences).values(channels.map((channel) => ({ channel, financialYearId: fy!.id, isNumberResetNextYear: true })));
-  }
-  if (year >= 2026) {
-    const eur = await exec(tx, sql`SELECT count(*)::int AS n FROM accounts WHERE is_euro AND number <> '0'`);
-    if ((eur.rows[0] as { n: number }).n === 0) {
-      const type = (await getConfig(tx, 'ChartOfAccountsType')) as 'commercial' | null;
-      if (type) await applyChartTemplate(tx, type, true);
-    }
-  }
-  return { fy: fy!, created: !existing };
+  if (existing) await ensureEuroChart(tx, year);
+  return { fy: existing ?? (await addFinancialYear(tx, year)), created: !existing };
 }
 
 /**
@@ -258,6 +246,8 @@ export async function concludeFinancialYear(db: CompanyDb, yearId: number, userI
       const { fy: next, created } = await ensureYear(tx, fy.year + 1);
       const euro = isEuroChangeover(fy.year, next.year);
       const map = euro ? await prepareEuroChart(tx, next.id) : new Map<number, number>();
+      // The BGN chart is mapped: the euro chart counts as initialised (strSelect2026yearMessage, login guard).
+      if (euro) await setConfig(tx, EURO_FLAGS.mapping, 'True');
 
       // Step 1: remove the previous conclusion, keeping the allocations that touch it.
       const old = await openingsOf(tx, next.id);

@@ -124,7 +124,7 @@ export function useEntryVat<D extends VatDraft>(d: D | null, patch: (p: Partial<
     try {
       return await send();
     } catch (e) {
-      if (!(e instanceof ApiError) || e.status !== 409) throw e;
+      if (!(e instanceof ApiError) || e.status !== 409 || e.code !== 'confirm') throw e;
       for (const m of e.messages ?? []) if (!(await dialogs.confirm(m.text))) return null;
       return send(true);
     }
