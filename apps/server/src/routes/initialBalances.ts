@@ -38,6 +38,6 @@ export const initialBalanceRoutes = new Hono<AppEnv>()
     return c.json(r);
   })
   .delete('/initial-balances/:accountId', requirePermission(PERM), async (c) => {
-    await c.var.db.transaction((tx) => deleteInitialBalances(tx, c.var.year, Number(c.req.param('accountId'))));
+    await c.var.db.transaction((tx) => deleteInitialBalances(tx, c.var.year, Number(c.req.param('accountId')), c.req.query('force') === '1'));
     return c.json({ ok: true });
   });

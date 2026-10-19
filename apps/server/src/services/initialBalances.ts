@@ -1,5 +1,7 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
-import { D, dec, isCompanyCategory, isLeaf, round2, type ValidationMessage } from '@shmi/core';
+import { and, eq, inArray, or, sql } from 'drizzle-orm';
+import {
+  D, INITIAL_BALANCE_PAYMENT_MESSAGES, dec, isCompanyCategory, isLeaf, openingPaymentOutcomes, openingRowKey, round2, type ValidationMessage,
+} from '@shmi/core';
 import * as s from '../db/company/schema/index.ts';
 import { queryRows, type DbOrTx } from '../db/provider.ts';
 import { ApiError, badRequest } from '../lib/errors.ts';
@@ -28,6 +30,7 @@ export const INITIAL_BALANCE_MESSAGES = {
   strInitialBalancesInvalidDocumentDateError: 'Датата на документа е невалидна!',
   strCompanyNotAllowed: 'Сметката не поддържа работа с партньори!',
   strYearLocked: 'Счетоводната година е заключена за редакция!',
+  ...INITIAL_BALANCE_PAYMENT_MESSAGES,
 } as const;
 type Key = keyof typeof INITIAL_BALANCE_MESSAGES;
 const msg = (key: Key, severity: ValidationMessage['severity'] = 'critical', prefix = ''): ValidationMessage => ({ key, text: prefix + INITIAL_BALANCE_MESSAGES[key], severity });
@@ -138,11 +141,18 @@ export async function saveInitialBalances(db: DbOrTx, year: ActiveYear, ctx: { u
   if (!isLeaf({ left: acc.leftIndex, right: acc.rightIndex }) && clean.some((c) => !c.debit.isZero() || !c.credit.isZero())) {
     messages.push(msg('strInitalBalanceOnSyntheticAccountWarning', 'warning'));
   }
+  // Payments bound to the current rows (strInitialBalancesExistingPaymentWarning/Error).
+  const keyOf = (c: (typeof clean)[number]) => openingRowKey(isPartner ? c.r.companyId : null, c.hasDoc ? c.r.documentTypeId : null, c.hasDoc ? c.r.documentNumber : null);
+  const bound = await boundPayments(db, year, accountId);
+  const outcomes = openingPaymentOutcomes(bound.rows, clean.map((c) => ({ key: keyOf(c), debit: c.debit, credit: c.credit })));
+  if (outcomes.some((o) => o.outcome === 'tooSmall')) messages.push(msg('strInitialBalancesExistingPaymentError'));
+  if (outcomes.some((o) => o.outcome === 'unlink')) messages.push(msg('strInitialBalancesExistingPaymentWarning', 'warning'));
   if (messages.some((m) => m.severity === 'critical')) throw new ApiError(422, 'Началните салда не могат да бъдат записани.', messages);
   const warnings = messages.filter((m) => m.severity === 'warning');
   if (warnings.length && !ctx.force) throw new ApiError(422, 'Началните салда са с предупреждения.', warnings, 'warnings');
 
-  await deleteInitialBalances(db, year, accountId);
+  await deleteInitialBalances(db, year, accountId, true);
+  const created = new Map<string, { accountingId: number; documentId: number | null }>();
   const [cur] = isCurrency ? await db.select().from(s.currencies).where(eq(s.currencies.id, acc.currencyId)) : [];
   for (const c of clean) {
     if (c.debit.isZero() && c.credit.isZero() && !(c.cd && !c.cd.isZero()) && !(c.cc && !c.cc.isZero()) && !(c.qd && !c.qd.isZero()) && !(c.qc && !c.qc.isZero())) continue;
@@ -173,11 +183,57 @@ export async function saveInitialBalances(db: DbOrTx, year: ActiveYear, ctx: { u
       { ...common, amount: '0', refAmount: c.credit.toFixed(2), sign: -1, position: 1, currencyAmount: c.cc?.toFixed(2) ?? null, quantity: c.qc?.toString() ?? null },
     ]);
     await db.insert(s.accountInitialBalances).values({ accountId, accountingId: a!.id, companyId: isPartner ? c.r.companyId ?? null : null, documentId, financialYearId: year.id });
+    created.set(keyOf(c), { accountingId: a!.id, documentId });
   }
+  // Re-attach the payments of the rows that stay (same partner and document, enough amount).
+  const relink = new Set(outcomes.filter((o) => o.outcome === 'relink').map((o) => o.key));
+  const remap = new Map<number, { accountingId: number; documentId: number | null; oldDocumentId: number | null }>();
+  for (const r of bound.rows) {
+    const n = relink.has(r.key) ? created.get(r.key) : undefined;
+    if (n) remap.set(r.accountingId, { ...n, oldDocumentId: r.documentId });
+  }
+  const oldIds = new Set(bound.rows.map((r) => r.accountingId));
+  const restored = bound.links.flatMap((l) => {
+    const pay = oldIds.has(l.paymentAccountingId) ? remap.get(l.paymentAccountingId)?.accountingId : l.paymentAccountingId;
+    const ref = oldIds.has(l.refAccountingId) ? remap.get(l.refAccountingId)?.accountingId : l.refAccountingId;
+    if (!pay || !ref) return [];
+    const doc = [remap.get(l.paymentAccountingId), remap.get(l.refAccountingId)].find((m) => m && m.oldDocumentId != null && m.oldDocumentId === l.documentId);
+    const { id: _id, ...rest } = l;
+    void _id;
+    return [{ ...rest, paymentAccountingId: pay, refAccountingId: ref, documentId: doc ? doc.documentId : l.documentId }];
+  });
+  if (restored.length) await db.insert(s.accountingPaymentDetails).values(restored);
   return { warnings };
 }
 
-export async function deleteInitialBalances(db: DbOrTx, year: ActiveYear, accountId: number) {
+/** Opening rows of the account with the payments bound to them (both directions), and those links. */
+async function boundPayments(db: DbOrTx, year: ActiveYear, accountId: number) {
+  const rows = await listInitialBalances(db, year, accountId);
+  const ids = rows.map((r) => r.accountingId);
+  const links = ids.length
+    ? await db.select().from(s.accountingPaymentDetails).where(or(inArray(s.accountingPaymentDetails.paymentAccountingId, ids), inArray(s.accountingPaymentDetails.refAccountingId, ids)))
+    : [];
+  const docs = ids.length
+    ? new Map((await db.select({ id: s.accountInitialBalances.accountingId, documentId: s.accountInitialBalances.documentId }).from(s.accountInitialBalances).where(inArray(s.accountInitialBalances.accountingId, ids))).map((d) => [d.id, d.documentId]))
+    : new Map<number, number | null>();
+  return {
+    links,
+    rows: rows.map((r) => ({
+      accountingId: r.accountingId,
+      documentId: docs.get(r.accountingId) ?? null,
+      key: openingRowKey(r.companyId, r.documentTypeId, r.documentNumber),
+      debit: r.debit, credit: r.credit,
+      paid: links.filter((l) => l.paymentAccountingId === r.accountingId || l.refAccountingId === r.accountingId)
+        .reduce((acc, l) => acc.plus(dec(l.amount).abs()), dec(0)),
+    })),
+  };
+}
+
+/** Deletes the opening balances of one account; with payments bound to them only when `force` (strInitialBalancesExistingPaymentWarning). */
+export async function deleteInitialBalances(db: DbOrTx, year: ActiveYear, accountId: number, force = false) {
+  if (!force && (await boundPayments(db, year, accountId)).links.length) {
+    throw new ApiError(422, 'Началните салда са с предупреждения.', [msg('strInitialBalancesExistingPaymentWarning', 'warning')], 'warnings');
+  }
   const ids = (await db.select({ id: s.accountInitialBalances.accountingId }).from(s.accountInitialBalances)
     .innerJoin(s.accountings, eq(s.accountings.id, s.accountInitialBalances.accountingId))
     .where(and(eq(s.accountInitialBalances.accountId, accountId), eq(s.accountInitialBalances.financialYearId, year.id), eq(s.accountings.isInitialCorrespondence, false))))

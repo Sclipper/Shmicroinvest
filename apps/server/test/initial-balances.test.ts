@@ -106,4 +106,48 @@ describe('opening balances (01b 7)', () => {
     expect((await tb())('501')?.openingDebit ?? '0.00').toBe('0.00');
     expect((await call('GET', `/initial-balances?accountId=${t.acc('501')}`)).body.rows).toHaveLength(0);
   });
+
+  it('keeps, drops or protects the payments bound to partner opening rows (strInitialBalancesExistingPaymentWarning/Error)', async () => {
+    const p = await t.partner('Платил по начално салдо ООД', ['411']);
+    const id = t.acc('411');
+    const rows = (debit: string) => [
+      { companyId: p, documentTypeId: 1, documentNumber: 'НС-1', documentDate: '2025-12-15', debit },
+      { companyId: p, documentTypeId: 1, documentNumber: 'НС-2', documentDate: '2025-12-16', debit: '50' },
+    ];
+    expect((await call('PUT', `/initial-balances/${id}`, { date: '2026-01-01', rows: rows('600') })).status).toBe(200);
+    const opening = async (number: string) => ((await call('GET', `/initial-balances?accountId=${id}`)).body.rows as { accountingId: number; documentNumber: string }[])
+      .find((r) => r.documentNumber === number)!.accountingId;
+    const pay = await call('POST', '/payments', {
+      companyId: p, accountId: id, paymentAccountId: t.acc('501'), date: '2026-01-10', term: 'Плащане',
+      amount: '200', allocations: [{ accountingId: await opening('НС-1'), amount: '200' }],
+    });
+    expect(pay.status, pay.text).toBe(201);
+    const open = async () => (await call('GET', `/payments/open-items?companyId=${p}`)).body as { liabilities: { accountingId: number; open: string }[]; payments: { accountingId: number; openAbs: string }[] };
+
+    // Saved again with the same document and at least the paid amount: the payment is re-attached.
+    const again = await call('PUT', `/initial-balances/${id}`, { date: '2026-01-01', rows: rows('650') });
+    expect(again.status, again.text).toBe(200);
+    let o = await open();
+    const paidRow = await opening('НС-1');
+    expect(o.liabilities.map((l) => [l.accountingId === paidRow, l.open]).sort()).toEqual([[false, '50.00'], [true, '450.00']]);
+    expect(o.payments).toHaveLength(0);
+
+    // Below the paid amount: blocked.
+    const tooSmall = await call('PUT', `/initial-balances/${id}`, { date: '2026-01-01', rows: rows('150') });
+    expect(tooSmall.status).toBe(422);
+    expect(keys(tooSmall)).toEqual(['strInitialBalancesExistingPaymentError']);
+
+    // Deleting the account balances or dropping the paid row asks first, then unbinds the payment.
+    const del = await call('DELETE', `/initial-balances/${id}`);
+    expect([del.status, del.body.code, keys(del)]).toEqual([422, 'warnings', ['strInitialBalancesExistingPaymentWarning']]);
+    const dropped = [rows('650')[1]];
+    const warn = await call('PUT', `/initial-balances/${id}`, { date: '2026-01-01', rows: dropped });
+    expect([warn.status, warn.body.code, keys(warn)]).toEqual([422, 'warnings', ['strInitialBalancesExistingPaymentWarning']]);
+    expect(warn.body.messages[0].text).toBe('Към началните салда има въведени плащания, чиито връзки ще бъдат изтрити. Желаете ли да продължите?');
+    expect((await call('PUT', `/initial-balances/${id}`, { date: '2026-01-01', rows: dropped, force: true })).status).toBe(200);
+    o = await open();
+    expect(o.payments.map((x) => x.openAbs)).toEqual(['200.00']);
+    expect(o.liabilities.map((x) => x.open)).toEqual(['50.00']);
+    expect((await call('DELETE', `/initial-balances/${id}`)).status).toBe(200);
+  });
 });
