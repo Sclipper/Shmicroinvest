@@ -22,6 +22,22 @@ The first visit asks you to create the first company and its administrator. Afte
 
 To run in production, build the UI with `pnpm --filter @shmi/web build`, then run `pnpm --filter @shmi/server start`. The server serves `apps/web/dist`.
 
+### Off-site backups
+
+Delta's cloud archive is replaced by S3-compatible object storage (AWS S3, Hetzner Object Storage, Backblaze B2, MinIO, Garage, SeaweedFS). When a bucket is configured, every company is backed up daily as a ZIP of its backup file, "Архивиране на фирма" offers to upload the new archive, and administrators see the remote archives in "Възстановяване на фирма" and can restore one.
+
+| Variable | Meaning |
+|---|---|
+| `SHMI_BACKUP_S3_BUCKET` | Bucket; without it off-site backups are off |
+| `SHMI_BACKUP_S3_ENDPOINT` | e.g. `https://fsn1.your-objectstorage.com`, `https://s3.eu-central-003.backblazeb2.com`, `http://127.0.0.1:9000`; default AWS for the region |
+| `SHMI_BACKUP_S3_REGION` | Default `us-east-1` |
+| `SHMI_BACKUP_S3_ACCESS_KEY`, `SHMI_BACKUP_S3_SECRET_KEY` (or `SHMI_BACKUP_S3_SECRET_KEY_FILE`) | Credentials |
+| `SHMI_BACKUP_S3_PATH_STYLE` | `true`/`false`; default path-style except on `*.amazonaws.com` |
+| `SHMI_BACKUP_PREFIX` | Key prefix, default `shmelta/`; archives go to `<prefix><database>/<file>.zip` |
+| `SHMI_BACKUP_SCHEDULE` | `daily 02:00` (default, company time zone), several times `02:00,14:00`, or `off` |
+| `SHMI_BACKUP_KEEP` | Archives kept per company after each upload, default 14 (Delta keeps 2) |
+| `SHMI_BACKUP_ZIP_PASSWORD` | Password of the uploaded ZIPs (a user's own ZIP password is used for the uploads that user starts) |
+
 ## What it covers
 
 The main menu follows Delta Pro (06 1.3); every item opens a working screen.
@@ -32,7 +48,7 @@ The main menu follows Delta Pro (06 1.3); every item opens a working screen.
 - **VAT:** purchase/sales journals, declaration and VIES files for NRA, the art. 73 coefficient, art. 117 protocols, VAT closing, the registration turnover check.
 - **Year end:** closing of income/expense accounts, automatic closing, revaluation, closing of documents, conclusion and opening of the next year.
 - **Reports:** turnover, chronological and analytical registers, general ledger, partner reports, inventory and asset books, financial statements, user activities and a user-defined report manager. Every report prints, exports to PDF, Word and Excel, and can be e-mailed as a PDF or Excel attachment.
-- **Exchange:** import from text, Excel, XML, VAT journals, ТРЗ Pro and Microinvest Delta; bank statements (MT940, camt.053, Excel, per-bank XML and the HTML exports of seven banks) with rules and document binding; XML export and exports to external systems; backup and restore.
+- **Exchange:** import from text, Excel, XML, VAT journals, ТРЗ Pro and Microinvest Delta; bank statements (MT940, camt.053, Excel, per-bank XML and the HTML exports of seven banks) with rules and document binding; XML export and exports to external systems; backup and restore, with daily off-site copies in S3-compatible storage.
 - **Administration:** users, roles with Delta's permission tree (denied menu items are hidden), escalating login lockout, the application log, settings and SMTP, and Delta's nine skins ("Визуален стил", per user).
 - **Attachments:** files on entries, and scanned pages taken with the camera ("Сканиране на документ").
 

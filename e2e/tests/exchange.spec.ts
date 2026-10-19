@@ -132,9 +132,45 @@ test.describe('data exchange', () => {
     await tab.getByRole('button', { name: 'Архивиране', exact: true }).click();
     const file = await downloading;
     expect(file.suggestedFilename()).toMatch(/^Shmelta Pro - .+ - \d{2}\.\d{2}\.\d{4}_\d{2}\.\d{2}\.shbak$/);
-    await expect(page.getByText('Архивирането на фирмата завърши успешно', { exact: false })).toBeVisible();
-    await page.getByRole('button', { name: 'OK' }).click();
+    // The e2e server has an off-site storage: the success message offers the upload (declined here).
+    await expect(page.getByText('Архивирането на фирмата завърши успешно. Желаете ли архивът да бъде качен и в облака?', { exact: false })).toBeVisible();
+    await page.getByRole('button', { name: 'Не', exact: true }).click();
     await expect(tab.getByRole('cell', { name: file.suggestedFilename() })).toBeVisible();
+  });
+
+  test('archives to the cloud after a backup and restores the remote archive listed in the restore screen (01b 2)', async ({ page }) => {
+    await openApp(page);
+    // A company of its own: restoring switches the session.
+    const name = `Облак Е2Е ${uid()}`;
+    await api(page, 'POST', '/companies', { companyName: name, adminName: 'Администратор', adminPassword: 'e2e-secret', year: 2026 });
+    await page.goto('/');
+    await expect(page.locator('footer')).toContainText(name);
+    await menu(page, 'Файл', 'Архивиране на фирма');
+    const backup = activeTab(page);
+    const downloading = page.waitForEvent('download');
+    await backup.getByRole('button', { name: 'Архивиране', exact: true }).click();
+    const fileName = (await downloading).suggestedFilename();
+    await expect(page.getByText('Желаете ли архивът да бъде качен и в облака?', { exact: false })).toBeVisible();
+    await page.getByRole('button', { name: 'Да', exact: true }).click();
+    const zipName = fileName.replace(/\.shbak$/, '.zip');
+    await expect(page.getByText(`Архивът „${zipName}“ е качен в облака успешно.`)).toBeVisible();
+    await page.getByRole('button', { name: 'OK' }).click();
+
+    // Data added after the archive must not come back with the restore.
+    await api(page, 'POST', '/partners', { name: `След архива ${name}` });
+    await menu(page, 'Файл', 'Възстановяване на фирма');
+    const restore = activeTab(page);
+    const remote = restore.getByTestId('offsite-archives');
+    await expect(remote).toContainText('Пазят се последните 5 архива на фирма.');
+    const row = remote.getByRole('row').filter({ hasText: zipName });
+    await expect(row).toHaveCount(1);
+    await row.getByRole('button', { name: 'Възстановяване' }).click();
+    await expect(page.getByText(`Архивът е възстановен успешно като нова фирма „${name}“.`)).toBeVisible();
+    await page.getByRole('button', { name: 'OK' }).click();
+    const partners = await api<{ name: string }[]>(page, 'GET', '/partners');
+    expect(partners.some((p) => p.name === `След архива ${name}`)).toBe(false);
+    const active = await api<{ database: string; companyName: string }>(page, 'GET', '/company/active');
+    expect(active.companyName).toBe(name);
   });
 
   test('Delta conversion: refuses a non-Access file, then converts a legacy MAINACCT.MDB into an empty company (04a 7)', async ({ page }) => {

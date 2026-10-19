@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { compareAccountNumbers } from '../../format.ts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Archive, Download, FileDown, Play, Trash2, Upload } from 'lucide-react';
+import { Archive, CloudUpload, Download, FileDown, Play, Trash2, Upload } from 'lucide-react';
+import { msg } from '@shmi/core';
 import { api, type Message } from '../../api.ts';
 import { useDialogs } from '../../components/dialogs.tsx';
 import { Button, Checkbox, CommandBar, Dialog, Empty, Field, Panel, Select, TextInput } from '../../components/ui.tsx';
@@ -19,18 +20,26 @@ export function BackupScreen() {
   const s = useSession();
   const dialogs = useDialogs();
   const list = useQuery({ queryKey: ['backups'], queryFn: () => api.get<BackupRow[]>('/backups'), refetchOnMount: 'always' });
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
   const run = async () => {
-    setBusy(true);
+    setBusy(msg('strProgressArchivingDatabase'));
     try {
-      const r = await api.post<{ id: number; fileName: string; message: string }>('/backups');
+      const r = await api.post<{ id: number; fileName: string; message: string; cloudQuestion: string | null }>('/backups');
       await list.refetch();
       await download(`/backups/${r.id}/download`);
-      await dialogs.alert(`${r.message}\n${r.fileName}`);
+      // With an off-site storage: strBackupDatabaseSuccededWithArchiveToCloudQuestion, then the upload.
+      if (r.cloudQuestion) {
+        setBusy(null);
+        if (await dialogs.confirm(`${r.cloudQuestion}\n${r.fileName}`, 'Архивиране в облака')) {
+          setBusy(msg('strProgressUploading'));
+          const up = await api.post<{ message: string }>(`/backups/${r.id}/offsite`);
+          await dialogs.alert(up.message);
+        }
+      } else await dialogs.alert(`${r.message}\n${r.fileName}`);
     } catch (e) {
       await dialogs.error(e);
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
   const mine = list.data?.filter((b) => b.database === s.company.db) ?? [];
@@ -40,7 +49,10 @@ export function BackupScreen() {
         <Panel title="Архивиране на фирма">
           <div className="flex items-center justify-between gap-3 p-3">
             <div className="text-[13px]">Архив на <span className="font-semibold">{s.company.name}</span>. Файлът се съхранява на сървъра и се изтегля.</div>
-            <Button variant="primary" icon={<Archive className="size-3.5" />} disabled={busy} onClick={run}>Архивиране</Button>
+            <div className="flex items-center gap-2">
+              {busy && <span className="text-[12px] text-slate-600" data-testid="backup-progress">{busy}</span>}
+              <Button variant="primary" icon={<Archive className="size-3.5" />} disabled={!!busy} onClick={run}>Архивиране</Button>
+            </div>
           </div>
         </Panel>
         <Panel title="Архиви на фирмата">
@@ -73,8 +85,12 @@ function BackupTable({ rows, onRestore, onDelete }: { rows: BackupRow[]; onResto
   );
 }
 
-/** Възстановяване на фирма (01b 2): from the server store or an uploaded file; into the current company or as a new one. */
+interface OffsiteArchive { key: string; name: string; database: string; companyName: string; date: string | null; size: number; lastModified: string }
+interface OffsiteList { configured: boolean; archives: OffsiteArchive[]; schedule: string[] | null; keep: number | null; lastRun: { at: string; results: { ok: boolean }[] } | null }
+
+/** Възстановяване на фирма (01b 2): from the server store, an uploaded file or the off-site (cloud) archive; into the current company or as a new one. */
 export function RestoreScreen() {
+  const s = useSession();
   const dialogs = useDialogs();
   const qc = useQueryClient();
   const list = useQuery({ queryKey: ['backups'], queryFn: () => api.get<BackupRow[]>('/backups'), refetchOnMount: 'always' });
@@ -82,11 +98,28 @@ export function RestoreScreen() {
   const [mode, setMode] = useState<'new' | 'current'>('new');
   const [busy, setBusy] = useState(false);
   const [zipPassword, setZipPassword] = useState('');
-  const restore = async (src: { id: number } | { file: File }) => {
+  const [cloudPassword, setCloudPassword] = useState('');
+  // The off-site (cloud) archive: administrators only (the list covers every company's archives).
+  const cloud = useQuery({ queryKey: ['backups-offsite'], queryFn: () => api.get<OffsiteList>('/backups/offsite'), enabled: !!s.user.isAdmin, retry: false, refetchOnMount: 'always' });
+  const runAll = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post<{ results: { companyName: string; ok: boolean; name?: string; error?: string }[] }>('/backups/offsite/run');
+      await cloud.refetch();
+      await dialogs.alert(r.results.map((x) => (x.ok ? msg('strZipArchivedToCloud', x.name ?? '') : `${x.companyName}: ${x.error ?? msg('strCannotConnectToCloud')}`)).join('\n'), 'Архивиране в облака');
+    } catch (e) {
+      await dialogs.error(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const restore = async (src: { id: number } | { file: File } | { key: string }) => {
     if (mode === 'current' && !(await dialogs.confirm('Данните на текущата фирма ще бъдат заменени с данните от архива. Продължаване?'))) return;
     setBusy(true);
     try {
-      const r = 'id' in src ? await api.post<{ message: string }>('/backups/restore', { id: src.id, mode }) : await upload<{ message: string }>('/backups/restore', src.file, { mode, zipPassword: zipPassword || undefined });
+      const r = 'key' in src ? await api.post<{ message: string }>('/backups/offsite/restore', { key: src.key, mode, zipPassword: cloudPassword || undefined })
+        : 'id' in src ? await api.post<{ message: string }>('/backups/restore', { id: src.id, mode })
+        : await upload<{ message: string }>('/backups/restore', src.file, { mode, zipPassword: zipPassword || undefined });
       await dialogs.alert(r.message);
       await qc.invalidateQueries();
     } catch (e) {
@@ -126,6 +159,43 @@ export function RestoreScreen() {
             />
           ) : <Empty>Няма архиви.</Empty>}
         </Panel>
+        {s.user.isAdmin && (
+          <Panel
+            title="Архиви в облака"
+            actions={cloud.data?.configured ? (
+              <Button variant="ghost" className="h-6" icon={<CloudUpload className="size-3.5" />} disabled={busy} onClick={runAll}>Архивиране на всички фирми</Button>
+            ) : undefined}
+          >
+            {cloud.isLoading ? <Empty>{msg('strProgressDownloading')}</Empty>
+              : cloud.error ? <div className="p-3"><MessageList messages={errorMessages(cloud.error)} /></div>
+              : !cloud.data?.configured ? <Empty>{msg('strCloudArchiveNotConfigured')}</Empty>
+              : (
+                <div data-testid="offsite-archives">
+                  <div className="flex items-center gap-3 border-b border-slate-200 px-3 py-2 text-[12px] text-slate-600">
+                    <span>
+                      {cloud.data.schedule ? `Автоматично архивиране всеки ден в ${cloud.data.schedule.join(', ')} ч.` : 'Без автоматично архивиране.'} Пазят се последните {cloud.data.keep} архива на фирма.
+                    </span>
+                    <TextInput type="password" className="ml-auto w-48" aria-label="Парола на архива в облака" placeholder="Парола на архива" autoComplete="off" value={cloudPassword} onChange={(e) => setCloudPassword(e.target.value)} />
+                  </div>
+                  {cloud.data.archives.length ? (
+                    <div className="overflow-x-auto">
+                      <table className="grid-table">
+                        <thead><tr><th>Файл</th><th>Фирма</th><th>База данни</th><th>Дата</th><th className="text-right">Размер</th><th /></tr></thead>
+                        <tbody>
+                          {cloud.data.archives.map((a) => (
+                            <tr key={a.key}>
+                              <td>{a.name}</td><td>{a.companyName}</td><td>{a.database}</td><td>{when(a.lastModified)}</td><td className="text-right">{size(a.size)}</td>
+                              <td><Button variant="ghost" className="h-6" icon={<Upload className="size-3.5" />} disabled={busy} onClick={() => void restore({ key: a.key })}>Възстановяване</Button></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : <Empty>Няма архиви.</Empty>}
+                </div>
+              )}
+          </Panel>
+        )}
       </div>
     </div>
   );

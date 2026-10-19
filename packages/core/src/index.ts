@@ -37,6 +37,7 @@ export * from './vat/index.ts';
 export * from './depreciation.ts';
 export * from './exchange/xml.ts';
 export * from './exchange/html.ts';
+export * from './exchange/offsite.ts';
 export * from './exchange/messages.ts';
 export * from './exchange/transfer.ts';
 export * from './exchange/formula.ts';

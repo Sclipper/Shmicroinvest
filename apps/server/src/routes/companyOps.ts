@@ -14,6 +14,7 @@ import { backupData, backupFromZip, createBackup, deleteBackup, deleteCompany, l
 import { zipPasswordOf } from '../services/localSettings.ts';
 import { importStep, readUpload } from '../services/exchange/common.ts';
 import { convertDatabaseToEuro, euroMappingGrid } from '../services/exchange/euro.ts';
+import { fetchOffsiteArchive, listOffsiteArchives, offsiteSettings, offsiteState, requireOffsite, runOffsiteBackups, uploadOffsite } from '../services/offsite/offsite.ts';
 
 const download = (c: { header: (k: string, v: string) => void; body: (b: ArrayBuffer) => Response }, data: Uint8Array, name: string) => {
   c.header('content-type', 'application/octet-stream');
@@ -28,6 +29,10 @@ async function switchTo(c: Parameters<typeof createSession>[0], database: string
   const same = users.find((u) => u.id === userId);
   await createSession(c, database, same?.id ?? users[0]?.id ?? 1);
 }
+
+const requireAdmin = (c: { var: AppEnv['Variables'] }) => {
+  if (!c.var.user.isAdmin) throw new ApiError(403, 'Нямате права за тази операция.');
+};
 
 const scopeOf = (c: { var: AppEnv['Variables'] }): BackupScope => ({ database: c.var.session.companyDb!, isAdmin: !!c.var.user.isAdmin });
 
@@ -44,8 +49,66 @@ export const companyOpsRoutes = new Hono<AppEnv>()
   .get('/backups', requirePermission('UI_File_RestoreDatabaseBackup'), async (c) => c.json(await listBackups(c.var.driver, scopeOf(c))))
   .post('/backups', requirePermission('UI_File_BackupDatabase'), async (c) => {
     const r = await createBackup(c.var.driver, c.var.session.companyDb!);
-    return c.json({ ...r, message: msg('strBackupDatabaseSucceded') }, 201);
+    // With an off-site storage the success message offers the upload (strBackupDatabaseSuccededWithArchiveToCloudQuestion).
+    const cloud = offsiteSettings() !== null;
+    return c.json({ ...r, message: msg('strBackupDatabaseSucceded'), cloudQuestion: cloud ? msg('strBackupDatabaseSuccededWithArchiveToCloudQuestion') : null }, 201);
   })
+
+  // ------------------------------------------------------------------ off-site (cloud) archive (01b 2, 04b 3)
+  /** Archives in the storage, for the restore screen (administrators). */
+  .get('/backups/offsite', requirePermission('UI_File_RestoreDatabaseBackup'), async (c) => {
+    requireAdmin(c);
+    const settings = offsiteSettings();
+    if (!settings) return c.json({ configured: false, archives: [], schedule: null, keep: null, lastRun: null });
+    const archives = await importStep(() => listOffsiteArchives(settings), false);
+    return c.json({ configured: true, archives, schedule: settings.schedule?.times ?? null, keep: settings.keep, lastRun: offsiteState.lastRun });
+  })
+  /** Uploads a stored backup of the company (the "archive to cloud" offer after Архивиране). */
+  .post('/backups/:id/offsite', requirePermission('UI_File_BackupDatabase'), async (c) => {
+    const row = await backupData(c.var.driver, Number(c.req.param('id')), scopeOf(c));
+    if (!row) throw notFound('Архивът');
+    const r = await importStep(async () => {
+      const settings = requireOffsite();
+      const password = (await zipPasswordOf(c.var.db, c.var.user.id)) ?? settings.zipPassword;
+      return uploadOffsite(settings, row.database, { fileName: row.fileName, data: row.data }, password);
+    }, false);
+    return c.json(r);
+  })
+  /** Backs up every company to the storage now (as the schedule does; administrators). */
+  .post('/backups/offsite/run', requirePermission('UI_File_BackupDatabase'), async (c) => {
+    requireAdmin(c);
+    const settings = await importStep(async () => requireOffsite(), false);
+    const results = await runOffsiteBackups(c.var.driver, settings);
+    offsiteState.lastRun = { slot: 'manual', at: new Date().toISOString(), results };
+    return c.json({ results });
+  })
+  /** Restores an archive of the storage (body { key, mode, zipPassword? }; administrators). */
+  .post('/backups/offsite/restore', requirePermission('UI_File_RestoreDatabaseBackup'),
+    zValidator('json', z.object({ key: z.string().min(1), mode: z.enum(['new', 'current']), zipPassword: z.string().optional() })), async (c) => {
+      requireAdmin(c);
+      const { key, mode, zipPassword } = c.req.valid('json');
+      const bytes = await importStep(async () => {
+        const settings = requireOffsite();
+        const zip = await fetchOffsiteArchive(settings, key);
+        // The password typed in the screen, the storage's, then the user's own ZipPassword.
+        const own = await zipPasswordOf(c.var.db, c.var.user.id).catch(() => null);
+        const candidates = [...new Set([zipPassword || null, settings.zipPassword, own].filter((p): p is string => !!p))];
+        let last: unknown = null;
+        for (const p of candidates.length ? candidates : [null]) {
+          try {
+            return backupFromZip(zip, p);
+          } catch (e) {
+            last = e;
+          }
+        }
+        throw last;
+      }, false);
+      const current = c.var.session.companyDb!;
+      const userId = c.var.user.id;
+      const r = await importStep(() => restoreBackup(c.var.driver, bytes, mode === 'current' ? { mode, database: current } : { mode }), false);
+      await switchTo(c, r.database, userId);
+      return c.json(r);
+    })
   .get('/backups/:id/download', requirePermission('UI_File_BackupDatabase'), async (c) => {
     const row = await backupData(c.var.driver, Number(c.req.param('id')), scopeOf(c));
     if (!row) throw notFound('Архивът');

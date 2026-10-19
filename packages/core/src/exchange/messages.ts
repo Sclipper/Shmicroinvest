@@ -217,6 +217,18 @@ export const EXCHANGE_MESSAGES = {
   strDeleteCompanyDone: 'Фирма „{0}“ е изтрита. Архивът е запазен като „{1}“.',
   strCannotDeleteActiveCompany: 'Не може да бъде изтрита фирмата, с която работите в момента.',
 
+  // --- off-site (cloud) archive (01b 2, 04b 3; S3-compatible storage instead of Microinvest's SFTP)
+  strBackupDatabaseSuccededWithArchiveToCloudQuestion: 'Архивирането на фирмата завърши успешно. Желаете ли архивът да бъде качен и в облака?', // no text
+  strZipArchivedToCloud: 'Архивът „{0}“ е качен в облака успешно.', // no text
+  strCannotConnectToCloud: 'Няма връзка с облачното хранилище за архиви. Проверете настройките и връзката с интернет.', // no text
+  strCloudArchiveNotConfigured: 'Не е настроено облачно хранилище за архиви.', // no Delta key
+  strCloudArchiveNotFound: 'Архивът „{0}“ не е намерен в облака.', // no Delta key
+  strProgressArchivingDatabase: 'Архивиране на базата данни...', // no text
+  strProgressZipCompressing: 'Компресиране на архива...', // no text
+  strProgressUploading: 'Качване в облака...', // no text
+  strProgressDownloading: 'Изтегляне от облака...', // no Delta key
+  strProgressFinished: 'Готово.', // no text
+
   // --- euro conversion (04b 4)
   strEuroConversionFailed: 'Конвертирането на базата данни в евро не беше успешно.', // no text
   strErrorDatabaseBackupWhenConvertingToEuro: 'Архивирането на фирмата преди конвертиране в евро не беше успешно. Конвертирането е прекратено.', // no text
