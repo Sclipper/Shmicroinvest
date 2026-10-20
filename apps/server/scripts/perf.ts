@@ -95,7 +95,8 @@ let docNo = 9_000_000_000;
 /* ---- cases ---- */
 type Group = 'interactive' | 'report' | 'year-end';
 const BUDGET: Record<Group, number> = { interactive: 500, report: 2000, 'year-end': 30_000 };
-interface Case { name: string; group: Group; run: () => Promise<{ status: number; size?: number; rows?: number }> }
+/** once: the case changes the data so that a repeat has nothing to do (it runs a single time). */
+interface Case { name: string; group: Group; once?: boolean; run: () => Promise<{ status: number; size?: number; rows?: number }> }
 const get = (url: string) => async () => {
   const r = await api.call('GET', url);
   return { status: r.status, size: r.size, rows: Array.isArray(r.body) ? r.body.length : Array.isArray(r.body?.rows) ? r.body.rows.length : Array.isArray(r.body?.lines) ? r.body.lines.length : undefined };
@@ -201,12 +202,12 @@ const cases: Case[] = [
   { name: 'activity log', group: 'report', run: get('/activity') },
 
   // Year-end and bulk operations
-  { name: 'post depreciation of October (all assets)', group: 'year-end', run: async () => {
+  { name: 'post depreciation of October (all assets)', group: 'year-end', once: true, run: async () => {
     const p = await api.must<{ rows: { id: number }[] }>('GET', '/accounting-requests?from=2026-10-01&to=2026-10-31');
     const r = await api.call('POST', '/accounting-requests/post', { ids: p.rows.map((x) => x.id) });
     return { status: r.status, rows: p.rows.length };
   } },
-  { name: 'auto closing of 6/7 (Jan-Sep 2026)', group: 'year-end', run: post('/closings/auto', { from: '2026-01-01', to: '2026-09-30' }) },
+  { name: 'auto closing of 6/7 (Jan-Sep 2026)', group: 'year-end', once: true, run: post('/closings/auto', { from: '2026-01-01', to: '2026-09-30' }) },
   { name: 'conclude 2025 into 2026 (euro changeover)', group: 'year-end', run: async () => {
     const diff = accounts.find((a) => a.number === '123')!.id;
     const r = await api.call('POST', `/years/${y2025}/conclude`, { differencesAccountId: diff });
@@ -228,7 +229,7 @@ for (const c of cases) {
   const times: number[] = [];
   let last: Awaited<ReturnType<Case['run']>> = { status: 0 };
   let timedOut = false;
-  for (let i = 0; i < RUNS && !timedOut; i++) {
+  for (let i = 0; i < (c.once ? 1 : RUNS) && !timedOut; i++) {
     const t = performance.now();
     if (CASE_TIMEOUT) {
       let timer: NodeJS.Timeout | undefined;
