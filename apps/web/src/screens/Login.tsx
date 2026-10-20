@@ -33,9 +33,9 @@ export function Login() {
         </div>
         <div className="p-5">
           {companies.isLoading ? null : mode === 'login' ? (
-            <LoginForm companies={companies.data ?? []} db={db} setDb={setDb} onDone={onDone} />
+            <LoginForm companies={companies.data ?? []} db={db} setDb={setDb} onDone={onDone} onNew={() => setMode('new')} />
           ) : (
-            <NewCompanyForm firstRun={(companies.data ?? []).length === 0} onDone={onDone} onCancel={() => setMode('login')} />
+            <NewCompanyForm anonymous firstRun={(companies.data ?? []).length === 0} onDone={onDone} onCancel={() => setMode('login')} />
           )}
         </div>
       </div>
@@ -43,7 +43,7 @@ export function Login() {
   );
 }
 
-function LoginForm({ companies, db, setDb, onDone }: { companies: CompanyItem[]; db: string; setDb: (v: string) => void; onDone: () => void }) {
+function LoginForm({ companies, db, setDb, onDone, onNew }: { companies: CompanyItem[]; db: string; setDb: (v: string) => void; onDone: () => void; onNew: () => void }) {
   const users = useQuery({ queryKey: ['companyUsers', db], queryFn: () => api.get<{ id: number; name: string }[]>(`/companies/${db}/users`), enabled: !!db });
   const [userId, setUserId] = useState<number | null>(null);
   const [password, setPassword] = useState('');
@@ -92,7 +92,8 @@ function LoginForm({ companies, db, setDb, onDone }: { companies: CompanyItem[];
         <TextInput type="password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
       </Field>
       <ErrorText error={error} />
-      <div className="mt-1 flex items-center justify-end">
+      <div className="mt-1 flex items-center justify-between">
+        <Button onClick={onNew}>Нова фирма</Button>
         <Button variant="primary" type="submit" disabled={busy || !userId}>
           Вход
         </Button>
@@ -101,7 +102,8 @@ function LoginForm({ companies, db, setDb, onDone }: { companies: CompanyItem[];
   );
 }
 
-export function NewCompanyForm({ firstRun, onDone, onCancel }: { firstRun: boolean; onDone: () => void; onCancel: () => void }) {
+/** New company; `anonymous` is the registration from the login screen (no active company to carry data over from). */
+export function NewCompanyForm({ firstRun, anonymous = false, onDone, onCancel }: { firstRun: boolean; anonymous?: boolean; onDone: () => void; onCancel: () => void }) {
   const [f, setF] = useState({ companyName: '', bulstat: '', adminName: 'Администратор', adminPassword: '', confirm: '', year: new Date().getFullYear() });
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
@@ -112,9 +114,9 @@ export function NewCompanyForm({ firstRun, onDone, onCancel }: { firstRun: boole
   const dupConfirmed = useRef<string | null>(null);
   const [dupWarning, setDupWarning] = useState(false);
   const companies = useQuery({ queryKey: ['companies'], queryFn: () => api.get<CompanyItem[]>('/companies') });
-  // First run on a public server: the setup token (SHMI_SETUP_TOKEN, or the one printed in the server log).
-  const setup = useQuery({ queryKey: ['setup'], queryFn: () => api.get<{ firstRun: boolean; setupTokenRequired: boolean }>('/setup'), enabled: firstRun });
-  const tokenRequired = firstRun && !!setup.data?.setupTokenRequired;
+  // Registration on a server with SHMI_SETUP_TOKEN needs that key.
+  const setup = useQuery({ queryKey: ['setup'], queryFn: () => api.get<{ firstRun: boolean; setupTokenRequired: boolean }>('/setup'), enabled: anonymous });
+  const tokenRequired = anonymous && !!setup.data?.setupTokenRequired;
   const [setupToken, setSetupToken] = useState('');
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => {
     setF({ ...f, [k]: k === 'year' ? Number(e.target.value) : e.target.value });
@@ -131,7 +133,7 @@ export function NewCompanyForm({ firstRun, onDone, onCancel }: { firstRun: boole
     try {
       const r = await api.post<{ name: string }>('/companies', {
         companyName: f.companyName, bulstat: f.bulstat || undefined, adminName: f.adminName, adminPassword: f.adminPassword, year: f.year, chartTemplate,
-        transfer: firstRun ? undefined : transfer,
+        transfer: anonymous ? undefined : transfer,
         setupToken: tokenRequired ? setupToken : undefined,
       });
       localStorage.setItem('shmi.lastCompany', r.name);
@@ -144,13 +146,13 @@ export function NewCompanyForm({ firstRun, onDone, onCancel }: { firstRun: boole
   };
   return (
     <form onSubmit={submit} className="flex flex-col gap-3">
-      {firstRun && <div className="font-semibold text-slate-700">Създаване на първата фирма</div>}
+      {anonymous && <div className="font-semibold text-slate-700">{firstRun ? 'Създаване на първата фирма' : 'Регистрация на нова фирма'}</div>}
       {tokenRequired && (
         <Field label="Ключ за инсталация">
           <TextInput type="password" value={setupToken} onChange={(e) => setSetupToken(e.target.value)} autoComplete="off" required />
         </Field>
       )}
-      {tokenRequired && <div className="-mt-2 text-[12px] text-slate-500">Ключът е зададен в SHMI_SETUP_TOKEN или е изписан в дневника на сървъра при стартиране.</div>}
+      {tokenRequired && <div className="-mt-2 text-[12px] text-slate-500">Ключът е зададен на сървъра в SHMI_SETUP_TOKEN.</div>}
       <Field label="Име на фирмата">
         <TextInput autoFocus value={f.companyName} onChange={set('companyName')} required />
       </Field>
@@ -174,11 +176,11 @@ export function NewCompanyForm({ firstRun, onDone, onCancel }: { firstRun: boole
         </Field>
       </div>
       <Field label="Вид сметкоплан">
-        <Select value={chartTemplate} disabled={!firstRun && (transfer.chartOfAccounts || chartForced)} onChange={(e) => setChartTemplate(e.target.value as ChartTemplateType)}>
+        <Select value={chartTemplate} disabled={!anonymous && (transfer.chartOfAccounts || chartForced)} onChange={(e) => setChartTemplate(e.target.value as ChartTemplateType)}>
           {CHART_TEMPLATE_TYPES.map((t) => <option key={t} value={t}>{CHART_TEMPLATE_LABELS[t]}</option>)}
         </Select>
       </Field>
-      {!firstRun && (
+      {!anonymous && (
         <fieldset className="rounded-sm border border-slate-200 px-3 pt-1 pb-2">
           <legend className="px-1 text-[12px] text-slate-500">Прехвърляне на данни от активната фирма</legend>
           <div className="grid grid-cols-2 gap-1">

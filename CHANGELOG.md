@@ -2,6 +2,10 @@
 
 All notable changes to Shmicroinvest Shmelta Pro. Versions follow [Semantic Versioning](https://semver.org/). From 1.0.0 on, released database migrations are never changed: a schema change ships as a new migration, which runs on start.
 
+## Unreleased
+
+- **Free registration.** Anybody can create a company with its own administrator from the login screen (**Нова фирма**). No setup token is generated in production any more; set `SHMI_SETUP_TOKEN` to require a key for every registration.
+
 ## 1.0.0 – 2026-10-19
 
 First production release: a web rebuild of Microinvest Delta Pro 1.01.089 for Bulgarian double-entry accounting, with Delta's menus, toolbar, keyboard shortcuts and windows as tabs, in Bulgarian.

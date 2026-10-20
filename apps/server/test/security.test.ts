@@ -6,7 +6,7 @@ import { APP_VERSION } from '../src/runtime.ts';
 import { createTestCompany, createTestDriver, type TestCompany } from './helpers.ts';
 
 /**
- * Hardening for a public URL: first-run setup token, session cookie flags and
+ * Hardening for a public URL: registration and the setup token, session cookie flags and
  * expiry, security headers, request body limits, login limiting by IP and
  * error responses without internals.
  */
@@ -36,18 +36,27 @@ afterAll(async () => {
   for (const d of drivers) await d.close();
 });
 
-describe('first-run setup token', () => {
-  it('needs no token in development without SHMI_SETUP_TOKEN', async () => {
+describe('registration and the setup token', () => {
+  it('is free without SHMI_SETUP_TOKEN, also in production and after the first company', async () => {
     delete process.env.SHMI_SETUP_TOKEN;
-    delete process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
     const s = await emptyServer();
     drivers.push(s.driver);
     expect(await (await s.req('GET', '/setup')).json()).toEqual({ firstRun: true, setupTokenRequired: false });
     expect((await s.req('POST', '/companies', firstCompany)).status).toBe(201);
     expect(await (await s.req('GET', '/setup')).json()).toEqual({ firstRun: false, setupTokenRequired: false });
+    // A second visitor, not logged in, registers another company with its own administrator.
+    const second = await s.req('POST', '/companies', { ...firstCompany, companyName: 'Втора ЕООД', adminName: 'Мария' });
+    expect(second.status).toBe(201);
+    const companies = (await (await s.req('GET', '/companies')).json()) as { name: string; companyName: string }[];
+    expect(companies.map((c) => c.companyName).sort()).toEqual(['Втора ЕООД', 'Първа ООД']);
+    const { name } = (await second.json()) as { name: string };
+    expect(await (await s.req('GET', `/companies/${name}/users`)).json()).toEqual([{ id: 1, name: 'Мария' }]);
+    // Carrying data over needs a logged-in user in an active company.
+    expect((await s.req('POST', '/companies', { ...firstCompany, transfer: { partners: true } })).status).toBe(400);
   });
 
-  it('requires SHMI_SETUP_TOKEN for the first company when it is set', async () => {
+  it('requires SHMI_SETUP_TOKEN for every registration when it is set', async () => {
     process.env.SHMI_SETUP_TOKEN = 'tok-3f9a';
     const s = await emptyServer();
     drivers.push(s.driver);
@@ -61,24 +70,11 @@ describe('first-run setup token', () => {
     expect(await wrong.json()).toMatchObject({ code: 'setupToken', error: 'Невалиден ключ за инсталация.' });
     expect(await (await s.req('GET', '/companies')).json()).toEqual([]);
 
-    const ok = await s.req('POST', '/companies', { ...firstCompany, setupToken: ' tok-3f9a ' });
-    expect(ok.status).toBe(201);
-    // Afterwards the token plays no part: only a logged-in user with the right creates companies.
-    expect(await (await s.req('GET', '/setup')).json()).toEqual({ firstRun: false, setupTokenRequired: false });
-    expect((await s.req('POST', '/companies', { ...firstCompany, setupToken: 'tok-3f9a' })).status).toBe(403);
-  });
-
-  it('always requires a token in production (generated when SHMI_SETUP_TOKEN is not set)', async () => {
-    delete process.env.SHMI_SETUP_TOKEN;
-    process.env.NODE_ENV = 'production';
-    const s = await emptyServer();
-    drivers.push(s.driver);
-    expect(await (await s.req('GET', '/setup')).json()).toEqual({ firstRun: true, setupTokenRequired: true });
-    expect((await s.req('POST', '/companies', firstCompany)).status).toBe(403);
-    const { setupToken } = await import('../src/services/setup.ts');
-    const token = setupToken();
-    expect(token).toMatch(/^[\w-]{20,}$/);
-    expect((await s.req('POST', '/companies', { ...firstCompany, setupToken: token })).status).toBe(201);
+    expect((await s.req('POST', '/companies', { ...firstCompany, setupToken: ' tok-3f9a ' })).status).toBe(201);
+    // Later registrations without a login need it too.
+    expect(await (await s.req('GET', '/setup')).json()).toEqual({ firstRun: false, setupTokenRequired: true });
+    expect((await s.req('POST', '/companies', { ...firstCompany, companyName: 'Втора ЕООД' })).status).toBe(403);
+    expect((await s.req('POST', '/companies', { ...firstCompany, companyName: 'Втора ЕООД', setupToken: 'tok-3f9a' })).status).toBe(201);
   });
 
   it('limits wrong setup tokens per client IP', async () => {

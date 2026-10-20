@@ -133,12 +133,12 @@ Set the app's environment (see `amp apps --help` for how your CLI version takes 
 | `PORT` | the port given to `--port` |
 | `DATABASE_URL` | an external Postgres database, see below (**required**) |
 | `SHMI_SECRET` | a long random string (**required**; the file system is not persistent) |
-| `SHMI_SETUP_TOKEN` | the first-run token |
+| `SHMI_SETUP_TOKEN` | the registration key, if registration should be closed |
 | `TRUST_PROXY` | `1` (HTTPS is terminated in front of the app) |
 
 Before you choose Amp Apps, know three things:
 
-- **Amp Apps are public.** Anybody with the URL reaches the login page, so set `SHMI_SETUP_TOKEN` before the first deploy.
+- **Amp Apps are public.** Anybody with the URL reaches the login page and, unless `SHMI_SETUP_TOKEN` is set, can register a company.
 - **They pause when idle.** The first request after a pause waits for the start. Startup is quick because the catalog migration is a no-op after the first run, but the first request is slower.
 - **Persistence across redeploys is not documented.** Do not keep production data in the app's file system: the PGlite `DATA_DIR`, the `secret.key` file and the log file can disappear with a redeploy.
   - Point `DATABASE_URL` at a managed Postgres in an EU region, for example Neon (`aws-eu-central-1`, Frankfurt) or Supabase (Frankfurt), and set `SHMI_SECRET`.
@@ -213,13 +213,11 @@ With PGlite (`DATA_DIR=/var/lib/shmelta`), run **one** process only, because PGl
 
 ## First run
 
-1. Choose the setup token.
-   - Either set `SHMI_SETUP_TOKEN` to a random value (`openssl rand -base64 24`).
-   - Or leave it unset. With `NODE_ENV=production`, the server then generates one and prints it at start: `Първо стартиране: ключ за инсталация (SHMI_SETUP_TOKEN) …` (`docker compose logs app`).
-
-   Outside production no token is needed unless one is set.
-2. Open the site. While the server has no company, the login screen shows "Създаване на първата фирма" with the field **Ключ за инсталация**. Enter the token, the company name, EIK, the financial year and the administrator's password.
-   - Wrong tokens count towards the per-IP limit.
+1. Decide on registration.
+   - Leave `SHMI_SETUP_TOKEN` unset for free registration: anybody who opens the site can create a company with its own administrator (**Нова фирма** on the login screen).
+   - Or set it to a random value (`openssl rand -base64 24`) to close registration. Creating a company without being logged in then needs that key in the field **Ключ за инсталация**.
+2. Open the site. While the server has no company, the login screen shows "Създаване на първата фирма". Enter the company name, EIK, the financial year and the administrator's password, plus the key if one is set.
+   - Wrong keys count towards the per-IP limit.
    - After the first company exists, the token is no longer used. Further companies are created only by a logged-in user with the "Нова фирма" right.
 3. Log in as the administrator. Then:
    - set a strong password (the GDPR check, "Други → GDPR проверка", lists what is missing);
@@ -248,7 +246,7 @@ Every setting is an environment variable, and all are optional unless marked oth
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `NODE_ENV` | – | `production` requires a setup token for the first company and a persistent secret, and keeps logs short. Always set it on a server. |
+| `NODE_ENV` | – | `production` requires a persistent secret and keeps logs short. Always set it on a server. |
 | `PORT` | `3000` | HTTP port |
 | `HOST` | `0.0.0.0` | Listen address |
 | `TRUST_PROXY` | `0` | `1` behind a reverse proxy that terminates HTTPS. `X-Forwarded-Proto` then makes the cookie `Secure` and turns on HSTS, and the last `X-Forwarded-For` entry is the client IP. |
@@ -258,7 +256,7 @@ Every setting is an environment variable, and all are optional unless marked oth
 | `PGPASSWORD` | – | Used when `DATABASE_URL` has no password |
 | `SHMI_SECRET` | – | The key for stored SMTP passwords. **Production: this or a persistent `SHMI_SECRET_FILE`/`DATA_DIR` is required.** |
 | `SHMI_SECRET_FILE` | `<DATA_DIR>/secret.key` | The key file used without `SHMI_SECRET`. It is created on first start. |
-| `SHMI_SETUP_TOKEN` | – (generated in production) | The token needed to create the first company |
+| `SHMI_SETUP_TOKEN` | – (free registration) | When set, creating a company without being logged in needs this key |
 | `SESSION_IDLE_MINUTES` | `720` | Idle timeout of a session |
 | `SESSION_MAX_AGE_DAYS` | `14` | Absolute lifetime of a session, which is also the cookie `Max-Age` |
 | `LOGIN_IP_MAX_FAILURES` | `20` | Failed logins or setup tokens per IP before 429 |

@@ -51,11 +51,11 @@ async function companyNotCreated(e: unknown, companyName: string): Promise<ApiEr
 const failedLogins = new Map<string, { count: number; until: number }>();
 
 export const authRoutes = new Hono<AppEnv>()
-  /** First run: no company yet; the UI then asks for the setup token when one is required. */
+  /** First run (no company yet), and whether registering a company needs the key (SHMI_SETUP_TOKEN). */
   .get('/setup', async (c) => {
     const catalog = await c.var.driver.catalog();
     const [any] = await catalog.select({ name: cat.companiesCatalog.name }).from(cat.companiesCatalog).limit(1);
-    return c.json({ firstRun: !any, setupTokenRequired: !any && !!setupToken() });
+    return c.json({ firstRun: !any, setupTokenRequired: !!setupToken() });
   })
 
   /** Company list for the login screen ("Избор на фирма"). */
@@ -76,10 +76,10 @@ export const authRoutes = new Hono<AppEnv>()
   })
 
   /**
-   * New company (Нова фирма). Allowed while the server has no company yet
-   * (first run) to whoever gives the setup token (when one is required,
-   * services/setup.ts); afterwards only for a logged-in user with
-   * UI_File_NewCompany.
+   * New company (Нова фирма). A logged-in user needs UI_File_NewCompany and
+   * may carry data over from the active company. Without a login it is a
+   * registration: free, or with the key when SHMI_SETUP_TOKEN is set
+   * (services/setup.ts).
    */
   .post('/companies', zValidator('json', z.object({
     companyName: z.string().trim().min(1).max(255),
@@ -88,7 +88,7 @@ export const authRoutes = new Hono<AppEnv>()
     year: z.number().int().min(1901).max(2078),
     bulstat: z.string().trim().max(50).optional(),
     chartTemplate: z.enum(['commercial', 'nonProfit', 'budget']).nullable().optional(),
-    /** First run on a server with SHMI_SETUP_TOKEN (or in production). */
+    /** Registration without a login on a server with SHMI_SETUP_TOKEN. */
     setupToken: z.string().max(500).optional(),
     /** Data carried over from the active company (01b 1.2 TransferEntities). */
     transfer: z.object({
@@ -98,11 +98,10 @@ export const authRoutes = new Hono<AppEnv>()
   })), async (c) => {
     const body = c.req.valid('json');
     const catalog = await c.var.driver.catalog();
-    const existing = await catalog.select().from(cat.companiesCatalog);
+    const [existing] = await catalog.select({ name: cat.companiesCatalog.name }).from(cat.companiesCatalog).limit(1);
+    const session = existing ? await readSession(c) : null;
     let sourceDb: string | null = null;
-    if (existing.length > 0) {
-      const session = await readSession(c);
-      if (!session?.companyDb || !session.userId) throw new ApiError(403, 'Само влязъл потребител може да създава нови фирми.');
+    if (session?.companyDb && session.userId) {
       const db = await c.var.driver.company(session.companyDb);
       const [u] = await db.select().from(s.users).where(eq(s.users.id, session.userId));
       if (!u || !(await permissionResolver(db, u.userRoleId))('UI_File_NewCompany')) throw new ApiError(403, 'Нямате права за тази операция.');
@@ -112,7 +111,7 @@ export const authRoutes = new Hono<AppEnv>()
       c.var.loginLimiter.check(ip);
       if (!setupTokenMatches(body.setupToken)) {
         c.var.loginLimiter.fail(ip);
-        await logApp({ level: 'warning', message: `Неуспешен опит за създаване на първата фирма от ${ip}: грешен ключ за инсталация` });
+        await logApp({ level: 'warning', message: `Неуспешен опит за създаване на фирма от ${ip}: грешен ключ за инсталация` });
         throw new ApiError(403, body.setupToken ? 'Невалиден ключ за инсталация.' : 'Въведете ключа за инсталация (SHMI_SETUP_TOKEN).', undefined, 'setupToken');
       }
     }

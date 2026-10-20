@@ -6,7 +6,7 @@ import * as cat from './db/catalog/schema.ts';
 import { configureAppLog, logApp } from './services/appLog.ts';
 import { offsiteSettings, startOffsiteScheduler } from './services/offsite/offsite.ts';
 import { ensureSecretKey } from './services/email.ts';
-import { setupToken, setupTokenGenerated } from './services/setup.ts';
+import { setupToken } from './services/setup.ts';
 import { APP_VERSION, PATHS, isProduction, trustProxy } from './runtime.ts';
 
 /** Where the data lives, for the start-up log (the database password is never printed). */
@@ -53,14 +53,8 @@ try {
   console.log(`Данни: ${describeStorage(driver)}`);
   console.log(`Ключ за паролите: ${secretInfo.source === 'env' ? 'SHMI_SECRET' : secretInfo.file}`);
   console.log(`Уеб интерфейс: ${PATHS.webDist}${trustProxy() ? '; зад обратен прокси (TRUST_PROXY=1)' : ''}`);
-  if (!any) {
-    const token = setupToken();
-    if (token && setupTokenGenerated()) {
-      console.log(`Първо стартиране: ключ за инсталация (SHMI_SETUP_TOKEN) ${token}`);
-      console.log('Въведете го при създаването на първата фирма, или задайте SHMI_SETUP_TOKEN предварително.');
-    } else if (token) console.log('Първо стартиране: създаването на първата фирма изисква SHMI_SETUP_TOKEN.');
-    else console.log('Първо стартиране: първата фирма може да се създаде без ключ (задайте SHMI_SETUP_TOKEN за публичен адрес).');
-  }
+  console.log(setupToken() ? 'Регистрация: новите фирми изискват ключа SHMI_SETUP_TOKEN.' : 'Регистрация: свободна, всеки може да създаде фирма (задайте SHMI_SETUP_TOKEN, за да я ограничите).');
+  if (!any) console.log('Първо стартиране: още няма създадена фирма.');
 } catch (e) {
   console.error(e);
   fail(`database not available: ${(e as Error).message}`);

@@ -15,15 +15,6 @@ beforeAll(async () => {
 afterAll(() => t.close());
 
 describe('api', () => {
-  it('rejects anonymous company creation once a company exists', async () => {
-    const saved = t.session.get();
-    t.session.set('');
-    const r = await call('POST', '/companies', { companyName: 'X', adminName: 'A', adminPassword: 'secret1', year: 2026 });
-    expect(r.status).toBe(403);
-    expect((await call('GET', '/session')).status).toBe(401);
-    t.session.set(saved);
-  });
-
   it('logs in with the admin password only', async () => {
     const [company] = (await call('GET', '/companies')).body;
     const saved = t.session.get();

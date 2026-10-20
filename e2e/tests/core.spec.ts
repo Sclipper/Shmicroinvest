@@ -18,6 +18,24 @@ test.describe('shell and login', () => {
     await expect(page.getByRole('button', { name: 'Вход' })).toBeVisible();
   });
 
+  test('a visitor registers a new company from the login screen', async ({ page }) => {
+    await page.context().clearCookies();
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Нова фирма' }).click();
+    await expect(page.getByText('Регистрация на нова фирма')).toBeVisible();
+    await expect(page.getByText('Прехвърляне на данни от активната фирма')).toHaveCount(0);
+    await expect(page.getByLabel('Ключ за инсталация')).toHaveCount(0);
+    await page.getByLabel('Име на фирмата').fill('Регистрация Е2Е ООД');
+    await page.getByLabel('Администратор').fill('Нов собственик');
+    await page.getByLabel('Парола', { exact: true }).fill('reg-pass1');
+    await page.getByLabel('Повтори паролата').fill('reg-pass1');
+    await page.getByRole('button', { name: 'Създай' }).click();
+    await expect(page.locator('footer')).toContainText('Регистрация Е2Е ООД');
+    await menu(page, 'Файл', 'Изход');
+    await page.getByRole('combobox', { name: /^Фирма/ }).selectOption({ label: 'Регистрация Е2Е ООД' });
+    await expect(page.getByRole('combobox', { name: /^Потребител/ })).toHaveText('Нов собственик');
+  });
+
   test('status bar shows year, company and EUR base currency', async ({ page }) => {
     await openApp(page);
     const footer = page.locator('footer');

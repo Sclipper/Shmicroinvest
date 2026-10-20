@@ -18,7 +18,7 @@ pnpm --filter @shmi/server dev   # API on :3000; data in apps/server/.data
 pnpm --filter @shmi/web dev      # UI on :5173; proxies /api
 ```
 
-The first visit asks you to create the first company and its administrator. After that, only a logged-in user with the "Нова фирма" permission can create more companies. On a public server, creating the first company needs a setup token (`SHMI_SETUP_TOKEN`; in production one is generated and printed in the log when it is not set).
+Registration is free: on the login screen, **Нова фирма** creates a company with its own administrator, and the first visit opens that form directly. Inside the app, a user with the "Нова фирма" permission can also create companies and carry data over from the active one. To close registration, set `SHMI_SETUP_TOKEN`: creating a company without being logged in then needs that key.
 
 ## Production
 
